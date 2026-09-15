@@ -1,0 +1,17 @@
+[project]
+name = "emqc"
+version = "0.1.0"
+description = "EM Image QC platform: dataset registry, slice/serial-section QC pipeline, data API"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy", "scipy", "pillow", "tifffile",
+  "fastapi", "uvicorn[standard]", "jinja2", "python-multipart",
+  "sqlalchemy>=2.0", "pymysql", "cryptography<45", "pydantic-settings", "psutil", "paramiko",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

@@ -1,0 +1,70 @@
+{# ---------- badges ---------- #}
+{% macro sev(label) -%}<span class="badge sev-{{ label or 'none' }}">{{ label or 'none' }}</span>{%- endmacro %}
+{% macro grade(g) -%}<span class="grade grade-{{ g or 'none' }}" title="A 直接可用 · B 剔除少数坏切片后可用 · C 只有短的连续可用段 · D 不可用">{{ g or '–' }}</span>{%- endmacro %}
+{% macro pct(v) -%}{% if v is none %}–{% else %}{{ (100 * v)|round|int }}%{% endif %}{%- endmacro %}
+{% macro meter(v) -%}<div class="meter {{ 'good' if v is not none and v >= 0.85 else ('warn' if v is not none and v >= 0.6 else 'bad') }}" title="{{ pct(v) }}"><i style="width:{{ (100 * (v or 0))|round|int }}%"></i></div>{%- endmacro %}
+
+{# ---------- per-section severity strip with a z axis ---------- #}
+{% macro strip(profile, ds_id, block_id, axis=true) -%}
+<div class="strip" title="每格一张切片，颜色 = 最坏严重度">{% for p in profile %}<a class="c-{{ 'missing' if p.status == 'missing' else ('corrupt' if p.status == 'corrupt' else p.sev) }}" href="/datasets/{{ ds_id }}/blocks/{{ block_id }}#z{{ p.z }}" title="z={{ p.z }} · {{ p.status }} · {{ p.sev }} · q={{ p.q|fmt(2) }}"></a>{% endfor %}</div>
+{% if axis and profile %}<div class="axis"><span>z {{ profile[0].z }}</span><span>{{ profile[-1].z }}</span></div>{% endif %}
+{%- endmacro %}
+{% macro legend_sev() -%}<div class="legend"><span class="l-none">none</span><span class="l-low">low</span><span class="l-medium">medium</span><span class="l-high">high · 不通过</span><span class="l-critical">critical · 不通过</span><span class="l-missing">missing / corrupt</span></div>{%- endmacro %}
+{% macro legend_grade() -%}<div class="legend"><span class="l-A">A 直接可用</span><span class="l-B">B 剔坏片后可用</span><span class="l-C">C 仅短连续段</span><span class="l-D">D 不可用</span><span class="l-pending">未运行</span></div>{%- endmacro %}
+
+{# ---------- block map: the XY plane cut into tiles, one map per z range ---------- #}
+{% macro blockmap(ds, blocks, qc, size=300) -%}
+{% set W = size %}{% set H = (size * ds.shape.y / ds.shape.x)|round|int if ds.shape.x else size %}
+{% set zgroups = blocks|map(attribute='z_start')|unique|list %}
+<div class="grid" style="grid-template-columns: repeat(auto-fill, minmax({{ W + 24 }}px, max-content)); gap:14px">
+{% for z0 in zgroups %}{% set grp = blocks|selectattr('z_start','equalto',z0)|list %}
+<figure style="margin:0">
+<svg class="chart" viewBox="-1 -1 {{ W + 2 }} {{ H + 2 }}" style="max-width:{{ W }}px" role="img" aria-label="z {{ z0 }} 到 {{ grp[0].z_end - 1 }} 的平面按 tile 划分，颜色为等级">
+  <rect x="0" y="0" width="{{ W }}" height="{{ H }}" class="f-surface s-border"/>
+  {% for b in grp %}{% set q = qc.get(b.block_id) %}{% set g = (q.grade if q else b.latest_grade) or 'pending' %}
+  {% set bx = (b.x_start * W / ds.shape.x)|round(1) %}{% set by = (b.y_start * H / ds.shape.y)|round(1) %}{% set bw = ((b.x_end - b.x_start) * W / ds.shape.x)|round(1) %}{% set bh = ((b.y_end - b.y_start) * H / ds.shape.y)|round(1) %}
+  <a href="/datasets/{{ ds.dataset_id }}/blocks/{{ b.block_id }}"><rect x="{{ bx }}" y="{{ by }}" width="{{ bw }}" height="{{ bh }}" class="f-{{ g }} s-border" style="stroke-width:1.5; fill-opacity:{{ '0.85' if g != 'pending' else '1' }}"><title>{{ b.block_id }}{% if q %} · grade {{ q.grade }} · 留存 {{ pct(q.retention_rate) }} · 最长连续 {{ q.longest_clean_run }}{% else %} · 未运行{% endif %}</title></rect>
+  {% if bw > 70 and bh > 34 %}<text x="{{ bx + 6 }}" y="{{ by + 14 }}" class="blk-lbl {{ 'inv' if g in ['A','B','C','D'] }}">y{{ b.y_start }} x{{ b.x_start }}</text><text x="{{ bx + 6 }}" y="{{ by + 27 }}" class="blk-sub {{ 'inv' if g in ['A','B','C','D'] }}">{% if q %}{{ q.grade }} · {{ pct(q.retention_rate) }}{% else %}pending{% endif %}</text>{% endif %}</a>
+  {% endfor %}
+</svg>
+<figcaption class="muted" style="font:11px var(--mono);margin-top:4px">z {{ z0 }}–{{ grp[0].z_end - 1 }} · {{ grp|length }} tile · {{ ds.shape.x }}×{{ ds.shape.y }} px</figcaption>
+</figure>
+{% endfor %}
+</div>
+{%- endmacro %}
+
+{# ---------- z-profile bar chart: quality per section coloured by severity ---------- #}
+{% macro zprofile(slices, width=1000, height=110) -%}
+{% set n = slices|length %}{% if n %}{% set bw = (width - 40) / n %}
+<svg class="chart" viewBox="0 0 {{ width }} {{ height + 26 }}" role="img" aria-label="每张切片的综合分，颜色为最坏严重度">
+  {% for t in [0, 0.5, 1.0] %}<line x1="36" x2="{{ width }}" y1="{{ (height - t * (height - 10))|round(1) }}" y2="{{ (height - t * (height - 10))|round(1) }}" class="grid-line"/><text x="30" y="{{ (height - t * (height - 10) + 3)|round(1) }}" text-anchor="end">{{ t }}</text>{% endfor %}
+  <line x1="36" x2="{{ width }}" y1="{{ height }}" y2="{{ height }}" class="axis-line"/>
+  {% for x in slices %}{% set q = x.quality_score if x.quality_score is not none else 0 %}{% set h = (q * (height - 10))|round(1) %}
+  <a href="#z{{ x.z }}"><rect x="{{ (40 + loop.index0 * bw)|round(2) }}" y="{{ (height - h)|round(1) }}" width="{{ (bw * 0.85)|round(2) }}" height="{{ h if x.status == 'ok' else height - 10 }}" class="f-{{ 'missing' if x.status != 'ok' else x.max_severity }}"{% if x.status != 'ok' %} y="10"{% endif %}><title>z={{ x.z }} · {{ x.status }} · q={{ x.quality_score|fmt(2) }} · {{ x.max_severity }}{% if x.failure_types %} · {{ x.failure_types|join(', ') }}{% endif %}</title></rect></a>
+  {% if x.z % 10 == 0 %}<text x="{{ (40 + loop.index0 * bw + bw / 2)|round(1) }}" y="{{ height + 16 }}" text-anchor="middle">{{ x.z }}</text>{% endif %}
+  {% endfor %}
+</svg>{% endif %}
+{%- endmacro %}
+
+{# ---------- horizontal bars ---------- #}
+{% macro hbars(items, total=none, cls='') -%}
+{% set mx = (items|map(attribute=1)|max) if items else 1 %}
+<div class="bars">{% for k, v in items %}<span class="lbl">{{ k }}</span><span class="bar"><i class="{{ cls }}" style="width:{{ (100 * v / (mx or 1))|round(1) }}%; background: var(--accent)"></i></span><span class="n">{{ v }}</span>{% endfor %}</div>
+{%- endmacro %}
+
+{# ---------- stacked severity bar for a dict of counts ---------- #}
+{% macro sevstack(counts) -%}
+{% set tot = counts.values()|sum %}{% if tot %}<div class="stack" title="{% for k, v in counts.items() %}{{ k }} {{ v }} {% endfor %}">{% for k in ['critical','high','medium','low'] %}{% if counts.get(k) %}<i class="c-{{ k }}" style="width:{{ (100 * counts[k] / tot)|round(1) }}%"></i>{% endif %}{% endfor %}</div>{% endif %}
+{%- endmacro %}
+
+{# ---------- threshold scale for a check ---------- #}
+{% macro thresholds(t) -%}
+<div class="stack" style="height:10px" title="critical &lt; {{ t.critical }} · high &lt; {{ t.high }} · medium &lt; {{ t.medium }} · low &lt; {{ t.low }} · none ≥ {{ t.low }}">
+<i class="c-critical" style="width:{{ (100 * t.critical)|round(1) }}%"></i><i class="c-high" style="width:{{ (100 * (t.high - t.critical))|round(1) }}%"></i><i class="c-medium" style="width:{{ (100 * (t.medium - t.high))|round(1) }}%"></i><i class="c-low" style="width:{{ (100 * (t.low - t.medium))|round(1) }}%"></i><i class="c-none" style="width:{{ (100 * (1 - t.low))|round(1) }}%"></i></div>
+<div class="axis"><span>0</span><span>{{ t.critical }}</span><span>{{ t.high }}</span><span>{{ t.medium }}</span><span>{{ t.low }}</span><span>1</span></div>
+{%- endmacro %}
+
+{# ---------- stage timeline for a block ---------- #}
+{% macro stagebar(durations, total) -%}
+<div class="tl" title="{% for k, v in durations.items() %}{{ k }} {{ v|fmt(2) }}s {% endfor %}">{% for k in ['ingest','slice_qc','serial_qc','aggregate','persist'] %}{% if durations.get(k) %}<i class="st-{{ k }}" style="width:{{ (100 * durations[k] / (total or 1))|round(1) }}%"></i>{% endif %}{% endfor %}</div>
+{%- endmacro %}

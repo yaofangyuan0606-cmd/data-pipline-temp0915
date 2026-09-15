@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}运行记录{% endblock %}
+{% block crumbs %}<b>运行记录</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">QC runs</div><h1>运行记录</h1><p class="sub">{% for k, v in by_status.items() %}<span class="pill {{ 'ok' if k == 'done' }}">{{ k }} {{ v }}</span> {% endfor %}</p></div><div class="actions"><a class="btn primary" href="/pipeline">新建运行</a></div></div>
+<div class="filters">状态：<label><input type="radio" name="st" checked onchange="filterRows('runs','all',true)"> 全部</label>{% for k in ['running','done','error','cancelled'] %}<label><input type="radio" name="st" onchange="filterRows('runs','{{ k }}',true)"> {{ k }}</label>{% endfor %}</div>
+<div class="scroll"><table id="runs"><thead><tr><th>run</th><th>dataset</th><th>pipeline</th><th>状态</th><th>进度</th><th>等级</th><th class="num">quality</th><th>留存率</th><th>开始</th><th>结束</th></tr></thead><tbody>
+{% for r in runs %}<tr data-all="1" data-{{ r.status }}="1">
+  <td><a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a></td><td><a href="/datasets/{{ r.dataset_id }}">{{ r.dataset_id }}</a></td><td class="mono muted">{{ r.pipeline_version }}</td>
+  <td><span class="pill {{ 'ok' if r.status == 'done' }}">{{ r.status }}</span></td><td class="mono">{{ r.n_blocks_done }}/{{ r.n_blocks }}</td>
+  <td>{% for g, n in r.grade_counts|dictsort %}{{ m.grade(g) }}<span class="muted mono">×{{ n }}</span> {% endfor %}</td>
+  <td class="num mono">{{ r.quality_score|fmt(3) }}</td><td style="min-width:130px"><div style="display:flex;gap:8px;align-items:center">{{ m.meter(r.retention_rate) }}<span class="mono">{{ r.retention_rate|pct }}</span></div></td>
+  <td class="muted mono" style="font-size:11px">{{ (r.started_at or '')|replace('T',' ') }}</td><td class="muted mono" style="font-size:11px">{{ (r.finished_at or '')|replace('T',' ') }}</td>
+</tr>{% else %}<tr><td colspan="10" class="muted">还没有运行</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

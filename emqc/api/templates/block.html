@@ -1,0 +1,71 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}{{ block.block_id }}{% endblock %}
+{% block crumbs %}<a href="/">数据集</a> › <a href="/datasets/{{ ds.dataset_id }}">{{ ds.dataset_id }}</a> › <b class="mono">{{ block.block_id }}</b>{% endblock %}
+{% block content %}
+{% set impl = checks|selectattr('implemented')|list %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Block · {{ ds.dataset_id }}</div><h1 class="mono">{{ block.block_id }}</h1>
+<p class="sub">z {{ block.z_start }}–{{ block.z_end - 1 }}（绝对 {{ block.z_start + ds.metadata.z_offset }}–{{ block.z_end - 1 + ds.metadata.z_offset }}）· tile y {{ block.y_start }}–{{ block.y_end }}，x {{ block.x_start }}–{{ block.x_end }} · split <span class="pill on">{{ block.split }}</span>{% if run_id %} · run <a href="/runs/{{ run_id }}" class="mono">#{{ run_id }}</a>{% endif %}</p></div>
+<div class="actions">
+  <svg class="chart" viewBox="-1 -1 {{ 122 }} {{ (120 * ds.shape.y / ds.shape.x)|round|int + 2 }}" style="width:120px" role="img" aria-label="该 block 在切片平面上的位置">
+    <rect x="0" y="0" width="120" height="{{ (120 * ds.shape.y / ds.shape.x)|round|int }}" class="f-surface s-border"/>
+    {% for b in siblings if b.z_start == block.z_start %}<a href="/datasets/{{ ds.dataset_id }}/blocks/{{ b.block_id }}"><rect x="{{ (b.x_start * 120 / ds.shape.x)|round(1) }}" y="{{ (b.y_start * 120 / ds.shape.x)|round(1) }}" width="{{ ((b.x_end - b.x_start) * 120 / ds.shape.x)|round(1) }}" height="{{ ((b.y_end - b.y_start) * 120 / ds.shape.x)|round(1) }}" class="{{ 'f-accent' if b.block_id == block.block_id else 'f-pending' }} s-border"><title>{{ b.block_id }}</title></rect></a>{% endfor %}
+  </svg>
+  <button class="primary" onclick="runQC('{{ ds.dataset_id }}', this, ['{{ block.block_id }}'])">重跑此 block</button></div></div>
+
+{% if qcb %}
+<div class="tiles">
+  <div class="tile"><div class="k">等级</div><div class="v">{{ m.grade(qcb.grade) }}<small>{{ qcb.dominant_failure or '无主要问题' }}</small></div></div>
+  <div class="tile accent"><div class="k">留存率</div><div class="v">{{ qcb.retention_rate|pct }}</div><div class="sub">{{ qcb.n_passed }} / {{ qcb.n_slices }} 张通过</div></div>
+  <div class="tile"><div class="k">quality</div><div class="v">{{ qcb.quality_score|fmt(3) }}</div></div>
+  <div class="tile"><div class="k">最长连续可用</div><div class="v">{{ qcb.longest_clean_run }}<small>张</small></div><div class="sub">3D patch 的 z 深度上限</div></div>
+  <div class="tile"><div class="k">最坏严重度</div><div class="v" style="font-size:16px;margin-top:8px">{{ m.sev(qcb.max_severity) }}</div></div>
+  <div class="tile"><div class="k">缺失 / 损坏</div><div class="v">{{ qcb.n_missing }} / {{ qcb.n_corrupt }}</div></div>
+  <div class="tile"><div class="k">耗时</div><div class="v">{{ qcb.duration_s|fmt(1) }}<small>s</small></div><div class="sub">{% for k, v in qcb.stage_durations.items() %}{{ k }} {{ v|fmt(1) }} {% endfor %}</div></div>
+  {% set bs = qcb.scores.get('_block', {}) %}
+  <div class="tile"><div class="k">序列分析尺度</div><div class="v" style="font-size:16px">{{ bs.serial_nm_per_px|fmt(0) if bs.serial_nm_per_px else '像素比例' }}<small>{% if bs.serial_nm_per_px %}nm/px · {% endif %}factor {{ bs.serial_factor }}</small></div><div class="sub">NCC gap1 {{ bs.median_ncc_gap1|fmt(2) }} · gap2 {{ bs.median_ncc_gap2|fmt(2) }}</div></div>
+  {% if metrics.get('cpu_time_s') is not none %}<div class="tile"><div class="k">资源</div><div class="v" style="font-size:16px">{{ metrics.get('cpu_time_s')|fmt(1) }} s<small>CPU</small></div><div class="sub">峰值内存 {{ metrics.get('peak_rss_mb')|fmt(0) }} MB</div></div>{% endif %}
+</div>
+
+<h2>逐切片综合分 <span class="cnt">柱高 = 综合分，颜色 = 最坏严重度</span></h2>
+<div class="card">{{ m.zprofile(slices) }}<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">{{ m.legend_sev() }}<span class="muted mono" style="font-size:11px">{% for k in ['critical','high','medium','low','none'] %}{% if by_sev[k] %}{{ k }} {{ by_sev[k] }} · {% endif %}{% endfor %}{{ slices|length }} 张</span></div></div>
+
+<div class="grid side" style="margin-top:22px">
+<div><h2 style="margin-top:0">拼图 <span class="cnt">每格顶部色条 = 最坏严重度</span></h2>{% if qcb.preview_url %}<a href="{{ qcb.preview_url }}" target="_blank"><img class="montage" src="{{ qcb.preview_url }}" alt="block montage"></a>{% else %}<div class="empty">无拼图</div>{% endif %}</div>
+<div><h2 style="margin-top:0">各检查项</h2><div class="card pad-0"><table class="dense" style="border:0"><thead><tr><th>check</th><th class="num">最低分</th><th class="num">告警</th><th class="num">评估</th></tr></thead><tbody>
+{% for c in checks %}{% set sc = qcb.scores.get(c.name) %}<tr class="{{ 'muted' if not c.implemented }}"><td class="mono">{{ c.name }}{% if not c.implemented %} <span class="tag stub">stub</span>{% endif %}</td><td class="num mono">{{ sc.min|fmt(2) if sc else '–' }}</td><td class="num mono">{{ sc.n_flagged if sc else '–' }}</td><td class="num mono">{{ sc.n_evaluated if sc else '–' }}</td></tr>{% endfor %}
+</tbody></table></div></div>
+</div>
+
+<h2>切片 <span class="cnt">{{ slices|length }}</span></h2>
+<div class="filters"><label><input type="checkbox" onchange="filterRows('slices','failed',this.checked)"> 只看未通过</label><label><input type="checkbox" onchange="filterRows('slices','flagged',this.checked)"> 只看有告警</label><span class="muted">分数单元格底色越深越差；– 表示该检查未评估</span></div>
+<div class="scroll"><table class="dense" id="slices">
+<thead><tr><th>z</th><th>abs</th><th>状态</th><th class="num">综合</th><th>严重度</th><th>通过</th><th>failure types</th>{% for c in impl %}<th title="{{ c.description }}">{{ c.name|replace('_',' ') }}</th>{% endfor %}<th>mean / std / sharp</th><th>备注</th><th>预览</th></tr></thead>
+<tbody>
+{% for x in slices %}<tr id="z{{ x.z }}" data-failed="{{ 0 if x.passed else 1 }}" data-flagged="{{ 1 if x.failure_types else 0 }}">
+  <td class="mono"><b>{{ x.z }}</b></td><td class="mono muted">{{ x.z + ds.metadata.z_offset }}</td>
+  <td>{% if x.status != 'ok' %}<span class="badge sev-{{ x.status }}">{{ x.status }}</span>{% else %}<span class="muted">ok</span>{% endif %}</td>
+  <td class="num mono">{{ x.quality_score|fmt(2) }}</td><td>{{ m.sev(x.max_severity) }}</td><td>{{ '✓' if x.passed else '✗' }}</td>
+  <td>{% for ft in x.failure_types %}<span class="pill on">{{ ft }}</span>{% endfor %}</td>
+  {% for c in impl %}{% set v = x.scores.get(c.name) %}<td class="score-cell {{ 's-na' if v is none else ('s0' if v < 0.2 else ('s1' if v < 0.4 else ('s2' if v < 0.6 else ('s3' if v < 0.75 else 's4')))) }}">{{ '–' if v is none else '%.2f'|format(v) }}</td>{% endfor %}
+  <td class="mono muted" style="font-size:11px">{% if x.stats %}{{ x.stats.mean|fmt(2) }} / {{ x.stats.std|fmt(3) }} / {{ x.stats.sharpness|fmt(1) }}{% endif %}</td>
+  <td class="muted" style="font-size:11px">{% for k, v in x.notes.items() %}{{ k }}: {{ v }}<br>{% endfor %}</td>
+  <td>{% if x.preview_url %}<a href="{{ x.preview_url }}" target="_blank"><img class="thumb" src="{{ x.preview_url }}" alt=""></a>{% elif x.status == 'ok' %}<a href="/api/v1/data/{{ ds.dataset_id }}/preview/z/{{ x.z }}.png" target="_blank" class="muted" style="font-size:11px">预览</a>{% endif %}</td>
+</tr>{% endfor %}
+</tbody></table></div>
+
+<h2>findings <span class="cnt">{{ findings|length }}</span></h2>
+<div class="scroll"><table class="dense"><thead><tr><th>z</th><th>层级 / 阶段</th><th>check → failure type</th><th>严重度</th><th class="num">score</th><th>坐标</th><th>证据</th></tr></thead><tbody>
+{% for f in findings %}<tr>
+  <td class="mono">{% if f.z is not none %}<a href="#z{{ f.z }}">{{ f.z }}</a>{% if f.z_to is not none %} <span class="muted">vs {{ f.z_to }}</span>{% endif %}{% else %}<b>block</b>{% endif %}</td>
+  <td>{{ f.level }} <span class="muted">{{ f.stage }}</span></td><td class="mono">{{ f.check }} → <b>{{ f.failure_type }}</b></td><td>{{ m.sev(f.severity) }}</td><td class="num mono">{{ f.score|fmt(2) }}</td>
+  <td class="mono" style="font-size:11px">{% if f.coordinate.bbox %}bbox {{ f.coordinate.bbox }}{% elif f.coordinate.shift %}shift dx={{ f.coordinate.shift.dx|fmt(0) }} dy={{ f.coordinate.shift.dy|fmt(0) }}{% else %}z_abs {{ f.coordinate.z_abs }}{% endif %}</td>
+  <td><details><summary>details</summary><pre class="json">{{ f.details|tojson(indent=0) }}</pre></details></td>
+</tr>{% else %}<tr><td colspan="7" class="muted">无</td></tr>{% endfor %}
+</tbody></table></div>
+
+<h2>ETL 指标 <span class="cnt">block</span></h2>
+<div class="tiles">{% for k, v in metrics.items() %}<div class="tile"><div class="k">{{ k }}</div><div class="v" style="font-size:15px">{% if v is mapping %}{% for a, b in v.items() %}{{ a }} {{ b }}<br>{% endfor %}{% elif k == 'bytes_read' %}{{ v|bytes }}{% elif k == 'retention_rate' %}{{ v|pct }}{% else %}{{ v|fmt(2) }}{% endif %}</div></div>{% endfor %}</div>
+{% else %}
+<div class="empty">这个 block 还没有 QC 结果。<button class="primary" style="margin-left:10px" onclick="runQC('{{ ds.dataset_id }}', this, ['{{ block.block_id }}'])">现在运行</button></div>
+{% endif %}
+{% endblock %}

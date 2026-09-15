@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}EM QC{% endblock %} · EM Image QC</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<div class="shell">
+<aside class="nav">
+  <a class="brand" href="/pipeline"><span class="logo">EM</span><span><b>EM Image QC</b><small>{{ settings.pipeline_version }}</small></span></a>
+  <a class="item {{ 'active' if active == 'pipeline' }}" href="/pipeline"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M7.4 11l9.2-4M7.4 13l9.2 4"/></svg>流水线</a>
+  <a class="item {{ 'active' if active == 'crawl' }}" href="/crawl"><svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>数据采集</a>
+  <a class="item {{ 'active' if active == 'datasets' }}" href="/"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>数据集</a>
+  <a class="item {{ 'active' if active == 'delivery' }}" href="/delivery"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/><path d="M17 15l3 2-3 2"/></svg>数据交付</a>
+  <a class="item {{ 'active' if active == 'patches' }}" href="/patches"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><path d="M17 13v8M13 17h8"/></svg>Patch Factory</a>
+  <a class="item {{ 'active' if active == 'runs' }}" href="/runs"><svg viewBox="0 0 24 24"><path d="M4 18h16M4 12h10M4 6h16"/><circle cx="18" cy="12" r="2"/></svg>运行记录</a>
+  <a class="item {{ 'active' if active == 'checks' }}" href="/checks"><svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>检查项</a>
+  <a class="item {{ 'active' if active == 'traces' }}" href="/traces"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Trace 与取数</a>
+  <div class="sep"></div>
+  <a class="item" href="/docs" target="_blank"><svg viewBox="0 0 24 24"><path d="M6 3h9l5 5v13H6z M14 3v6h6"/></svg>API 文档</a>
+</aside>
+<div class="content">
+  <div class="topbar">
+    <div class="crumbs">{% block crumbs %}<b>EM Image QC</b>{% endblock %}</div>
+    <span class="spacer"></span>
+    <span id="instance" class="pill" hidden></span>
+    <span id="live" class="live" title="服务与后台运行状态">连接中…</span>
+  </div>
+  <main>
+    <div id="flash" class="flash"></div>
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</div>
+</body>
+</html>

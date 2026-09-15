@@ -1,0 +1,56 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}流水线{% endblock %}
+{% block crumbs %}<b>流水线控制台</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Pipeline console</div><h1>流水线控制台</h1>
+<p class="sub">扫描数据 → 选数据集与检查项 → 启动 → 按节点跟踪进度与日志。</p></div>
+<div class="actions"><button class="primary" onclick="scanDatasets(this)">扫描</button></div></div>
+
+<div class="grid side">
+<section class="card">
+  <h2 style="margin-top:0">概览</h2>
+  <dl class="kv">
+    <dt>数据集</dt><dd>{{ status.datasets.total }} 个 · {{ status.runs.total }} 次运行</dd>
+    <dt>数据来源</dt><dd>本地{% if status.source.n_remote %} + {{ status.source.n_remote }} 个远程服务器{% endif %}</dd>
+    <dt>block</dt><dd>{{ status.pipeline.block_size_z }} 张切片 × {% if status.pipeline.block_size_xy %}{{ status.pipeline.block_size_xy }}² tile{% else %}整张平面{% endif %}</dd>
+    <dt>检查项</dt><dd>{{ status.pipeline.checks.implemented }} / {{ status.pipeline.checks.total }} 已实现 · <a href="/checks">查看</a></dd>
+    <dt>上次扫描</dt><dd id="last-scan" class="muted">{% if status.last_scan %}{{ status.last_scan.at|replace('T',' ') }}：新增 {{ status.last_scan.registered|length }}，更新 {{ status.last_scan.updated|length }}，错误 {{ status.last_scan.errors|length }}{% else %}尚未扫描{% endif %}</dd>
+  </dl>
+  <h2>资源 <span class="cnt" id="sys-meta"></span></h2>
+  <div id="sysmon" class="grid c3" style="gap:8px"><span class="muted">采样中…</span></div>
+</section>
+
+<section class="card">
+  <h2 style="margin-top:0">新建运行</h2>
+  <form id="launch" onsubmit="return launchRuns(event)">
+    <div class="field"><label>数据集（可多选）</label>
+      <div class="choices">
+      {% for d in datasets %}<label class="choice"><input type="checkbox" name="dataset" value="{{ d.dataset_id }}"> <b>{{ d.dataset_id }}</b> <span class="muted">{{ d.size_class }} · {{ d.n_blocks }} blocks · {{ d.shape.z }}×{{ d.shape.y }}×{{ d.shape.x }}</span> {{ m.grade(d.latest_grade) }}</label>{% else %}<span class="muted">没有已注册的数据集，先扫描</span>{% endfor %}
+      </div></div>
+    <div class="field"><label>block 范围 <span class="muted">留空 = 全部；填 block id，逗号分隔</span></label><input name="block_ids" class="text mono" placeholder="z00000-00099_y00000_x00000, …"></div>
+    <div class="field"><label>检查项 <span class="muted">全不选 = 全部</span> · <a href="#" onclick="toggleChecks(event,true)">全选</a> · <a href="#" onclick="toggleChecks(event,false)">清空</a></label>
+      <div class="choices two">
+      {% for c in checks %}<label class="choice {{ 'stub' if not c.implemented }}"><input type="checkbox" name="check" value="{{ c.name }}"> <span class="mono">{{ c.name }}</span> <span class="muted">{{ c.level }}{% if not c.implemented %} · stub{% endif %}</span></label>{% endfor %}
+      </div></div>
+    <details><summary>高级：阈值 / 参数覆盖（JSON）与通过标准</summary>
+      <div class="field"><label>thresholds <span class="muted">例 {"severe_blur": {"high": 0.3}}</span></label><textarea name="thresholds" rows="2" class="text mono">{}</textarea></div>
+      <div class="field"><label>params <span class="muted">例 {"crack": {"area_ref": 0.03}}</span></label><textarea name="params" rows="2" class="text mono">{}</textarea></div>
+      <div class="field"><label>不通过的最低严重度</label><select name="pass_max_severity" class="text"><option value="">high（默认）</option><option value="medium">medium</option><option value="critical">critical</option></select></div>
+    </details>
+    <div class="actions" style="margin-top:12px"><button class="primary" type="submit">启动运行</button><span id="launch-msg" class="muted"></span></div>
+  </form>
+</section>
+</div>
+
+<h2>运行中 <span class="cnt" id="active-count">{{ status.active|length }}</span></h2>
+<div id="active" class="active-list">{% if not status.active %}<div class="empty" id="active-empty">没有正在运行的任务</div>{% endif %}</div>
+
+<h2>日志 <span class="cnt" id="log-count"></span></h2>
+<div id="logpanel"></div>
+
+<h2>最近完成</h2>
+<div class="scroll"><table class="dense"><thead><tr><th>run</th><th>dataset</th><th>状态</th><th>等级</th><th class="num">quality</th><th>留存率</th><th>开始</th><th>结束</th><th></th></tr></thead><tbody>
+{% for r in recent %}<tr><td><a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a></td><td><a href="/datasets/{{ r.dataset_id }}">{{ r.dataset_id }}</a></td><td><span class="pill {{ 'ok' if r.status == 'done' }}">{{ r.status }}</span></td><td>{% for g, n in r.grade_counts|dictsort %}{{ m.grade(g) }}<span class="muted mono">×{{ n }}</span> {% endfor %}</td><td class="num mono">{{ r.quality_score|fmt(3) }}</td><td style="min-width:120px"><div style="display:flex;gap:8px;align-items:center">{{ m.meter(r.retention_rate) }}<span class="mono">{{ r.retention_rate|pct }}</span></div></td><td class="muted mono" style="font-size:11px">{{ (r.started_at or '')|replace('T',' ') }}</td><td class="muted mono" style="font-size:11px">{{ (r.finished_at or '')|replace('T',' ') }}</td><td><button onclick="rerun('{{ r.dataset_id }}', this)">再跑一次</button></td></tr>{% else %}<tr><td colspan="9" class="muted">还没有完成的运行</td></tr>{% endfor %}
+</tbody></table></div>
+<script>document.addEventListener('DOMContentLoaded', () => pipelineInit({{ status.active|map(attribute='run_id')|list|tojson }}));</script>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}Trace 与取数{% endblock %}
+{% block crumbs %}<b>Trace 与取数</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Lineage</div><h1>Trace 与取数记录</h1><p class="sub">QC 运行与算法步骤的执行记录，以及每一次切给算法的数据：什么时候、取了哪个坐标范围、用了哪次 QC 的过滤条件。</p></div></div>
+<div class="tiles"><div class="tile"><div class="k">traces</div><div class="v">{{ traces|length }}</div></div>{% for k, v in served_kinds.items() %}<div class="tile"><div class="k">{{ k }}</div><div class="v">{{ v }}</div></div>{% endfor %}</div>
+<h2>agent 执行记录</h2>
+<div class="scroll"><table class="dense"><thead><tr><th>时间</th><th>dataset</th><th>run</th><th>agent</th><th>step / action</th><th>状态</th><th class="num">ms</th><th>算法 / 模型 / 实验</th><th>输出</th></tr></thead><tbody>
+{% for t in traces %}<tr><td class="muted mono" style="font-size:11px">{{ (t.created_at or '')|replace('T',' ') }}</td><td><a href="/datasets/{{ t.dataset_id }}">{{ t.dataset_id }}</a></td><td>{% if t.run_id %}<a href="/runs/{{ t.run_id }}" class="mono">#{{ t.run_id }}</a>{% endif %}</td><td>{{ t.agent }}</td><td>{{ t.step }} <span class="muted">{{ t.action }}</span></td><td><span class="pill {{ 'ok' if t.status == 'ok' }}">{{ t.status }}</span></td><td class="num mono">{{ t.duration_ms|fmt(0) }}</td><td class="muted mono" style="font-size:11px">{{ t.algo_version or '–' }} / {{ t.model_version or '–' }} / {{ t.experiment_id or '–' }}</td><td><details><summary>output</summary><pre class="json">{{ t.output|tojson(indent=0) }}</pre></details></td></tr>{% else %}<tr><td colspan="9" class="muted">无</td></tr>{% endfor %}
+</tbody></table></div>
+<h2>取数日志 <span class="cnt">最近 100 条</span></h2>
+<div class="scroll"><table class="dense"><thead><tr><th>时间</th><th>dataset</th><th>类型</th><th>范围</th><th>格式</th><th class="num">字节</th><th class="num">ms</th><th>客户端</th><th>QC 过滤</th></tr></thead><tbody>
+{% for x in served %}<tr><td class="muted mono" style="font-size:11px">{{ x.created_at }}</td><td>{{ x.dataset_id }}</td><td><span class="pill">{{ x.kind }}</span></td><td class="mono" style="font-size:11px">{{ x.bbox_json|tojson }}</td><td>{{ x.fmt }}</td><td class="num mono">{{ x.n_bytes|bytes }}</td><td class="num mono">{{ x.duration_ms|fmt(0) }}</td><td class="muted">{{ x.client }}</td><td class="mono muted" style="font-size:11px">{{ x.qc_filter_json|tojson if x.qc_filter_json else '' }}</td></tr>{% else %}<tr><td colspan="9" class="muted">还没有取数请求</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

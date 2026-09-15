@@ -1,0 +1,20 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}检查项{% endblock %}
+{% block crumbs %}<b>检查项</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">QC checks · {{ checks|length }}</div><h1>检查项</h1><p class="sub">每项检查给每张切片一个 0 到 1 的分数，按刻度尺映射严重度：critical、high 不通过，medium、low 只提醒。标为 stub 的检查尚未实现，不参与判定。</p></div></div>
+{% for level, title, stage in [('slice','切片级检查','slice_qc'), ('serial','序列级检查','serial_qc')] %}
+<h2>{{ title }} <span class="cnt">stage {{ stage }} · {{ checks|selectattr('level','equalto',level)|list|length }} 项</span></h2>
+<div class="grid c2">
+{% for c in checks if c.level == level %}
+<div class="card">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><b class="mono">{{ c.name }}</b><span class="pill on">{{ c.failure_type }}</span>{% if c.implemented %}<span class="tag impl">{{ c.maturity }}</span>{% else %}<span class="tag stub">stub</span>{% endif %}</div>
+  <p style="margin:8px 0 6px;font-size:13px">{{ c.description }}</p>
+  {% if c.planned %}<p class="muted" style="margin:0 0 6px;font-size:12.5px">计划：{{ c.planned }}</p>{% endif %}
+  {% if c.implemented %}<div style="margin-top:10px">{{ m.thresholds(c.thresholds) }}</div>{% endif %}
+  {% if c.default_params %}<div class="muted mono" style="font-size:11px;margin-top:8px">{% for k, v in c.default_params.items() %}{{ k }}={{ v }} {% endfor %}</div>{% endif %}
+</div>
+{% endfor %}
+</div>
+{% endfor %}
+{% endblock %}

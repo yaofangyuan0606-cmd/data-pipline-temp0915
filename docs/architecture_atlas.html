@@ -1,0 +1,904 @@
+<title>EM QC 平台架构图集</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root{
+  color-scheme:light;
+  --ground:#f4f6f8; --surface:#ffffff; --surface-2:#eef1f5; --surface-3:#e3e8ee; --hair:#d3dae2; --hair-2:#bcc6d1;
+  --ink:#12161a; --ink-2:#4d5863; --muted:#7b8793;
+  --accent:#0f6e7a; --accent-ink:#0a545e; --accent-soft:#d8eef1; --accent-line:#4fa7b3;
+  --warm:#a8541c; --warm-soft:#f6e7da;
+  --violet:#5b4b9a; --violet-soft:#e9e4f6;
+  --gA:#2b8a3e; --gB:#6a8f00; --gC:#e8590c; --gD:#7a1c1c;
+  --sans:"IBM Plex Sans","Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --ground:#13161b; --surface:#1b2027; --surface-2:#232932; --surface-3:#2c333d; --hair:#323a45; --hair-2:#414b57;
+  --ink:#e8ecef; --ink-2:#a8b2bd; --muted:#7e8894;
+  --accent:#4fb3bf; --accent-ink:#8ad4de; --accent-soft:#14383d; --accent-line:#2e8d99;
+  --warm:#e08a4f; --warm-soft:#3a2a1c;
+  --violet:#a898e0; --violet-soft:#2b2540;
+  --gA:#51cf66; --gB:#9ccc2b; --gC:#ff922b; --gD:#c92a2a;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --ground:#13161b; --surface:#1b2027; --surface-2:#232932; --surface-3:#2c333d; --hair:#323a45; --hair-2:#414b57;
+  --ink:#e8ecef; --ink-2:#a8b2bd; --muted:#7e8894;
+  --accent:#4fb3bf; --accent-ink:#8ad4de; --accent-soft:#14383d; --accent-line:#2e8d99;
+  --warm:#e08a4f; --warm-soft:#3a2a1c;
+  --violet:#a898e0; --violet-soft:#2b2540;
+  --gA:#51cf66; --gB:#9ccc2b; --gC:#ff922b; --gD:#c92a2a;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font:15px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent-ink);text-decoration:none}a:hover{text-decoration:underline}
+.wrap{max-width:1180px;margin:0 auto;padding:0 26px 90px;display:grid;grid-template-columns:206px minmax(0,1fr);gap:44px}
+@media (max-width:900px){.wrap{grid-template-columns:1fr;gap:0}nav.toc{position:static;border:0;padding:0 0 14px;margin-bottom:10px;border-bottom:1px solid var(--hair)}}
+header.hd{grid-column:1/-1;padding:42px 0 24px;border-bottom:1px solid var(--hair);margin-bottom:26px}
+.eyebrow{font:500 11.5px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent-ink)}
+h1{font:600 32px/1.2 var(--sans);letter-spacing:-.015em;margin:10px 0 10px;text-wrap:balance}
+.lede{font-size:16px;color:var(--ink-2);max-width:46em;margin:0 0 18px}
+.chips{display:flex;gap:7px;flex-wrap:wrap}
+.chip{font:500 11.5px/1 var(--mono);padding:6px 10px;border:1px solid var(--hair);border-radius:4px;background:var(--surface);color:var(--ink-2)}
+.chip b{color:var(--ink);font-weight:600}
+.chip.new{border-color:var(--violet);color:var(--violet)}
+nav.toc{position:sticky;top:18px;align-self:start;font-size:13.5px;line-height:1.5;border-right:1px solid var(--hair);padding-right:14px}
+nav.toc a{display:block;padding:5px 0;color:var(--ink-2)}nav.toc a:hover{color:var(--ink)}
+nav.toc .n{font:500 11px var(--mono);color:var(--muted);margin-right:8px}
+main{min-width:0}
+section{margin:0 0 52px;scroll-margin-top:20px}
+h2{font:600 22px/1.3 var(--sans);margin:0 0 6px;display:flex;gap:11px;align-items:baseline;text-wrap:balance}
+h2 .n{font:500 12.5px var(--mono);color:var(--accent-ink);letter-spacing:.05em}
+h3{font:600 16px/1.3 var(--sans);margin:22px 0 6px}
+p{margin:0 0 12px;max-width:48em}
+ul{margin:0 0 14px;padding-left:1.3em;max-width:48em}li{margin:4px 0}
+code{font-family:var(--mono);font-size:.89em;background:var(--surface-2);padding:1px 5px;border-radius:3px}
+figure{margin:16px 0 20px;padding:18px 18px 12px;background:var(--surface);border:1px solid var(--hair);border-radius:8px;overflow-x:auto}
+figure svg{display:block;width:100%;height:auto;min-width:640px;color:var(--ink)}
+figcaption{font-size:13px;color:var(--ink-2);margin-top:12px;max-width:62em}
+.scroll{overflow-x:auto;margin:12px 0 16px}
+table{border-collapse:collapse;width:100%;font-size:13.5px;background:var(--surface);border:1px solid var(--hair);border-radius:8px;overflow:hidden;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:8px 11px;border-bottom:1px solid var(--hair);vertical-align:top}
+th{font:600 11px/1.3 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--surface-2);white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+td.num{text-align:right}
+.mono{font-family:var(--mono);font-size:.9em}
+.muted{color:var(--muted)}
+.tag{display:inline-block;font:500 10.5px/1 var(--mono);padding:3px 6px;border-radius:3px;border:1px solid var(--hair-2);color:var(--ink-2);white-space:nowrap;margin-right:4px}
+.tag.done{border-color:var(--gA);color:var(--gA)}
+.tag.part{border-color:var(--gC);color:var(--gC)}
+.tag.none{border-color:var(--gD);color:var(--gD)}
+.note{border-left:3px solid var(--accent);background:var(--surface);padding:11px 15px;border-radius:0 8px 8px 0;margin:14px 0;font-size:13.5px;color:var(--ink-2)}
+.note b{color:var(--ink)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-2);margin-top:10px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:22px;height:0;border-top:2px solid currentColor;display:inline-block}
+.legend i.dash{border-top-style:dashed}
+.legend i.box{width:12px;height:12px;border:1px solid var(--hair-2);border-radius:2px;background:var(--surface-2)}
+.legend i.box.acc{background:var(--accent-soft);border-color:var(--accent-line)}
+.legend i.box.warm{background:var(--warm-soft);border-color:var(--warm)}
+.legend i.box.vio{background:var(--violet-soft);border-color:var(--violet)}
+footer{grid-column:1/-1;border-top:1px solid var(--hair);padding-top:14px;font-size:12.5px;color:var(--muted)}
+svg .bx{fill:var(--surface-2);stroke:var(--hair-2);stroke-width:1.1}
+svg .bx-a{fill:var(--accent-soft);stroke:var(--accent-line);stroke-width:1.3}
+svg .bx-w{fill:var(--warm-soft);stroke:var(--warm);stroke-width:1.2}
+svg .bx-v{fill:var(--violet-soft);stroke:var(--violet);stroke-width:1.2}
+svg .bx-p{fill:var(--surface);stroke:var(--hair);stroke-width:1}
+svg .band{fill:var(--surface-3);opacity:.5;stroke:none}
+svg .ln{stroke:currentColor;stroke-width:1.2;fill:none}
+svg .ln-a{stroke:var(--accent);stroke-width:1.7;fill:none}
+svg .ln-v{stroke:var(--violet);stroke-width:1.5;fill:none}
+svg .ln-d{stroke:var(--muted);stroke-width:1.1;fill:none;stroke-dasharray:5 4}
+svg .t{font:500 12px var(--sans);fill:var(--ink)}
+svg .th{font:600 12.5px var(--sans);fill:var(--ink)}
+svg .ts{font:11px var(--sans);fill:var(--ink-2)}
+svg .tm{font:10.5px var(--mono);fill:var(--ink-2)}
+svg .tk{font:500 10.5px var(--mono);fill:var(--muted)}
+svg .tl{font:11px var(--sans);fill:var(--accent-ink)}
+svg .tv{font:11px var(--sans);fill:var(--violet)}
+svg .band-lbl{font:600 10.5px var(--mono);letter-spacing:.08em;fill:var(--muted)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+
+<div class="wrap">
+<header class="hd">
+  <div class="eyebrow">EM Image QC · architecture atlas · v4</div>
+  <h1>EM QC 平台架构图集</h1>
+  <p class="lede">连续切片电镜数据清洗平台的全部结构图，覆盖需求 1（Dataset Registry 与 Data API）、需求 2（EM 图像 QC）、需求 3（Patch Factory / Training Data API）：分层架构、模块依赖、MySQL 数据模型与写入流程、端到端闭环、QC 流水线、Patch Factory 内部、两条交付链路、执行节点、接口总览，以及每个阶段算法上还缺什么。紫色标出 2026-09-14 新增的部分。</p>
+  <div class="chips">
+    <span class="chip">block <b>1024² × 100 张</b></span>
+    <span class="chip">MySQL <b>18 张表</b></span>
+    <span class="chip">HTTP <b>66 个端点</b></span>
+    <span class="chip">页面 <b>10 个</b></span>
+    <span class="chip">检查项 <b>16 项 · 12 已实现</b></span>
+    <span class="chip new">Patch Factory <b>7 种 patch · 4 种可出</b></span>
+    <span class="chip">2026-09-14</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="目录">
+  <a href="#s1"><span class="n">1</span>系统分层架构</a>
+  <a href="#s2"><span class="n">2</span>模块依赖</a>
+  <a href="#s3"><span class="n">3</span>MySQL 数据模型</a>
+  <a href="#s4"><span class="n">4</span>MySQL 写入流程</a>
+  <a href="#s5"><span class="n">5</span>整体闭环</a>
+  <a href="#s6"><span class="n">6</span>QC 流水线五阶段</a>
+  <a href="#s7"><span class="n">7</span>block 划分</a>
+  <a href="#s8"><span class="n">8</span>Patch Factory 内部</a>
+  <a href="#s9"><span class="n">9</span>两条交付链路</a>
+  <a href="#s10"><span class="n">10</span>单次运行的执行节点</a>
+  <a href="#s11"><span class="n">11</span>接口总览</a>
+  <a href="#s12"><span class="n">12</span>每个阶段算法缺什么</a>
+</nav>
+
+<main>
+
+<section id="s1">
+<h2><span class="n">1</span>系统分层架构</h2>
+<p>六层，自下而上。数据源对平台永远只读；所有落盘产物都在 <code>var/</code> 之下。处理层现在有三个引擎：图像 QC、标签验证、Patch Factory。</p>
+<figure>
+<svg viewBox="0 0 980 580" role="img" aria-label="六层架构：数据源、接入层、处理层（QC 引擎、标签验证、Patch Factory、导出、资源采样）、存储层、服务层、消费方">
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+    <marker id="a1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  </defs>
+  <rect class="band" x="96" y="8"   width="876" height="70"/>
+  <rect class="band" x="96" y="182" width="876" height="78"/>
+  <rect class="band" x="96" y="372" width="876" height="78"/>
+
+  <text class="band-lbl" x="8" y="46">消费方</text>
+  <rect class="bx-p" x="110" y="18" width="180" height="50" rx="6"/><text class="th" x="200" y="38" text-anchor="middle">浏览器看板</text><text class="tm" x="200" y="55" text-anchor="middle">10 个页面</text>
+  <rect class="bx-p" x="304" y="18" width="220" height="50" rx="6"/><text class="th" x="414" y="38" text-anchor="middle">训练程序</text><text class="tm" x="414" y="55" text-anchor="middle">ShardStore · PatchSetClient</text>
+  <rect class="bx-p" x="538" y="18" width="200" height="50" rx="6"/><text class="th" x="638" y="38" text-anchor="middle">推理程序</text><text class="tm" x="638" y="55" text-anchor="middle">StreamClient</text>
+  <rect class="bx-p" x="752" y="18" width="206" height="50" rx="6"/><text class="th" x="855" y="38" text-anchor="middle">命令行 / 调度器</text><text class="tm" x="855" y="55" text-anchor="middle">python -m emqc · 12 子命令</text>
+
+  <text class="band-lbl" x="8" y="124">服务层</text>
+  <rect class="bx-a" x="110" y="94" width="848" height="66" rx="6"/>
+  <text class="th" x="126" y="114">FastAPI  ·  api/app.py</text>
+  <rect class="bx-p" x="126" y="122" width="104" height="28" rx="4"/><text class="tm" x="178" y="140" text-anchor="middle">dashboard</text>
+  <rect class="bx-p" x="238" y="122" width="96" height="28" rx="4"/><text class="tm" x="286" y="140" text-anchor="middle">datasets</text>
+  <rect class="bx-p" x="342" y="122" width="60" height="28" rx="4"/><text class="tm" x="372" y="140" text-anchor="middle">qc</text>
+  <rect class="bx-p" x="410" y="122" width="70" height="28" rx="4"/><text class="tm" x="445" y="140" text-anchor="middle">data</text>
+  <rect class="bx-p" x="488" y="122" width="94" height="28" rx="4"/><text class="tm" x="535" y="140" text-anchor="middle">delivery</text>
+  <rect class="bx-v" x="590" y="122" width="96" height="28" rx="4"/><text class="tm" x="638" y="140" text-anchor="middle">patches</text>
+  <rect class="bx-p" x="694" y="122" width="80" height="28" rx="4"/><text class="tm" x="734" y="140" text-anchor="middle">traces</text>
+  <rect class="bx-p" x="782" y="122" width="164" height="28" rx="4"/><text class="tm" x="864" y="140" text-anchor="middle">pipeline · system</text>
+
+  <text class="band-lbl" x="8" y="226">存储层</text>
+  <rect class="bx" x="110" y="192" width="300" height="58" rx="6"/><text class="th" x="260" y="214" text-anchor="middle">MySQL  em_qc</text><text class="tm" x="260" y="232" text-anchor="middle">18 张表 · 唯一事实来源</text>
+  <rect class="bx" x="426" y="192" width="168" height="58" rx="6"/><text class="t" x="510" y="214" text-anchor="middle">var/previews</text><text class="tm" x="510" y="232" text-anchor="middle">缩略图 · 拼图</text>
+  <rect class="bx" x="610" y="192" width="168" height="58" rx="6"/><text class="t" x="694" y="214" text-anchor="middle">var/exports</text><text class="tm" x="694" y="232" text-anchor="middle">训练分片</text>
+  <rect class="bx" x="794" y="192" width="164" height="58" rx="6"/><text class="t" x="876" y="214" text-anchor="middle">var/cache</text><text class="tm" x="876" y="232" text-anchor="middle">远程字节缓存</text>
+
+  <text class="band-lbl" x="8" y="312">处理层</text>
+  <rect class="bx-a" x="110" y="276" width="190" height="72" rx="6"/>
+  <text class="th" x="122" y="296">图像 QC 引擎</text><text class="tm" x="122" y="313">qc/stages · slice_checks</text><text class="tm" x="122" y="328">serial_checks · runner</text><text class="tm" x="122" y="343">sampling · preview</text>
+  <rect class="bx-v" x="312" y="276" width="156" height="72" rx="6"/>
+  <text class="th" x="324" y="296">标签验证</text><text class="tm" x="324" y="313">qc/labels</text><text class="tm" x="324" y="328">7 项一致性检查</text><text class="tm" x="324" y="343">互斥掩码重叠</text>
+  <rect class="bx-v" x="480" y="276" width="212" height="72" rx="6"/>
+  <text class="th" x="492" y="296">Patch Factory</text><text class="tm" x="492" y="313">patches/partition · 划分与难度</text><text class="tm" x="492" y="328">patches/generate · 7 种生成器</text><text class="tm" x="492" y="343">patches/checks · 泄漏与重复</text>
+  <rect class="bx" x="704" y="276" width="124" height="72" rx="6"/>
+  <text class="th" x="716" y="296">导出任务</text><text class="tm" x="716" y="313">qc/export</text><text class="tm" x="716" y="328">分片 · 续传</text>
+  <rect class="bx" x="840" y="276" width="118" height="72" rx="6"/>
+  <text class="th" x="852" y="296">资源采样</text><text class="tm" x="852" y="313">sysmon</text><text class="tm" x="852" y="328">CPU · 内存 · GPU</text>
+
+  <text class="band-lbl" x="8" y="416">接入层</text>
+  <rect class="bx-a" x="110" y="382" width="848" height="58" rx="6"/>
+  <text class="th" x="126" y="402">数据接入  ·  emqc/registry/</text>
+  <text class="tm" x="126" y="420">同一套只读接口</text>
+  <rect class="bx-p" x="300" y="390" width="130" height="28" rx="4"/><text class="tm" x="365" y="408" text-anchor="middle">fs · 本地/SFTP</text>
+  <rect class="bx-p" x="438" y="390" width="130" height="28" rx="4"/><text class="tm" x="503" y="408" text-anchor="middle">readers · EM</text>
+  <rect class="bx-v" x="576" y="390" width="130" height="28" rx="4"/><text class="tm" x="641" y="408" text-anchor="middle">labels · 标签卷</text>
+  <rect class="bx-p" x="714" y="390" width="112" height="28" rx="4"/><text class="tm" x="770" y="408" text-anchor="middle">manifest</text>
+  <rect class="bx-p" x="834" y="390" width="112" height="28" rx="4"/><text class="tm" x="890" y="408" text-anchor="middle">scanner</text>
+
+  <text class="band-lbl" x="8" y="508">数据源</text>
+  <rect class="bx" x="110" y="472" width="410" height="66" rx="6"/>
+  <text class="th" x="126" y="492">本地目录</text><text class="tm" x="126" y="510">data_root/project_terminal/…</text><text class="tm" x="126" y="526">EM 图像栈 · 标签栈 · 预测</text>
+  <rect class="bx" x="536" y="472" width="422" height="66" rx="6"/>
+  <text class="th" x="552" y="492">远程服务器（只读 · SSH）</text><text class="tm" x="552" y="510">sftp://<用户>@<服务器地址>/…/<用户></text><text class="tm" x="552" y="526">按需读切片 · rsync 批量预取</text>
+
+  <line x1="315" y1="472" x2="315" y2="442" class="ln-a" marker-end="url(#a1a)"/>
+  <line x1="747" y1="472" x2="747" y2="442" class="ln-a" marker-end="url(#a1a)"/>
+  <text class="tl" x="360" y="462">逐张读取，源数据只读</text>
+  <line x1="205" y1="382" x2="205" y2="350" class="ln-a" marker-end="url(#a1a)"/>
+  <line x1="390" y1="382" x2="390" y2="350" class="ln-v" marker-end="url(#a1a)"/>
+  <line x1="586" y1="382" x2="586" y2="350" class="ln-v" marker-end="url(#a1a)"/>
+  <line x1="766" y1="382" x2="766" y2="350" class="ln" marker-end="url(#a1)"/>
+  <line x1="205" y1="276" x2="205" y2="252" class="ln-a" marker-end="url(#a1a)"/>
+  <line x1="390" y1="276" x2="390" y2="252" class="ln-v" marker-end="url(#a1a)"/>
+  <line x1="586" y1="276" x2="586" y2="252" class="ln-v" marker-end="url(#a1a)"/>
+  <line x1="694" y1="276" x2="694" y2="252" class="ln" marker-end="url(#a1)"/>
+  <text class="tl" x="216" y="270">写结果</text>
+  <line x1="260" y1="192" x2="260" y2="162" class="ln" marker-start="url(#a1)" marker-end="url(#a1)"/>
+  <text class="tl" x="272" y="182">读写</text>
+  <line x1="694" y1="192" x2="694" y2="162" class="ln" marker-start="url(#a1)"/>
+  <line x1="200" y1="94" x2="200" y2="70" class="ln" marker-end="url(#a1)"/>
+  <line x1="414" y1="94" x2="414" y2="70" class="ln-v" marker-end="url(#a1a)"/>
+  <text class="tv" x="426" y="86">patch 集合 · 分片</text>
+  <line x1="638" y1="94" x2="638" y2="70" class="ln-a" marker-end="url(#a1a)"/>
+  <text class="tl" x="650" y="86">按坐标即时取块</text>
+  <line x1="855" y1="94" x2="855" y2="70" class="ln" marker-end="url(#a1)"/>
+  <path d="M330 68 L 330 86 L 52 86 L 52 312 L 106 312" class="ln-d" marker-end="url(#a1)"/>
+  <text class="tk" x="66" y="250" transform="rotate(-90 66 250)" text-anchor="middle">算法产出回写注册表：预测 · 骨架 · 版本 · trace</text>
+</svg>
+<figcaption>青色为 EM 数据主路径，紫色为需求 3 新增：标签卷经同一套接入层读取，标签验证和 Patch Factory 只消费 QC 结果与标签，产出坐标与血缘写回 MySQL，像素由服务层按需切。算法产出仍沿虚线回写注册表，成为下一轮 hard_negative / proofreading 的输入。</figcaption>
+</figure>
+</section>
+
+<section id="s2">
+<h2><span class="n">2</span>模块依赖</h2>
+<p>箭头方向是"依赖谁"。<code>registry/fs</code> 仍是最底层；Patch Factory 依赖 QC 引擎与接入层，不反向；所有路由只组合下层。</p>
+<figure>
+<svg viewBox="0 0 980 450" role="img" aria-label="模块依赖：六个包，接入层、QC 引擎、Patch Factory、存储、服务、入口，包之间六条依赖箭头">
+  <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+  <marker id="a2v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--violet)"/></marker></defs>
+
+  <!-- G1 接入层 -->
+  <rect class="bx-p" x="16" y="40" width="236" height="170" rx="7"/>
+  <text class="th" x="30" y="62">registry/  ·  数据接入</text>
+  <rect class="bx-a" x="30" y="76" width="208" height="26" rx="4"/><text class="tm" x="40" y="93">fs</text><text class="tk" x="228" y="93" text-anchor="end">本地 / SFTP</text>
+  <rect class="bx" x="30" y="110" width="208" height="26" rx="4"/><text class="tm" x="40" y="127">readers</text><text class="tk" x="228" y="127" text-anchor="end">EM · 三种格式</text>
+  <rect class="bx-v" x="30" y="144" width="208" height="26" rx="4"/><text class="tm" x="40" y="161">labels</text><text class="tk" x="228" y="161" text-anchor="end">rgb24 · 等距抽样</text>
+  <text class="tk" x="30" y="188">manifest · scanner：清单推断与注册分块</text>
+  <text class="tk" x="30" y="202">其余四个模块都依赖 fs</text>
+
+  <!-- G2 QC 引擎 -->
+  <rect class="bx-p" x="280" y="40" width="300" height="170" rx="7"/>
+  <text class="th" x="294" y="62">qc/  ·  图像 QC 引擎 + 标签验证</text>
+  <rect class="bx-a" x="294" y="76" width="88" height="26" rx="4"/><text class="tm" x="338" y="93" text-anchor="middle">base</text>
+  <rect class="bx-a" x="390" y="76" width="88" height="26" rx="4"/><text class="tm" x="434" y="93" text-anchor="middle">runner</text>
+  <rect class="bx-v" x="486" y="76" width="80" height="26" rx="4"/><text class="tm" x="526" y="93" text-anchor="middle">labels</text>
+  <rect class="bx" x="294" y="110" width="88" height="26" rx="4"/><text class="tm" x="338" y="127" text-anchor="middle">slice_ck</text>
+  <rect class="bx" x="390" y="110" width="88" height="26" rx="4"/><text class="tm" x="434" y="127" text-anchor="middle">serial_ck</text>
+  <rect class="bx" x="486" y="110" width="80" height="26" rx="4"/><text class="tm" x="526" y="127" text-anchor="middle">stages</text>
+  <rect class="bx" x="294" y="144" width="88" height="26" rx="4"/><text class="tm" x="338" y="161" text-anchor="middle">preview</text>
+  <rect class="bx" x="390" y="144" width="88" height="26" rx="4"/><text class="tm" x="434" y="161" text-anchor="middle">sampling</text>
+  <rect class="bx" x="486" y="144" width="80" height="26" rx="4"/><text class="tm" x="526" y="161" text-anchor="middle">export</text>
+  <text class="tk" x="294" y="188">检查与阶段依赖 base；runner 编排五阶段</text>
+  <text class="tk" x="294" y="202">labels（紫）读标签卷并验证，与 EM 检查同栈</text>
+
+  <!-- G3 Patch Factory -->
+  <rect class="bx-p" x="608" y="40" width="356" height="170" rx="7"/>
+  <text class="th" x="622" y="62">patches/  ·  Patch Factory</text>
+  <rect class="bx-v" x="622" y="76" width="328" height="26" rx="4"/><text class="tm" x="632" y="93">partition</text><text class="tk" x="940" y="93" text-anchor="end">holdout 划分 · 难度</text>
+  <rect class="bx-v" x="622" y="110" width="328" height="26" rx="4"/><text class="tm" x="632" y="127">checks</text><text class="tk" x="940" y="127" text-anchor="end">泄漏 · 重复 · 越界</text>
+  <rect class="bx-v" x="622" y="144" width="328" height="26" rx="4"/><text class="tm" x="632" y="161">generate</text><text class="tk" x="940" y="161" text-anchor="end">7 种 patch 生成器</text>
+  <text class="tk" x="622" y="188">generate 用 qc/labels 读标签、用 QC 结果表筛合格窗口</text>
+  <text class="tk" x="622" y="202">runner 收尾时调用 partition 写划分与难度（唯一一处向上依赖）</text>
+
+  <line x1="280" y1="125" x2="258" y2="125" class="ln" marker-end="url(#a2)"/>
+  <text class="tk" x="266" y="30" text-anchor="middle">读 EM / 标签</text>
+  <line x1="608" y1="125" x2="586" y2="125" class="ln-v" marker-end="url(#a2v)"/>
+  <text class="tv" x="594" y="30" text-anchor="middle">读标签 / 结果表</text>
+
+  <!-- G4 存储 -->
+  <rect class="bx-p" x="16" y="258" width="236" height="160" rx="7"/>
+  <text class="th" x="30" y="280">db/  ·  存储</text>
+  <rect class="bx-a" x="30" y="294" width="208" height="26" rx="4"/><text class="tm" x="40" y="311">models</text><text class="tk" x="228" y="311" text-anchor="end">18 张表</text>
+  <rect class="bx" x="30" y="328" width="208" height="26" rx="4"/><text class="tm" x="40" y="345">base</text><text class="tk" x="228" y="345" text-anchor="end">会话 · 建表 · 加列</text>
+  <text class="tk" x="30" y="372">被接入层、QC 引擎、Patch Factory</text>
+  <text class="tk" x="30" y="386">与全部路由引用；没有反向依赖</text>
+
+  <!-- G5 服务 -->
+  <rect class="bx-p" x="280" y="258" width="300" height="160" rx="7"/>
+  <text class="th" x="294" y="280">api/  ·  服务层</text>
+  <rect class="bx" x="294" y="294" width="88" height="26" rx="4"/><text class="tm" x="338" y="311" text-anchor="middle">dashboard</text>
+  <rect class="bx" x="390" y="294" width="88" height="26" rx="4"/><text class="tm" x="434" y="311" text-anchor="middle">datasets</text>
+  <rect class="bx" x="486" y="294" width="80" height="26" rx="4"/><text class="tm" x="526" y="311" text-anchor="middle">qc</text>
+  <rect class="bx" x="294" y="328" width="88" height="26" rx="4"/><text class="tm" x="338" y="345" text-anchor="middle">data</text>
+  <rect class="bx" x="390" y="328" width="88" height="26" rx="4"/><text class="tm" x="434" y="345" text-anchor="middle">delivery</text>
+  <rect class="bx-v" x="486" y="328" width="80" height="26" rx="4"/><text class="tm" x="526" y="345" text-anchor="middle">patches</text>
+  <rect class="bx" x="294" y="362" width="88" height="26" rx="4"/><text class="tm" x="338" y="379" text-anchor="middle">traces</text>
+  <rect class="bx" x="390" y="362" width="176" height="26" rx="4"/><text class="tm" x="478" y="379" text-anchor="middle">pipeline · system</text>
+  <text class="tk" x="294" y="406">app.py 挂载全部路由 · serializers 出 JSON · 路由只组合下层</text>
+
+  <!-- G6 入口 -->
+  <rect class="bx-p" x="608" y="258" width="356" height="160" rx="7"/>
+  <text class="th" x="622" y="280">入口</text>
+  <rect class="bx" x="622" y="294" width="328" height="26" rx="4"/><text class="tm" x="632" y="311">cli.py</text><text class="tk" x="940" y="311" text-anchor="end">12 个子命令</text>
+  <rect class="bx" x="622" y="328" width="328" height="26" rx="4"/><text class="tm" x="632" y="345">loader.py</text><text class="tk" x="940" y="345" text-anchor="end">算法侧三个客户端</text>
+  <text class="tk" x="622" y="372">ShardStore（分片）· StreamClient（推理流）· PatchSetClient（patch 集合）</text>
+  <text class="tk" x="622" y="386">只用标准库与 numpy，不依赖平台内部，可单独交给算法组</text>
+  <text class="tk" x="622" y="400">cli 直接调用 qc / patches / export，不经过 HTTP</text>
+
+  <line x1="280" y1="338" x2="258" y2="338" class="ln" marker-end="url(#a2)"/>
+  <text class="tk" x="266" y="250" text-anchor="middle">读写</text>
+  <line x1="608" y1="338" x2="586" y2="338" class="ln" marker-end="url(#a2)"/>
+  <text class="tk" x="594" y="250" text-anchor="middle">调用</text>
+  <line x1="380" y1="258" x2="380" y2="214" class="ln" marker-end="url(#a2)"/>
+  <text class="tk" x="388" y="240">调用 qc</text>
+  <path d="M560 258 C 560 236, 600 230, 640 216" class="ln-v" marker-end="url(#a2v)"/>
+  <text class="tv" x="524" y="252">patches 路由</text>
+  <line x1="800" y1="258" x2="800" y2="214" class="ln-v" marker-end="url(#a2v)"/>
+  <text class="tv" x="808" y="240">cli → patches</text>
+</svg>
+<figcaption>紫色是需求 3 新增的四个模块与一个路由。依赖仍无环：<code>patches/generate</code> 通过 <code>qc/labels</code> 读标签、通过 <code>qc/runner</code> 的结果表判断合格窗口；<code>qc/runner</code> 在收尾阶段调用 <code>patches/partition</code> 写划分与难度，这是 QC 引擎唯一一处向上依赖，方向是"结果写入"而非控制流。</figcaption>
+</figure>
+</section>
+
+<section id="s3">
+<h2><span class="n">3</span>MySQL 数据模型</h2>
+<p>18 张表分四域。实线是真实外键（级联删除），虚线是代码层面的软引用。</p>
+<figure>
+<svg viewBox="0 0 980 660" role="img" aria-label="MySQL 实体关系图：注册表域、QC 结果域、训练数据域、交付与血缘域，18 张表">
+  <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>
+  <marker id="a3d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+
+  <text class="band-lbl" x="16" y="18">注册表域</text>
+  <text class="band-lbl" x="268" y="18">QC 结果域</text>
+  <text class="band-lbl" x="552" y="18">训练数据域</text>
+  <text class="band-lbl" x="764" y="18">交付与血缘域</text>
+
+  <!-- 注册表域 -->
+  <rect class="bx-a" x="16" y="36" width="236" height="80" rx="6"/>
+  <text class="th" x="28" y="55">datasets</text><text class="tk" x="240" y="55" text-anchor="end">31 列</text>
+  <text class="tm" x="28" y="73">PK dataset_id · size_class</text>
+  <text class="tm" x="28" y="89">species · brain_region · voxel</text>
+  <text class="tm" x="28" y="105">staining · modality · batch</text>
+
+  <rect class="bx" x="16" y="132" width="236" height="62" rx="6"/>
+  <text class="th" x="28" y="151">dataset_assets</text><text class="tk" x="240" y="151" text-anchor="end">13 列</text>
+  <text class="tm" x="28" y="169">9 种类型 · algo/model/exp</text>
+  <text class="tm" x="28" y="185">extra_json.validation</text>
+
+  <rect class="bx" x="16" y="210" width="236" height="46" rx="6"/>
+  <text class="th" x="28" y="229">dataset_versions</text><text class="tk" x="240" y="229" text-anchor="end">6 列</text>
+  <text class="tm" x="28" y="247">data / algo / model / exp</text>
+
+  <rect class="bx-v" x="16" y="272" width="236" height="112" rx="6"/>
+  <text class="th" x="28" y="291">blocks</text><text class="tk" x="240" y="291" text-anchor="end">26 列</text>
+  <text class="tm" x="28" y="309">z/y/x · split（用途）</text>
+  <text class="tm" x="28" y="325">holdout（划分）· difficulty</text>
+  <text class="tm" x="28" y="341">label_version · source_volume</text>
+  <text class="tm" x="28" y="357">preprocessing · augmentation</text>
+  <text class="tm" x="28" y="373">region · latest_grade</text>
+
+  <line x1="134" y1="132" x2="134" y2="118" class="ln" marker-end="url(#a3)"/>
+  <line x1="134" y1="210" x2="134" y2="196" class="ln" marker-end="url(#a3)"/>
+  <line x1="134" y1="272" x2="134" y2="258" class="ln" marker-end="url(#a3)"/>
+
+  <!-- QC 结果域 -->
+  <rect class="bx-a" x="268" y="36" width="268" height="62" rx="6"/>
+  <text class="th" x="280" y="55">qc_runs</text><text class="tk" x="524" y="55" text-anchor="end">16 列</text>
+  <text class="tm" x="280" y="73">status · stage · config_json</text>
+  <text class="tm" x="280" y="89">quality · retention · grade_counts</text>
+  <line x1="268" y1="66" x2="256" y2="66" class="ln" marker-end="url(#a3)"/>
+
+  <rect class="bx" x="268" y="112" width="128" height="60" rx="6"/>
+  <text class="th" x="278" y="131">qc_slices</text><text class="tk" x="386" y="131" text-anchor="end">14 列</text>
+  <text class="tm" x="278" y="149">每张切片一行</text><text class="tm" x="278" y="165">16 分数 · bbox</text>
+  <rect class="bx" x="408" y="112" width="128" height="60" rx="6"/>
+  <text class="th" x="418" y="131">qc_blocks</text><text class="tk" x="526" y="131" text-anchor="end">20 列</text>
+  <text class="tm" x="418" y="149">等级 · 留存率</text><text class="tm" x="418" y="165">最长连续段</text>
+  <rect class="bx" x="268" y="188" width="128" height="60" rx="6"/>
+  <text class="th" x="278" y="207">qc_findings</text><text class="tk" x="386" y="207" text-anchor="end">16 列</text>
+  <text class="tm" x="278" y="225">一个问题一行</text><text class="tm" x="278" y="241">坐标 · 证据</text>
+  <rect class="bx" x="408" y="188" width="128" height="60" rx="6"/>
+  <text class="th" x="418" y="207">etl_metrics</text><text class="tk" x="526" y="207" text-anchor="end">9 列</text>
+  <text class="tm" x="418" y="225">留存率 · 耗时</text><text class="tm" x="418" y="241">字节 · CPU</text>
+  <rect class="bx" x="268" y="264" width="128" height="46" rx="6"/>
+  <text class="th" x="278" y="283">qc_run_events</text>
+  <text class="tm" x="278" y="301">实时日志</text>
+
+  <line x1="402" y1="98" x2="402" y2="298" class="ln"/>
+  <line x1="402" y1="112" x2="402" y2="98" class="ln" marker-end="url(#a3)"/>
+  <line x1="396" y1="142" x2="402" y2="142" class="ln"/><line x1="408" y1="142" x2="402" y2="142" class="ln"/>
+  <line x1="396" y1="218" x2="402" y2="218" class="ln"/><line x1="408" y1="218" x2="402" y2="218" class="ln"/>
+  <line x1="396" y1="298" x2="402" y2="298" class="ln"/>
+  <text class="tk" x="268" y="330">5 张表以 run_id 为外键，级联删除</text>
+
+  <!-- 训练数据域 -->
+  <rect class="bx-v" x="552" y="36" width="196" height="76" rx="6"/>
+  <text class="th" x="562" y="55">label_qc</text><text class="tk" x="738" y="55" text-anchor="end">14 列</text>
+  <text class="tm" x="562" y="73">资产 × z 一行</text>
+  <text class="tm" x="562" y="89">issues · frac_in_fill</text>
+  <text class="tk" x="562" y="105">FK asset_id → dataset_assets</text>
+
+  <rect class="bx-v" x="552" y="128" width="196" height="92" rx="6"/>
+  <text class="th" x="562" y="147">patch_sets</text><text class="tk" x="738" y="147" text-anchor="end">18 列</text>
+  <text class="tm" x="562" y="165">patch_type · status</text>
+  <text class="tm" x="562" y="181">qc_run · label_asset</text>
+  <text class="tm" x="562" y="197">preproc · augment</text>
+  <text class="tm" x="562" y="213">counts · checks</text>
+
+  <rect class="bx-v" x="552" y="236" width="196" height="92" rx="6"/>
+  <text class="th" x="562" y="255">patches</text><text class="tk" x="738" y="255" text-anchor="end">16 列</text>
+  <text class="tm" x="562" y="273">z0..x1 · holdout</text>
+  <text class="tm" x="562" y="289">difficulty · grade</text>
+  <text class="tm" x="562" y="305">region · meta_json</text>
+  <text class="tk" x="562" y="321">像素不存，URL 即时切</text>
+  <line x1="650" y1="236" x2="650" y2="222" class="ln" marker-end="url(#a3)"/>
+
+  <!-- 交付与血缘域 -->
+  <rect class="bx-w" x="764" y="36" width="200" height="54" rx="6"/>
+  <text class="th" x="774" y="55">export_jobs</text><text class="tk" x="954" y="55" text-anchor="end">18 列</text>
+  <text class="tm" x="774" y="75">训练分片导出 · 进度</text>
+  <rect class="bx" x="764" y="102" width="200" height="42" rx="6"/>
+  <text class="th" x="774" y="121">export_events</text><text class="tk" x="954" y="121" text-anchor="end">7 列</text>
+  <text class="tm" x="774" y="138">导出日志</text>
+  <line x1="864" y1="102" x2="864" y2="92" class="ln" marker-end="url(#a3)"/>
+  <rect class="bx-w" x="764" y="160" width="200" height="54" rx="6"/>
+  <text class="th" x="774" y="179">stream_sessions</text><text class="tk" x="954" y="179" text-anchor="end">17 列</text>
+  <text class="tm" x="774" y="199">推理流会话 · 游标</text>
+  <rect class="bx" x="764" y="230" width="200" height="54" rx="6"/>
+  <text class="th" x="774" y="249">serve_log</text><text class="tk" x="954" y="249" text-anchor="end">11 列</text>
+  <text class="tm" x="774" y="269">每次取数一行 · 血缘</text>
+  <rect class="bx" x="764" y="300" width="200" height="54" rx="6"/>
+  <text class="th" x="774" y="319">agent_traces</text><text class="tk" x="954" y="319" text-anchor="end">14 列</text>
+  <text class="tm" x="774" y="339">QC 与算法的执行记录</text>
+
+  <path d="M756 63 L 756 400 L 8 400 L 8 76 L 12 76" class="ln-d" marker-end="url(#a3d)"/>
+  <path d="M764 63 L 756 63 M764 187 L 756 187 M764 257 L 756 257 M764 327 L 756 327 M748 174 L 756 174 M748 282 L 756 282" class="ln-d"/>
+  <text class="tk" x="160" y="416">软引用 dataset_id / run_id / stream_id：无外键约束，删除数据集时由代码清理</text>
+
+  <rect class="bx-p" x="16" y="432" width="948" height="58" rx="6"/>
+  <text class="th" x="30" y="452">当前实际行数（mouse_30um + human_30um）</text>
+  <text class="tm" x="30" y="470">datasets 2 · dataset_assets 14 · blocks 164 · qc_runs 14 · qc_slices 2476 · qc_findings 1300+ · label_qc 300</text>
+  <text class="tm" x="30" y="484">patch_sets 4 · patches 221 · export_jobs 2 · stream_sessions 4 · agent_traces 12</text>
+
+  <rect class="bx-p" x="16" y="504" width="948" height="140" rx="6"/>
+  <text class="th" x="30" y="524">粒度对照</text>
+  <text class="tm" x="30" y="546">blocks</text><text class="ts" x="190" y="546">一个序列单元一行，跨运行保留；两个正交轴：split（训练 / 推理用途）与 holdout（train / val / test 划分）</text>
+  <text class="tm" x="30" y="566">qc_slices</text><text class="ts" x="190" y="566">运行 × block × 切片</text>
+  <text class="tm" x="30" y="586">label_qc</text><text class="ts" x="190" y="586">标签资产 × 切片；资产级摘要与 usable_for_patches 在 dataset_assets.extra_json</text>
+  <text class="tm" x="30" y="606">patches</text><text class="ts" x="190" y="606">集合 × patch，一行一个坐标框加证据；EM 与标签像素由 url_em / url_label 按同一 bbox 即时切</text>
+  <text class="tm" x="30" y="628">列名 holdout</text><text class="ts" x="190" y="628">接口字段叫 partition；库里用 holdout 是因为 PARTITION 是 MySQL 保留字</text>
+</svg>
+<figcaption>训练数据域是新增的第四域：<code>label_qc</code> 回答"标签能不能用"，<code>patch_sets</code> 与 <code>patches</code> 回答"训练数据从哪来、按什么规则切、检查过没有"。它们与其他三域只通过 <code>dataset_id</code>、<code>asset_id</code> 与 QC 运行号相连。</figcaption>
+<div class="legend"><span><i></i>外键（级联删除）</span><span style="color:var(--muted)"><i class="dash"></i>软引用（无约束）</span><span><i class="box acc"></i>域内主表</span><span><i class="box vio"></i>需求 3 新增</span><span><i class="box warm"></i>交付任务</span></div>
+</figure>
+</section>
+
+<section id="s4">
+<h2><span class="n">4</span>MySQL 写入流程</h2>
+<p>七个动作，各自写入的表互不重叠。第 2 步按"运行 + block 先删后插"组织，重跑任一 block 幂等；第 4 步按资产先删后插，重验幂等。</p>
+<figure>
+<svg viewBox="0 0 980 740" role="img" aria-label="七个动作的写入流程：扫描、跑 QC、收尾、验证标签、生成 patch 集合、导出分片、推理流与算法回写">
+  <defs><marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker></defs>
+  <line x1="150" y1="30" x2="150" y2="700" class="ln" stroke-dasharray="3 4" opacity=".4"/>
+
+  <circle cx="150" cy="56" r="7" fill="var(--accent)"/>
+  <rect class="bx-a" x="16" y="36" width="120" height="40" rx="5"/><text class="t" x="76" y="53" text-anchor="middle">1 · 扫描</text><text class="tk" x="76" y="68" text-anchor="middle">registry/scanner</text>
+  <rect class="bx" x="186" y="30" width="176" height="26" rx="4"/><text class="tm" x="196" y="47">datasets</text>
+  <rect class="bx" x="372" y="30" width="176" height="26" rx="4"/><text class="tm" x="382" y="47">dataset_assets</text><text class="tk" x="538" y="47" text-anchor="end">合并 extra</text>
+  <rect class="bx" x="558" y="30" width="176" height="26" rx="4"/><text class="tm" x="568" y="47">dataset_versions</text>
+  <rect class="bx" x="744" y="30" width="176" height="26" rx="4"/><text class="tm" x="754" y="47">blocks</text><text class="tk" x="910" y="47" text-anchor="end">+ 来源卷 · 脑区</text>
+  <line x1="186" y1="43" x2="158" y2="52" class="ln-a" marker-start="url(#a4)"/>
+
+  <circle cx="150" cy="140" r="7" fill="var(--accent)"/>
+  <rect class="bx-a" x="16" y="116" width="120" height="48" rx="5"/><text class="t" x="76" y="135" text-anchor="middle">2 · 跑 QC</text><text class="tk" x="76" y="150" text-anchor="middle">qc/runner</text><text class="tk" x="76" y="162" text-anchor="middle">每个 block 一轮</text>
+  <rect class="bx" x="186" y="90" width="176" height="26" rx="4"/><text class="tm" x="196" y="107">qc_runs</text>
+  <rect class="bx" x="186" y="122" width="176" height="26" rx="4"/><text class="tm" x="196" y="139">qc_run_events</text>
+  <rect class="bx" x="372" y="122" width="176" height="26" rx="4"/><text class="tm" x="382" y="139">qc_slices</text><text class="tk" x="538" y="139" text-anchor="end">bbox 并集</text>
+  <rect class="bx" x="558" y="122" width="176" height="26" rx="4"/><text class="tm" x="568" y="139">qc_findings</text>
+  <rect class="bx" x="744" y="122" width="176" height="26" rx="4"/><text class="tm" x="754" y="139">qc_blocks</text>
+  <rect class="bx" x="372" y="154" width="176" height="26" rx="4"/><text class="tm" x="382" y="171">etl_metrics</text>
+  <rect class="bx-v" x="558" y="154" width="362" height="26" rx="4"/><text class="tm" x="568" y="171">blocks.latest_* · difficulty</text><text class="tk" x="910" y="171" text-anchor="end">每个 block 完成时</text>
+  <line x1="186" y1="103" x2="158" y2="132" class="ln-a" marker-start="url(#a4)"/>
+
+  <circle cx="150" cy="236" r="7" fill="var(--accent)"/>
+  <rect class="bx-a" x="16" y="212" width="120" height="48" rx="5"/><text class="t" x="76" y="231" text-anchor="middle">3 · 收尾</text><text class="tk" x="76" y="246" text-anchor="middle">finalize</text><text class="tk" x="76" y="258" text-anchor="middle">全部 block 完成后</text>
+  <rect class="bx" x="186" y="206" width="240" height="26" rx="4"/><text class="tm" x="196" y="223">datasets</text><text class="tk" x="416" y="223" text-anchor="end">等级 · 留存率 · partition 配置</text>
+  <rect class="bx-v" x="436" y="206" width="240" height="26" rx="4"/><text class="tm" x="446" y="223">blocks</text><text class="tk" x="666" y="223" text-anchor="end">split · holdout · 标签版本</text>
+  <rect class="bx" x="686" y="206" width="234" height="26" rx="4"/><text class="tm" x="696" y="223">agent_traces</text><text class="tk" x="910" y="223" text-anchor="end">QC 自身留痕</text>
+  <rect class="bx" x="186" y="238" width="240" height="26" rx="4"/><text class="tm" x="196" y="255">etl_metrics</text><text class="tk" x="416" y="255" text-anchor="end">数据集级汇总</text>
+  <line x1="186" y1="219" x2="158" y2="230" class="ln-a" marker-start="url(#a4)"/>
+  <text class="tl" x="436" y="255">划分依据每个 block 最新等级；已分配的不重排，D 级 → excluded</text>
+
+  <circle cx="150" cy="324" r="7" fill="var(--violet)"/>
+  <rect class="bx-v" x="16" y="300" width="120" height="48" rx="5"/><text class="t" x="76" y="319" text-anchor="middle">4 · 验证标签</text><text class="tk" x="76" y="334" text-anchor="middle">qc/labels</text><text class="tk" x="76" y="346" text-anchor="middle">每个资产一轮</text>
+  <rect class="bx-v" x="186" y="300" width="240" height="26" rx="4"/><text class="tm" x="196" y="317">label_qc</text><text class="tk" x="416" y="317" text-anchor="end">按资产先删后插 · 每 z 一行</text>
+  <rect class="bx-v" x="436" y="300" width="484" height="26" rx="4"/><text class="tm" x="446" y="317">dataset_assets.extra_json.validation</text><text class="tk" x="910" y="317" text-anchor="end">status · usable_for_patches · notes</text>
+  <line x1="186" y1="313" x2="158" y2="320" class="ln-v" marker-start="url(#a4)"/>
+  <text class="tv" x="196" y="345">对不上的资产判 fail 并跳过逐层读取；互斥掩码重叠写 extra_json.label_conflict</text>
+
+  <circle cx="150" cy="412" r="7" fill="var(--violet)"/>
+  <rect class="bx-v" x="16" y="388" width="120" height="48" rx="5"/><text class="t" x="76" y="407" text-anchor="middle">5 · 生成集合</text><text class="tk" x="76" y="422" text-anchor="middle">patches/generate</text><text class="tk" x="76" y="434" text-anchor="middle">同步，秒级</text>
+  <rect class="bx-v" x="186" y="388" width="240" height="26" rx="4"/><text class="tm" x="196" y="405">patch_sets</text><text class="tk" x="416" y="405" text-anchor="end">血缘 · 计数 · 检查结果</text>
+  <rect class="bx-v" x="436" y="388" width="240" height="26" rx="4"/><text class="tm" x="446" y="405">patches</text><text class="tk" x="666" y="405" text-anchor="end">坐标 · 折 · 证据</text>
+  <rect class="bx-p" x="686" y="388" width="234" height="26" rx="4"/><text class="tm" x="696" y="405">不落盘任何像素</text>
+  <line x1="186" y1="401" x2="158" y2="408" class="ln-v" marker-start="url(#a4)"/>
+  <text class="tv" x="196" y="433">读：qc_slices（每 block 最新运行）· qc_findings · blocks.holdout · 标签卷中心层</text>
+
+  <circle cx="150" cy="500" r="7" fill="var(--accent)"/>
+  <rect class="bx-a" x="16" y="476" width="120" height="48" rx="5"/><text class="t" x="76" y="495" text-anchor="middle">6 · 导出分片</text><text class="tk" x="76" y="510" text-anchor="middle">qc/export</text><text class="tk" x="76" y="522" text-anchor="middle">后台任务</text>
+  <rect class="bx" x="186" y="476" width="240" height="26" rx="4"/><text class="tm" x="196" y="493">export_jobs</text>
+  <rect class="bx" x="436" y="476" width="240" height="26" rx="4"/><text class="tm" x="446" y="493">export_events</text>
+  <rect class="bx-p" x="686" y="476" width="234" height="26" rx="4"/><text class="tm" x="696" y="493">var/exports/… 落盘</text>
+  <rect class="bx" x="186" y="508" width="240" height="26" rx="4"/><text class="tm" x="196" y="525">serve_log</text><text class="tk" x="416" y="525" text-anchor="end">kind = export</text>
+  <line x1="186" y1="489" x2="158" y2="496" class="ln-a" marker-start="url(#a4)"/>
+
+  <circle cx="150" cy="590" r="7" fill="var(--accent)"/>
+  <rect class="bx-a" x="16" y="566" width="120" height="48" rx="5"/><text class="t" x="76" y="585" text-anchor="middle">7 · 推理流</text><text class="tk" x="76" y="600" text-anchor="middle">api/delivery</text><text class="tk" x="76" y="612" text-anchor="middle">+ 算法回写</text>
+  <rect class="bx" x="186" y="566" width="240" height="26" rx="4"/><text class="tm" x="196" y="583">stream_sessions</text>
+  <rect class="bx" x="436" y="566" width="240" height="26" rx="4"/><text class="tm" x="446" y="583">serve_log</text><text class="tk" x="666" y="583" text-anchor="end">cutout · label_cutout</text>
+  <rect class="bx" x="686" y="566" width="234" height="26" rx="4"/><text class="tm" x="696" y="583">agent_traces</text><text class="tk" x="910" y="583" text-anchor="end">算法自报</text>
+  <rect class="bx" x="186" y="598" width="240" height="26" rx="4"/><text class="tm" x="196" y="615">dataset_assets</text><text class="tk" x="416" y="615" text-anchor="end">登记预测（走 FS 判存在）</text>
+  <rect class="bx" x="436" y="598" width="240" height="26" rx="4"/><text class="tm" x="446" y="615">dataset_versions</text>
+  <line x1="186" y1="579" x2="158" y2="586" class="ln-a" marker-start="url(#a4)"/>
+
+  <rect class="bx-p" x="16" y="652" width="904" height="48" rx="6"/>
+  <text class="th" x="30" y="671">删除数据集</text>
+  <text class="tm" x="150" y="671">按 dataset_id 清注册表 4 张，按 run_id 清 QC 5 张，再清 label_qc、patch_sets/patches、trace 与取数日志，最后删预览目录</text>
+  <text class="tm" x="150" y="688">软引用没有级联，这一步由代码显式完成</text>
+</svg>
+<figcaption>第 4、5 步是新增的写入者。第 5 步只读不写像素，生成一个 64 patch 的集合在真实数据上耗时 1 到 9 秒。第 3 步现在多写三样东西：划分（<code>holdout</code>）、标签版本、以及每个 block 的预处理与增强声明默认值。</figcaption>
+</figure>
+</section>
+
+<section id="s5">
+<h2><span class="n">5</span>整体闭环</h2>
+<p>从发现数据到算法产出回写，八步成环。Patch Factory 插在 QC 划分之后、交付之前：它决定训练到底喂什么。</p>
+<figure>
+<svg viewBox="0 0 980 500" role="img" aria-label="八步闭环：发现注册、图像 QC、分级、两个轴的划分、Patch Factory、训练数据与推理流、模型训练与推理、产出回写">
+  <defs><marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+  <marker id="a5v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--violet)"/></marker></defs>
+
+  <rect class="bx" x="16" y="44" width="140" height="70" rx="6"/>
+  <text class="tk" x="26" y="60">1</text><text class="th" x="86" y="78" text-anchor="middle">发现与注册</text><text class="tm" x="86" y="96" text-anchor="middle">scan</text><text class="tk" x="86" y="109" text-anchor="middle">本地或远程</text>
+  <rect class="bx-a" x="176" y="44" width="140" height="70" rx="6"/>
+  <text class="tk" x="186" y="60">2</text><text class="th" x="246" y="78" text-anchor="middle">图像 QC</text><text class="tm" x="246" y="96" text-anchor="middle">16 项 · 逐 block</text><text class="tk" x="246" y="109" text-anchor="middle">五阶段</text>
+  <rect class="bx" x="336" y="44" width="140" height="70" rx="6"/>
+  <text class="tk" x="346" y="60">3</text><text class="th" x="406" y="78" text-anchor="middle">分级</text><text class="tm" x="406" y="96" text-anchor="middle">A / B / C / D</text>
+  <rect class="bx" x="496" y="44" width="140" height="70" rx="6"/>
+  <text class="tk" x="506" y="60">4</text><text class="th" x="566" y="78" text-anchor="middle">两个轴的划分</text><text class="tm" x="566" y="96" text-anchor="middle">用途 · train/val/test</text>
+  <rect class="bx-v" x="656" y="44" width="140" height="70" rx="6"/>
+  <text class="tk" x="666" y="60">5</text><text class="th" x="726" y="78" text-anchor="middle">Patch Factory</text><text class="tm" x="726" y="96" text-anchor="middle">验证标签 · 出集合</text>
+  <line x1="176" y1="79" x2="162" y2="79" class="ln-a" marker-end="url(#a5)"/>
+  <line x1="336" y1="79" x2="322" y2="79" class="ln-a" marker-end="url(#a5)"/>
+  <line x1="496" y1="79" x2="482" y2="79" class="ln-a" marker-end="url(#a5)"/>
+  <line x1="656" y1="79" x2="642" y2="79" class="ln-v" marker-end="url(#a5v)"/>
+
+  <rect class="bx-w" x="816" y="180" width="148" height="70" rx="6"/>
+  <text class="tk" x="826" y="196">6a</text><text class="th" x="890" y="214" text-anchor="middle">训练数据</text><text class="tm" x="890" y="232" text-anchor="middle">patch 集合 · 分片</text><text class="tk" x="890" y="245" text-anchor="middle">落盘一次或按坐标切</text>
+  <rect class="bx" x="656" y="180" width="140" height="70" rx="6"/>
+  <text class="tk" x="666" y="196">7a</text><text class="th" x="726" y="214" text-anchor="middle">模型训练</text><text class="tm" x="726" y="232" text-anchor="middle">PatchSetClient</text><text class="tk" x="726" y="245" text-anchor="middle">ShardStore</text>
+  <rect class="bx-w" x="816" y="290" width="148" height="70" rx="6"/>
+  <text class="tk" x="826" y="306">6b</text><text class="th" x="890" y="324" text-anchor="middle">推理流会话</text><text class="tm" x="890" y="342" text-anchor="middle">整卷读一遍 · 不落盘</text>
+  <rect class="bx" x="656" y="290" width="140" height="70" rx="6"/>
+  <text class="tk" x="666" y="306">7b</text><text class="th" x="726" y="324" text-anchor="middle">模型推理</text><text class="tm" x="726" y="342" text-anchor="middle">StreamClient</text><text class="tk" x="726" y="355" text-anchor="middle">领子块</text>
+
+  <path d="M796 79 L 890 79 L 890 176" class="ln-v" marker-end="url(#a5v)"/>
+  <line x1="816" y1="215" x2="800" y2="215" class="ln-a" marker-end="url(#a5)"/>
+  <line x1="816" y1="325" x2="800" y2="325" class="ln-a" marker-end="url(#a5)"/>
+  <path d="M566 114 L 566 262 L 890 262 L 890 286" class="ln-a" marker-end="url(#a5)"/>
+  <text class="tl" x="300" y="254">推理用途的 block 整卷进入推理流</text>
+
+  <rect class="bx-a" x="16" y="290" width="388" height="90" rx="6"/>
+  <text class="tk" x="26" y="308">8</text><text class="th" x="210" y="326" text-anchor="middle">产出回写注册表</text>
+  <text class="tm" x="210" y="346" text-anchor="middle">预测 · 突触 · 细胞器 · 骨架</text>
+  <text class="tm" x="210" y="364" text-anchor="middle">algo / model / 实验版本 · 执行 trace</text>
+  <path d="M656 215 L 500 215 L 500 315 L 408 315" class="ln-a" marker-end="url(#a5)"/>
+  <line x1="656" y1="340" x2="408" y2="340" class="ln-a" marker-end="url(#a5)"/>
+  <path d="M16 350 L 8 350 L 8 79 L 12 79" class="ln-a" marker-end="url(#a5)"/>
+  <text class="tl" x="26" y="176">产出成为新资产</text><text class="tl" x="26" y="192">下一轮可对它做 QC</text>
+  <path d="M380 290 L 380 140 L 726 140 L 726 118" class="ln-v" marker-end="url(#a5v)"/>
+  <text class="tv" x="390" y="168">有了预测，hard_negative</text><text class="tv" x="390" y="184">与 proofreading 才能生成</text>
+
+  <rect class="bx-p" x="16" y="398" width="948" height="86" rx="6"/>
+  <text class="th" x="30" y="418">全程留痕</text>
+  <text class="tm" x="30" y="438">qc_run_events · etl_metrics</text><text class="ts" x="300" y="438">每次阶段切换、留存率、耗时、字节、CPU</text>
+  <text class="tm" x="30" y="456">label_qc · patch_sets.checks</text><text class="ts" x="300" y="456">标签能不能用、集合有没有泄漏与重复</text>
+  <text class="tm" x="30" y="474">serve_log · agent_traces</text><text class="ts" x="300" y="474">每一次取数的坐标与过滤条件（含标签 cutout）、QC 与算法两侧的执行记录</text>
+</svg>
+<figcaption>紫色回路是新的：算法回写的预测同时是下一轮 QC 的对象，也是 Patch Factory 里 hard_negative 与 proofreading 的输入。当前真实数据没有模型预测，这条回路还空着，这也是路线图第 4 步起的共同前提。</figcaption>
+</figure>
+</section>
+
+<section id="s6">
+<h2><span class="n">6</span>QC 流水线五阶段</h2>
+<p>按 block 组执行。全分辨率图像只在第一阶段存在，读一张、算完、丢掉，内存占用与数据集大小无关。</p>
+<figure>
+<svg viewBox="0 0 980 400" role="img" aria-label="QC 五阶段：ingest、slice_qc、serial_qc、aggregate、persist">
+  <defs><marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+  <rect class="bx-a" x="16" y="30" width="178" height="118" rx="6"/>
+  <text class="th" x="30" y="52">1 · ingest</text><text class="tk" x="180" y="52" text-anchor="end">≈ 92% 耗时</text>
+  <text class="ts" x="30" y="74">逐张读取，判 ok / 缺失 / 损坏</text><text class="ts" x="30" y="92">先找填充值连通域</text><text class="ts" x="30" y="110">再在有效像素上算统计量</text><text class="ts" x="30" y="128">产出预览缩略图与序列缩略图</text>
+  <rect class="bx" x="210" y="30" width="178" height="118" rx="6"/>
+  <text class="th" x="224" y="52">2 · slice_qc</text>
+  <text class="ts" x="224" y="74">10 项切片级检查</text><text class="ts" x="224" y="92">只用统计量与缩略图</text><text class="ts" x="224" y="110">结构性失败的切片</text><text class="ts" x="224" y="128">退出参考链</text>
+  <rect class="bx" x="404" y="30" width="178" height="118" rx="6"/>
+  <text class="th" x="418" y="52">3 · serial_qc</text>
+  <text class="ts" x="418" y="74">6 项序列级检查</text><text class="ts" x="418" y="92">缩略图两两相位相关</text><text class="ts" x="418" y="110">参考切片两步回退</text><text class="ts" x="418" y="128">可产生 block 级结论</text>
+  <rect class="bx" x="598" y="30" width="178" height="118" rx="6"/>
+  <text class="th" x="612" y="52">4 · aggregate</text>
+  <text class="ts" x="612" y="74">切片综合分取最小值</text><text class="ts" x="612" y="92">留存率 · 等级 A/B/C/D</text><text class="ts" x="612" y="110">最长连续可用段</text><text class="ts" x="612" y="128">medium 以上存缩略图</text>
+  <rect class="bx" x="792" y="30" width="172" height="118" rx="6"/>
+  <text class="th" x="806" y="52">5 · persist</text>
+  <text class="ts" x="806" y="74">写 5 张 QC 表</text><text class="ts" x="806" y="92">按运行 + block 幂等</text><text class="ts" x="806" y="110">更新 block 等级与难度</text><text class="ts" x="806" y="128">记录阶段耗时与资源</text>
+  <line x1="210" y1="89" x2="196" y2="89" class="ln" marker-end="url(#a6)"/>
+  <line x1="404" y1="89" x2="390" y2="89" class="ln" marker-end="url(#a6)"/>
+  <line x1="598" y1="89" x2="584" y2="89" class="ln" marker-end="url(#a6)"/>
+  <line x1="792" y1="89" x2="778" y2="89" class="ln" marker-end="url(#a6)"/>
+  <rect x="16" y="172" width="178" height="30" rx="4" fill="var(--warm)" opacity=".85"/>
+  <text class="t" x="105" y="192" text-anchor="middle" fill="#fff">全分辨率图：仅此刻</text>
+  <rect x="210" y="172" width="754" height="30" rx="4" fill="var(--gA)" opacity=".8"/>
+  <text class="t" x="587" y="192" text-anchor="middle" fill="#fff">之后每张切片只剩 14 到 21 个统计量与两张缩略图</text>
+  <text class="tk" x="16" y="228">mouse_30um 单 block 25.5 s，其中读取与解码 23.5 s；16 项检查合计 2.1 s。这条流水线是 I/O 密集的，多机加速的上限是聚合读带宽</text>
+  <rect class="bx-p" x="16" y="248" width="470" height="136" rx="6"/>
+  <text class="th" x="30" y="270">10 项切片级检查</text>
+  <text class="ts" x="30" y="292">已实现　缺失 · 损坏 · 空白 · 严重模糊 · 饱和</text>
+  <text class="ts" x="30" y="312">　　　　裂缝（三分类：crack / no_coverage / missing_region）</text>
+  <text class="ts" x="30" y="332">　　　　亮度突变 · 对比度漂移</text>
+  <text class="ts" x="30" y="356">未实现　charging artifact · 污染</text>
+  <text class="ts" x="30" y="376">未实现的检查分数记 null，不伪装成通过</text>
+  <rect class="bx-p" x="500" y="248" width="464" height="136" rx="6"/>
+  <text class="th" x="514" y="270">6 项序列级检查</text>
+  <text class="ts" x="514" y="292">已实现　切片跳变 · z-order 错误</text>
+  <text class="ts" x="514" y="312">　　　　全局错位 · 局部错位</text>
+  <text class="ts" x="514" y="336">未实现　局部形变 · section deformation</text>
+  <text class="ts" x="514" y="360">比较尺度统一到约 32 nm/px，缺体素尺寸时退化为像素比例</text>
+  <text class="ts" x="514" y="378">阈值按名义 tile 短边算，边界 tile 不再偏敏感</text>
+</svg>
+<figcaption>2026-09-14 的三处修正都在这条流水线里：裂缝检查改为三分类（22 处未成像区域不再被叫作裂缝），切片记录的坐标带上了 findings 的包围盒并集，错位阈值改用名义 tile 尺寸。</figcaption>
+</figure>
+</section>
+
+<section id="s7">
+<h2><span class="n">7</span>block 划分</h2>
+<p>block 是 QC、划分与 patch 采样的共同单元：连续 100 张切片乘一个 1024 见方的 XY tile。同一 z 段的所有 tile 一起处理，每张切片只解码一次。</p>
+<figure>
+<svg viewBox="0 0 980 330" role="img" aria-label="block 划分：一张 2048 见方的切片按 1024 切成四个 tile，100 张连续切片构成一段 z，得到四个 block">
+  <defs><marker id="a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+  <rect class="bx" x="96" y="86" width="188" height="188"/>
+  <rect class="bx" x="82" y="72" width="188" height="188"/>
+  <rect class="bx" x="68" y="58" width="188" height="188"/>
+  <rect class="bx-a" x="54" y="44" width="188" height="188"/>
+  <line x1="148" y1="44" x2="148" y2="232" class="ln-a"/>
+  <line x1="54" y1="138" x2="242" y2="138" class="ln-a"/>
+  <text class="tm" x="101" y="96" text-anchor="middle">y0 x0</text><text class="tm" x="195" y="96" text-anchor="middle">y0 x1024</text>
+  <text class="tm" x="101" y="190" text-anchor="middle">y1024 x0</text><text class="tm" x="195" y="190" text-anchor="middle">y1024 x1024</text>
+  <text class="th" x="148" y="32" text-anchor="middle">一张切片 2048 × 2048（mip1）</text>
+  <text class="tk" x="296" y="272">z = 0 … 99</text>
+  <rect class="bx-a" x="360" y="118" width="150" height="52" rx="6"/>
+  <text class="th" x="435" y="140" text-anchor="middle">解码一次</text><text class="tm" x="435" y="158" text-anchor="middle">read_slice(z)</text>
+  <line x1="300" y1="144" x2="356" y2="144" class="ln" marker-end="url(#a7)"/>
+  <g>
+    <rect class="bx" x="596" y="34" width="300" height="46" rx="5"/><text class="tm" x="608" y="54">z00000-00099_y00000_x00000</text><text class="ts" x="608" y="71">train 折 · B · 难度 0.25</text>
+    <rect class="bx" x="596" y="94" width="300" height="46" rx="5"/><text class="tm" x="608" y="114">z00000-00099_y00000_x01024</text><text class="ts" x="608" y="131">train 折 · B · 难度 0.21</text>
+    <rect class="bx" x="596" y="154" width="300" height="46" rx="5"/><text class="tm" x="608" y="174">z00000-00099_y01024_x00000</text><text class="ts" x="608" y="191">test 折 · B · 难度 0.23</text>
+    <rect class="bx" x="596" y="214" width="300" height="46" rx="5"/><text class="tm" x="608" y="234">z00000-00099_y01024_x01024</text><text class="ts" x="608" y="251">val 折 · B · 难度 0.19</text>
+  </g>
+  <path d="M510 144 C 552 144, 560 57, 592 57" class="ln" marker-end="url(#a7)"/>
+  <path d="M510 144 C 552 144, 560 117, 592 117" class="ln" marker-end="url(#a7)"/>
+  <path d="M510 144 C 552 144, 560 177, 592 177" class="ln" marker-end="url(#a7)"/>
+  <path d="M510 144 C 552 144, 560 237, 592 237" class="ln" marker-end="url(#a7)"/>
+  <text class="tl" x="520" y="284">裁给各 tile</text>
+  <rect class="bx-p" x="54" y="288" width="842" height="34" rx="6"/>
+  <text class="ts" x="68" y="310">block 边界是硬切分：patch 永不跨 block，所以 train / val / test 之间的 overlap 泄漏在构造上为零；相邻块共享组织上下文作为软信号报告</text>
+</svg>
+<figcaption>右侧四个 block 的折与难度是 mouse_30um 的真实结果。划分按 block 且稳定：重跑 QC 不重排，新出现的可用 block 补最缺的一折。</figcaption>
+</figure>
+</section>
+
+<section id="s8">
+<h2><span class="n">8</span>Patch Factory 内部</h2>
+<p>三道门，顺序固定：标签先过验证，block 先有划分，然后才生成集合；每个集合出门前跑一遍泄漏与重复检查。</p>
+<figure>
+<svg viewBox="0 0 980 520" role="img" aria-label="Patch Factory 内部流程：输入 QC 结果、标签资产、blocks；标签验证；holdout 划分；七种生成器；检查；patch_sets 与 patches；Training Data API；PatchSetClient">
+  <defs><marker id="a8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--violet)"/></marker>
+  <marker id="a8g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+
+  <text class="band-lbl" x="16" y="30">输入</text>
+  <rect class="bx" x="16" y="42" width="150" height="54" rx="6"/><text class="th" x="91" y="63" text-anchor="middle">QC 结果</text><text class="tm" x="91" y="81" text-anchor="middle">qc_slices · qc_findings</text>
+  <rect class="bx" x="16" y="110" width="150" height="54" rx="6"/><text class="th" x="91" y="131" text-anchor="middle">标签资产</text><text class="tm" x="91" y="149" text-anchor="middle">GT · 掩码 · 预测</text>
+  <rect class="bx" x="16" y="178" width="150" height="54" rx="6"/><text class="th" x="91" y="199" text-anchor="middle">blocks</text><text class="tm" x="91" y="217" text-anchor="middle">split · 等级</text>
+
+  <text class="band-lbl" x="210" y="30">第一道门</text>
+  <rect class="bx-v" x="210" y="42" width="190" height="122" rx="6"/>
+  <text class="th" x="222" y="62">标签验证</text>
+  <text class="ts" x="222" y="82">缺失 · 为空 · 无图有标</text><text class="ts" x="222" y="98">画在填充区 · 形状 · 层数</text><text class="ts" x="222" y="114">编码一致 · 互斥掩码重叠</text>
+  <text class="tm" x="222" y="136">→ usable_for_patches</text><text class="tk" x="222" y="152">对不上的判 fail，不猜映射</text>
+  <line x1="210" y1="137" x2="170" y2="137" class="ln-v" marker-start="url(#a8)"/>
+
+  <rect class="bx-v" x="210" y="178" width="190" height="90" rx="6"/>
+  <text class="th" x="222" y="198">holdout 划分</text>
+  <text class="ts" x="222" y="218">训练用途 · A/B/C 参与</text><text class="ts" x="222" y="234">D → excluded · 推理 → none</text>
+  <text class="ts" x="222" y="250">按 block · 稳定 · 8:1:1</text>
+  <line x1="210" y1="205" x2="170" y2="205" class="ln-v" marker-start="url(#a8)"/>
+
+  <text class="band-lbl" x="444" y="30">第二道门 · 生成器</text>
+  <g>
+    <rect class="bx-v" x="444" y="42" width="238" height="26" rx="4"/><text class="tm" x="454" y="60">failure</text><text class="tk" x="672" y="60" text-anchor="end">以 finding 为中心 · 只需 QC</text>
+    <rect class="bx-v" x="444" y="74" width="238" height="26" rx="4"/><text class="tm" x="454" y="92">segmentation</text><text class="tk" x="672" y="92" text-anchor="end">前景 ≥ 30% · ≥ 2 个 id</text>
+    <rect class="bx-v" x="444" y="106" width="238" height="26" rx="4"/><text class="tm" x="454" y="124">membrane</text><text class="tk" x="672" y="124" text-anchor="end">id → 边界图 · 边界 ≥ 2%</text>
+    <rect class="bx-v" x="444" y="138" width="238" height="26" rx="4"/><text class="tm" x="454" y="156">synapse</text><text class="tk" x="672" y="156" text-anchor="end">掩码连通域质心</text>
+    <rect class="bx" x="444" y="170" width="238" height="26" rx="4"/><text class="tm" x="454" y="188">mitochondria</text><text class="tk" x="672" y="188" text-anchor="end">同上 · 当前无掩码</text>
+    <rect class="bx" x="444" y="202" width="238" height="26" rx="4"/><text class="tm" x="454" y="220">hard_negative</text><text class="tk" x="672" y="220" text-anchor="end">预测 vs GT ≥ 5%</text>
+    <rect class="bx" x="444" y="234" width="238" height="26" rx="4"/><text class="tm" x="454" y="252">proofreading</text><text class="tk" x="672" y="252" text-anchor="end">不一致最高的前 n</text>
+  </g>
+  <line x1="444" y1="100" x2="404" y2="100" class="ln-v" marker-start="url(#a8)"/>
+  <line x1="444" y1="222" x2="404" y2="222" class="ln-v" marker-start="url(#a8)"/>
+  <text class="tk" x="444" y="282">窗口只落在通过 QC 的 z 段内，且每个 block 依据自己最新的运行</text>
+  <text class="tk" x="444" y="298">不能生成时集合仍创建：no_aligned_label / needs_prediction_asset + reason</text>
+
+  <text class="band-lbl" x="726" y="30">第三道门</text>
+  <rect class="bx-v" x="726" y="42" width="238" height="140" rx="6"/>
+  <text class="th" x="738" y="62">检查</text>
+  <text class="ts" x="738" y="82">硬：重复 · 跨折 overlap</text><text class="ts" x="738" y="98">　　越出 block · 折不一致</text>
+  <text class="ts" x="738" y="118">软：近重复 IoU ≥ 0.9</text><text class="ts" x="738" y="134">　　未划分块内的 patch</text><text class="ts" x="738" y="150">　　跨折相邻块对</text>
+  <text class="tm" x="738" y="172">→ checks.passed</text>
+  <line x1="726" y1="150" x2="686" y2="150" class="ln-v" marker-start="url(#a8)"/>
+
+  <rect class="bx-v" x="726" y="200" width="238" height="60" rx="6"/>
+  <text class="th" x="738" y="220">patch_sets · patches</text>
+  <text class="ts" x="738" y="238">坐标 · 折 · 难度 · 证据 · 血缘</text>
+  <text class="tk" x="738" y="252">像素不落盘</text>
+  <line x1="845" y1="200" x2="845" y2="184" class="ln-v" marker-end="url(#a8)"/>
+
+  <text class="band-lbl" x="16" y="330">出口 · Training Data API</text>
+  <rect class="bx-a" x="16" y="342" width="948" height="70" rx="6"/>
+  <text class="tm" x="30" y="364">GET /patchsets/{id}/manifest</text><text class="ts" x="270" y="364">一份文档给全：集合血缘 + 逐 patch 的 bbox / 折 / 难度 / url_em / url_label</text>
+  <text class="tm" x="30" y="382">GET /data/{ds}/cutout · /labels/{a}/cutout</text><text class="ts" x="330" y="382">同一 bbox 的 EM 与标签（ids · boundary · mask），每次取数进 serve_log</text>
+  <text class="tm" x="30" y="400">GET /data/{ds}/patch-readiness</text><text class="ts" x="270" y="400">七种类型各自是否就绪、缺什么</text>
+  <line x1="845" y1="260" x2="845" y2="336" class="ln-v" marker-end="url(#a8)"/>
+
+  <rect class="bx" x="16" y="432" width="948" height="70" rx="6"/>
+  <text class="th" x="30" y="452">训练侧</text>
+  <text class="tm" x="100" y="452">PatchSetClient(api, set_id).iter(partition="train") → (em, label, meta)</text>
+  <text class="ts" x="30" y="472">preprocessing / augmentation 是声明，写在集合与 block 上作血缘；平台只给原始体素，训练代码自己执行。这样同一份 patch 集合可以被不同预处理方案复用而血缘不混。</text>
+  <text class="ts" x="30" y="490">mouse_30um：failure 64 · segmentation 64 · membrane 64 · synapse 29；四个集合硬检查全部为零；生成各 1 到 9 秒。</text>
+  <line x1="490" y1="432" x2="490" y2="414" class="ln" marker-end="url(#a8g)"/>
+</svg>
+<figcaption>三道门把"标签能不能用""数据该进哪一折""集合有没有泄漏"分开判断，各自留证据。生成器只负责采样与验收；一种类型不能生成时，答案是可查询的原因而不是空集合。</figcaption>
+</figure>
+</section>
+
+<section id="s9">
+<h2><span class="n">9</span>两条交付链路</h2>
+<p>训练侧读本地（分片或按 patch 集合切），推理侧不落盘。区别在于数据被读多少次、读完要不要留副本。</p>
+<figure>
+<svg viewBox="0 0 980 400" role="img" aria-label="两条交付链路对比：训练侧导出本地分片或按 patch 集合切，推理侧按块即时取数不落盘">
+  <defs><marker id="a9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker></defs>
+  <rect class="bx-p" x="16" y="16" width="948" height="26" rx="5"/>
+  <text class="th" x="30" y="34">共同起点：QC 结果决定哪些切片合格、哪些 block 进训练；Patch Factory 决定训练具体喂什么</text>
+  <text class="band-lbl" x="16" y="76">训练侧</text>
+  <rect class="bx" x="16" y="86" width="150" height="60" rx="6"/><text class="t" x="91" y="110" text-anchor="middle">源卷 + 标签卷</text><text class="tm" x="91" y="128" text-anchor="middle">本地或远程</text>
+  <rect class="bx-a" x="200" y="86" width="180" height="60" rx="6"/><text class="t" x="290" y="106" text-anchor="middle">导出任务 / patch 集合</text><text class="tm" x="290" y="124" text-anchor="middle">分片：连续合格段落盘</text><text class="tm" x="290" y="139" text-anchor="middle">集合：坐标 + 血缘</text>
+  <rect class="bx-w" x="414" y="86" width="180" height="60" rx="6"/><text class="t" x="504" y="106" text-anchor="middle">本地分片 · 清单</text><text class="tm" x="504" y="124" text-anchor="middle">var/exports/…npy</text><text class="tm" x="504" y="139" text-anchor="middle">或 manifest 里的 URL</text>
+  <rect class="bx" x="628" y="86" width="336" height="60" rx="6"/><text class="t" x="796" y="106" text-anchor="middle">训练进程</text><text class="tm" x="796" y="124" text-anchor="middle">ShardStore 内存映射 · PatchSetClient 按集合迭代</text><text class="tm" x="796" y="139" text-anchor="middle">几十轮都读本地或缓存，不再碰源卷</text>
+  <line x1="200" y1="116" x2="170" y2="116" class="ln-a" marker-end="url(#a9)"/>
+  <line x1="414" y1="116" x2="384" y2="116" class="ln-a" marker-end="url(#a9)"/>
+  <line x1="628" y1="116" x2="598" y2="116" class="ln-a" marker-end="url(#a9)"/>
+  <text class="tl" x="200" y="166">只导合格段 · 已存在的分片复用 · 可续传可取消</text>
+  <text class="tl" x="628" y="166">mouse_30um 分片：286 张 · 23 个分片 · 300 MB</text>
+  <text class="band-lbl" x="16" y="222">推理侧</text>
+  <rect class="bx" x="16" y="232" width="150" height="60" rx="6"/><text class="t" x="91" y="256" text-anchor="middle">源卷</text><text class="tm" x="91" y="274" text-anchor="middle">同一份，不复制</text>
+  <rect class="bx-a" x="200" y="232" width="180" height="60" rx="6"/><text class="t" x="290" y="252" text-anchor="middle">流会话</text><text class="tm" x="290" y="270" text-anchor="middle">整卷按 block 生成计划</text><text class="tm" x="290" y="285" text-anchor="middle">每块带等级与未通过 z</text>
+  <rect class="bx" x="414" y="232" width="180" height="60" rx="6"/><text class="t" x="504" y="252" text-anchor="middle">领取与即时取数</text><text class="tm" x="504" y="270" text-anchor="middle">next → cutout → ack</text><text class="tm" x="504" y="285" text-anchor="middle">远程源预取下一批</text>
+  <rect class="bx" x="628" y="232" width="336" height="60" rx="6"/><text class="t" x="796" y="252" text-anchor="middle">推理进程</text><text class="tm" x="796" y="270" text-anchor="middle">StreamClient 用完即丢</text><text class="tm" x="796" y="285" text-anchor="middle">平台不为输入写任何副本</text>
+  <line x1="200" y1="262" x2="170" y2="262" class="ln-a" marker-end="url(#a9)"/>
+  <line x1="414" y1="262" x2="384" y2="262" class="ln-a" marker-end="url(#a9)"/>
+  <line x1="628" y1="262" x2="598" y2="262" class="ln-a" marker-end="url(#a9)"/>
+  <path d="M796 292 C 796 322, 560 322, 504 302" class="ln-a" marker-end="url(#a9)"/>
+  <text class="tl" x="560" y="320">确认后领下一块，会话记录进度与速率</text>
+  <rect class="bx-p" x="16" y="336" width="948" height="56" rx="6"/>
+  <text class="th" x="30" y="356">为什么不能互换</text>
+  <text class="ts" x="30" y="376">训练若走即时取数，每个 patch 都要重新解码源图，GPU 会被数据加载饿死；推理若先导出，等于为只读一遍的数据复制一份 TB 级副本。</text>
+</svg>
+<figcaption>训练侧现在有两种形态：整段分片适合 3D 模型按段读；patch 集合适合按用途与折精确控制样本。两者都以 QC 结论为过滤条件，每一次取数都写入取数日志。</figcaption>
+</figure>
+</section>
+
+<section id="s10">
+<h2><span class="n">10</span>单次运行的执行节点</h2>
+<p>控制台把一次运行展开成节点图：同一 z 段共享一次解码，然后每个 tile 各自走完后四个阶段。</p>
+<figure>
+<svg viewBox="0 0 980 330" role="img" aria-label="单次运行的执行节点图">
+  <defs><marker id="a10" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+  <rect class="bx-a" x="16" y="110" width="130" height="76" rx="6"/>
+  <text class="th" x="81" y="138" text-anchor="middle">ingest</text><text class="tm" x="81" y="156" text-anchor="middle">z0-99</text><text class="tk" x="81" y="172" text-anchor="middle">4 个 tile 共享</text>
+  <g>
+    <rect class="bx" x="196" y="18" width="118" height="42" rx="5"/><text class="tm" x="255" y="36" text-anchor="middle">slice_qc</text><text class="tk" x="255" y="51" text-anchor="middle">y0 x0</text>
+    <rect class="bx" x="196" y="82" width="118" height="42" rx="5"/><text class="tm" x="255" y="100" text-anchor="middle">slice_qc</text><text class="tk" x="255" y="115" text-anchor="middle">y0 x1024</text>
+    <rect class="bx" x="196" y="146" width="118" height="42" rx="5"/><text class="tm" x="255" y="164" text-anchor="middle">slice_qc</text><text class="tk" x="255" y="179" text-anchor="middle">y1024 x0</text>
+    <rect class="bx" x="196" y="210" width="118" height="42" rx="5"/><text class="tm" x="255" y="228" text-anchor="middle">slice_qc</text><text class="tk" x="255" y="243" text-anchor="middle">y1024 x1024</text>
+  </g>
+  <g>
+    <rect class="bx" x="344" y="18" width="118" height="42" rx="5"/><text class="tm" x="403" y="43" text-anchor="middle">serial_qc</text>
+    <rect class="bx" x="344" y="82" width="118" height="42" rx="5"/><text class="tm" x="403" y="107" text-anchor="middle">serial_qc</text>
+    <rect class="bx" x="344" y="146" width="118" height="42" rx="5"/><text class="tm" x="403" y="171" text-anchor="middle">serial_qc</text>
+    <rect class="bx" x="344" y="210" width="118" height="42" rx="5"/><text class="tm" x="403" y="235" text-anchor="middle">serial_qc</text>
+  </g>
+  <g>
+    <rect class="bx" x="492" y="18" width="118" height="42" rx="5"/><text class="tm" x="551" y="43" text-anchor="middle">aggregate</text>
+    <rect class="bx" x="492" y="82" width="118" height="42" rx="5"/><text class="tm" x="551" y="107" text-anchor="middle">aggregate</text>
+    <rect class="bx" x="492" y="146" width="118" height="42" rx="5"/><text class="tm" x="551" y="171" text-anchor="middle">aggregate</text>
+    <rect class="bx" x="492" y="210" width="118" height="42" rx="5"/><text class="tm" x="551" y="235" text-anchor="middle">aggregate</text>
+  </g>
+  <g>
+    <rect class="bx" x="640" y="18" width="118" height="42" rx="5"/><text class="tm" x="699" y="43" text-anchor="middle">persist</text>
+    <rect class="bx" x="640" y="82" width="118" height="42" rx="5"/><text class="tm" x="699" y="107" text-anchor="middle">persist</text>
+    <rect class="bx" x="640" y="146" width="118" height="42" rx="5"/><text class="tm" x="699" y="171" text-anchor="middle">persist</text>
+    <rect class="bx" x="640" y="210" width="118" height="42" rx="5"/><text class="tm" x="699" y="235" text-anchor="middle">persist</text>
+  </g>
+  <g>
+    <rect class="bx-w" x="788" y="18" width="176" height="42" rx="5"/><text class="tm" x="876" y="36" text-anchor="middle">B · 留存 85%</text><text class="tk" x="876" y="51" text-anchor="middle">58 findings · train</text>
+    <rect class="bx-w" x="788" y="82" width="176" height="42" rx="5"/><text class="tm" x="876" y="100" text-anchor="middle">B · 留存 88%</text><text class="tk" x="876" y="115" text-anchor="middle">55 findings · train</text>
+    <rect class="bx-w" x="788" y="146" width="176" height="42" rx="5"/><text class="tm" x="876" y="164" text-anchor="middle">B · 留存 86%</text><text class="tk" x="876" y="179" text-anchor="middle">41 findings · test</text>
+    <rect class="bx-w" x="788" y="210" width="176" height="42" rx="5"/><text class="tm" x="876" y="228" text-anchor="middle">B · 留存 89%</text><text class="tk" x="876" y="243" text-anchor="middle">42 findings · val</text>
+  </g>
+  <path d="M146 134 C 170 134, 172 39, 192 39" class="ln" marker-end="url(#a10)"/>
+  <path d="M146 144 C 170 144, 172 103, 192 103" class="ln" marker-end="url(#a10)"/>
+  <path d="M146 154 C 170 154, 172 167, 192 167" class="ln" marker-end="url(#a10)"/>
+  <path d="M146 164 C 170 164, 172 231, 192 231" class="ln" marker-end="url(#a10)"/>
+  <g class="ln">
+    <line x1="340" y1="39" x2="318" y2="39" marker-end="url(#a10)"/><line x1="488" y1="39" x2="466" y2="39" marker-end="url(#a10)"/><line x1="636" y1="39" x2="614" y2="39" marker-end="url(#a10)"/><line x1="784" y1="39" x2="762" y2="39" marker-end="url(#a10)"/>
+    <line x1="340" y1="103" x2="318" y2="103" marker-end="url(#a10)"/><line x1="488" y1="103" x2="466" y2="103" marker-end="url(#a10)"/><line x1="636" y1="103" x2="614" y2="103" marker-end="url(#a10)"/><line x1="784" y1="103" x2="762" y2="103" marker-end="url(#a10)"/>
+    <line x1="340" y1="167" x2="318" y2="167" marker-end="url(#a10)"/><line x1="488" y1="167" x2="466" y2="167" marker-end="url(#a10)"/><line x1="636" y1="167" x2="614" y2="167" marker-end="url(#a10)"/><line x1="784" y1="167" x2="762" y2="167" marker-end="url(#a10)"/>
+    <line x1="340" y1="231" x2="318" y2="231" marker-end="url(#a10)"/><line x1="488" y1="231" x2="466" y2="231" marker-end="url(#a10)"/><line x1="636" y1="231" x2="614" y2="231" marker-end="url(#a10)"/><line x1="784" y1="231" x2="762" y2="231" marker-end="url(#a10)"/>
+  </g>
+  <rect class="bx-p" x="16" y="272" width="948" height="62" rx="6"/>
+  <text class="ts" x="30" y="292">每个节点记录开始时间、耗时、日志条数与告警；段与段顺序执行。段内四个 tile 的后四个阶段彼此独立，</text>
+  <text class="ts" x="30" y="310">是将来分发到多机的天然切分点（见 docs/SCALE_PLAN.md：瓶颈在聚合读带宽，不在核数）。</text>
+  <text class="tk" x="30" y="328">右侧为 mouse_30um 最近一次运行的实际结果与各 block 的 holdout 折</text>
+</svg>
+</figure>
+</section>
+
+<section id="s11">
+<h2><span class="n">11</span>接口总览</h2>
+<p>66 个端点分十组。页面上的每一个动作都对应其中一个。</p>
+<div class="scroll"><table>
+<thead><tr><th>分组</th><th>数量</th><th>职责</th><th>代表端点</th></tr></thead>
+<tbody>
+<tr><td class="mono">datasets</td><td class="num">15</td><td>发现、注册、元信息、资产与版本、删除；标签验证与互斥掩码检查；holdout 划分</td><td class="mono">POST /datasets/{id}/assets/{a}/validate · POST /datasets/{id}/partition</td></tr>
+<tr><td class="mono">qc</td><td class="num">16</td><td>检查目录、启动与批量启动、取消、进度、结果、实时日志、节点图</td><td class="mono">POST /qc/runs/batch · GET /qc/runs/{id}/graph</td></tr>
+<tr><td class="mono">data</td><td class="num">11</td><td>按坐标取 EM 与标签、训练清单、即时预览、标签列表、patch 就绪度</td><td class="mono">GET /data/{id}/labels/{a}/cutout · GET /data/{id}/patch-readiness</td></tr>
+<tr><td class="mono">patchsets</td><td class="num">6</td><td>生成集合、列表、分页取 patch、完整清单、删除</td><td class="mono">POST /patchsets · GET /patchsets/{id}/manifest</td></tr>
+<tr><td class="mono">exports</td><td class="num">6</td><td>训练分片导出任务</td><td class="mono">POST /exports · GET /exports/{id}/manifest</td></tr>
+<tr><td class="mono">streams</td><td class="num">7</td><td>推理流会话</td><td class="mono">POST /streams/{id}/next · POST /streams/{id}/ack</td></tr>
+<tr><td class="mono">traces</td><td class="num">2</td><td>算法执行记录</td><td class="mono">POST /traces</td></tr>
+<tr><td class="mono">pipeline · system · health</td><td class="num">3</td><td>控制台聚合状态、主机资源、健康</td><td class="mono">GET /pipeline/status · GET /system/metrics</td></tr>
+</tbody>
+</table></div>
+<div class="note"><b>10 个页面</b>　<code>/pipeline</code> · <code>/</code> · <code>/datasets/{id}</code> · <code>/datasets/{id}/blocks/{block}</code> · <code>/runs</code> · <code>/runs/{id}</code> · <code>/checks</code> · <code>/traces</code> · <code>/delivery</code> · <code>/patches</code> ；交互式接口文档在 <code>/docs</code>。<br><b>12 个命令行子命令</b>　init-db · scan · datasets · run · checks · validate-labels · partition · patches · export · delete · serve · make-sample</div>
+</section>
+
+<section id="s12">
+<h2><span class="n">12</span>每个阶段算法缺什么</h2>
+<p>按 18 步路线图逐阶段列出：平台已有的基础、算法上缺的东西、依赖谁。前三个阶段来自代码审计，第 4 步起是尚未开工的部分，列的是必须补的算法与可复用的基础。</p>
+
+<h3>阶段 1 至 3 · 已建成，缺口是精度与覆盖</h3>
+<div class="scroll"><table>
+<colgroup><col style="width:11%"><col style="width:8%"><col style="width:21%"><col style="width:44%"><col style="width:16%"></colgroup>
+<thead><tr><th>阶段</th><th>状态</th><th>已有基础</th><th>算法上缺的</th><th>依赖 / 来源</th></tr></thead>
+<tbody>
+<tr><td><b>1 Dataset Registry</b></td><td><span class="tag done">结构完成</span></td><td>本地与 SSH 同一套发现；大小分类；九类资产、版本、trace 表；标签卷一致性验证</td><td>几乎无算法缺口。缺元信息自动抽取（从 precomputed info / 采集元数据读体素尺寸、脑区）；非标签资产（突触表、骨架 SWC、JSON 预测）的格式校验与解析</td><td>数据方给体素尺寸、脑区、delete/ 含义</td></tr>
+<tr><td><b>2 EM Image QC</b></td><td><span class="tag part">12 / 16</span></td><td>五阶段流水线、参考链、物理尺度、三分类裂缝、分级与留存率</td><td>四项未实现：<b>charging</b>（方向性条纹：频谱各向异性 + 局部亮度斜坡）、<b>污染</b>（高对比孤立团块：形态学 + 纹理异常）、<b>局部形变</b>（非刚性配准残差场：光流 / 弹性配准）、<b>section deformation</b>（整片仿射拟合：各向异性缩放与剪切）。已实现但弱：阈值未用人工标注标定（70% 告警为 low/medium）；相位相关只到整像素（需抛物线亚像素拟合）；序列检查不跨 z 段边界（需带一张参考切片）；模糊与对比度只相对本 block 归一化（需绝对锐度下限）；contrast_drift 测的是偏差不是趋势；local_misalign 在 max_gap 2 下几乎不触发（需按 gap 缩放阈值）；合成回归只注入 4 种缺陷（需 128 张全集）</td><td>人工标注一批 low/medium 边界样本；scipy / skimage 即可，无外部模型</td></tr>
+<tr><td><b>3 Patch Factory</b></td><td><span class="tag part">4 / 7 可出</span></td><td>标签解码与验证、稳定划分、难度、七种生成器骨架、四硬三软检查、Training Data API</td><td><b>标签语义</b>：rgb24 分割无 0 值，背景 id 未知，前景占比恒为 1；<b>mask 与 EM 一致性</b>只查填充区，缺 GT 边界与 EM 边缘的对齐度（边界处梯度响应统计）；<b>标签冲突</b>只覆盖互斥掩码，缺同一分割内 id 跨断裂检测；<b>难度</b>只用 QC，缺基于标签的难度（小目标密度、边界密度、细突起占比）；<b>近重复</b>只用 IoU，缺内容哈希去重；<b>划分</b>缺相邻块间的空间缓冲带；<b>synapse</b> 只取掩码连通域，缺 pre/post 配对与极性；<b>membrane</b> 目标是 2D 边界，缺 3D affinity / 有向边界；<b>hard_negative / proofreading</b> 缺预测输入；proofreading 缺"人工校对价值"排序（目前只按不一致度）</td><td>模型预测（阶段 4 前提）；数据方确认背景 id 与 delete/ 映射</td></tr>
+</tbody>
+</table></div>
+
+<h3>阶段 4 至 18 · 未开工，列出必须补的算法</h3>
+<div class="scroll"><table>
+<colgroup><col style="width:13%"><col style="width:22%"><col style="width:45%"><col style="width:20%"></colgroup>
+<thead><tr><th>阶段</th><th>可复用的基础</th><th>必须补的算法</th><th>外部依赖</th></tr></thead>
+<tbody>
+<tr><td><b>4 Segmentation QC</b></td><td>标签卷读取与 cutout；block 结构；hard_negative 的预测 vs GT 比较</td><td>supervoxel / fragment 统计（3D 连通域、体积分布、fragmentation rate）；merge / split candidates（骨架分叉异常、直径不连续、边界置信度低处）；boundary confidence（需 membrane 预测概率）；isolated components；neurite diameter discontinuity（骨架化 + 半径估计）；skeleton break rate；seg 与 membrane 预测一致性；重点区域检测（极细突起、密集 neuropil、交叉区、线粒体富集区、低对比膜、密集突触区）</td><td>骨架化（kimimaro / TEASAR）、图算法（networkx）、一个能出预测的分割模型</td></tr>
+<tr><td><b>5 Synapse QC</b></td><td>synapse 掩码读取与连通域；patch 生成</td><td>pre / post 配对完整性；密度估计；PSD 定位与 cleft 几何；胞外判定（与分割求交）；重复 / 孤儿突触；与 neuron 分割一致性；precision / recall / F1 / partner accuracy / neuron 级误差</td><td>突触表格式（点 + pre/post id）；匹配算法（匈牙利或距离阈值）</td></tr>
+<tr><td><b>6 Evaluation Harness</b></td><td>holdout test 折；GT 与预测读取；agent_traces 可记 latency；etl_metrics 记资源</td><td>VOI、Rand / ARI、ERL、merge / split error、skeleton-based metrics、topology error；synapse PR；工程指标（latency、throughput、GPU-hour、cost / mm³、RAM / VRAM、success rate）；生产指标（proofreading time、errors / neurite length、operations / neuron）</td><td>funlib.evaluate 或自实现；骨架 GT；GPU 计量</td></tr>
+<tr><td><b>7 Lineage</b></td><td>dataset_versions、patch_sets 血缘、agent_traces、preprocessing / augmentation 声明</td><td>算法少：图查询"任一结果回溯到代码与输入"；哈希化 config / checkpoint / docker image / hardware 记录</td><td>git、容器镜像摘要</td></tr>
+<tr><td><b>8 Failure Patch Mining</b></td><td>hard_negative / proofreading 生成器就是雏形；failure patch 与 finding 坐标</td><td>uncertainty（MC dropout / ensemble 方差 / 熵）；模型分歧度；OOD 分数（特征空间距离）；拓扑失败检测（依赖阶段 4）；风险打分与排序（risk score 模型）</td><td>多个模型或多次采样推理</td></tr>
+<tr><td><b>9 Failure Explorer</b></td><td>failure 集合、坐标、等级</td><td>Neuroglancer 状态 URL 生成（坐标 → layer state）；neuron 级错误聚合；模型对比 diff；错误原因归类</td><td>Neuroglancer 部署</td></tr>
+<tr><td><b>10 OOD / 泛化</b></td><td>元信息六字段；多数据集注册</td><td>域偏移度量（特征分布距离）；不确定性校准（ECE）；跨数据集泄漏检测（近重复）；robustness 测试（扰动集）；Generalization Matrix 聚合</td><td>多物种 / 多批次数据；特征提取模型</td></tr>
+<tr><td><b>11 Regression Testing</b></td><td>qc_runs 历史；评估结果表（阶段 6）</td><td>指标阈值与显著性比较；pass / warning / fail 判定；GPU cost 对比</td><td>CI 触发器</td></tr>
+<tr><td><b>12 Proofreading Queue</b></td><td>proofreading 集合排名；serve_log 记录取数</td><td>risk × scientific importance × expected correction value 打分；任务生成与去重；修改记录与耗时归因；"是否确认为模型错误"的判定闭环</td><td>校对工具（Neuroglancer 或 CAVE）对接</td></tr>
+<tr><td><b>13 Evaluation & Data Quality Platform</b></td><td>现有看板、注册表、交付链路</td><td>算法少：权限、审计、NAS 集成、自动 inference 调度、dataset anomaly detection（跨数据集统计离群）</td><td>身份系统、存储集成</td></tr>
+<tr><td><b>14 Agent Tool API</b></td><td>66 个端点、agent_traces、loader</td><td>算法少：工具层封装（search_dataset、load_em_patch、run_segmentation …）；tool-call trace 的 latency / exception / evidence 记录</td><td>阶段 4 至 9 的工具先存在</td></tr>
+<tr><td><b>15 Agent Benchmark</b></td><td>agent_traces</td><td>task completion、tool-call success、unnecessary calls、evidence citation accuracy、hallucination rate 的判定器；标准任务集</td><td>人工标注的任务答案</td></tr>
+<tr><td><b>16 Copilot</b></td><td>阶段 14 的工具层</td><td>算法少：编排与报告生成</td><td>LLM 接入</td></tr>
+<tr><td><b>17 Connectome × Transcriptome</b></td><td>独立并行，与现有平台共享注册表模式</td><td>scRNA / 空间转录组 ETL 与 QC、细胞注释、marker gene、morphology / connectivity / transcriptomics embedding、多模态最近邻检索</td><td>scanpy / squidpy 等；连接组 neuron 表</td></tr>
+<tr><td><b>18 客户平台</b></td><td>全部</td><td>非算法：服务化、工作流、多租户</td><td>—</td></tr>
+</tbody>
+</table></div>
+
+<div class="note"><b>共同前提</b>：第 4 步起每一项都以"存在模型预测"为输入。目前真实数据里没有预测资产，紫色回路空着。建议先在 mouse_30um 上用 GT 当替身预测把阶段 4 与 6 的骨架搭起来，接口跑通后再换真模型、再上 rat。<b>阶段 1 至 3 内最值得先补的三样</b>：QC 阈值的人工标定、rgb24 背景 id 与 delete/ 映射的确认、序列检查跨 z 段的参考切片。</div>
+</section>
+
+</main>
+<footer>EM Image QC 平台 · 架构图集 v4 · 图中每个方框对应代码里的真实文件、表或端点，数据取自当前数据库与运行记录 · 2026-09-14</footer>
+</div>

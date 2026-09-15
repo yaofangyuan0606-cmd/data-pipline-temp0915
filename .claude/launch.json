@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "emqc",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "/Users/mac/Desktop/intern/code/em-qc-platform/scripts/dev_serve.sh"
+      ],
+      "port": 8765,
+      "url": "http://127.0.0.1:8765"
+    }
+  ]
+}

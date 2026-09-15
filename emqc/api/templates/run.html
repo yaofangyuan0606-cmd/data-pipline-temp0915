@@ -1,0 +1,44 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}Run #{{ run.run_id }}{% endblock %}
+{% block crumbs %}<a href="/runs">运行记录</a> › <b class="mono">#{{ run.run_id }}</b> · <a href="/datasets/{{ run.dataset_id }}">{{ run.dataset_id }}</a>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">QC run · {{ run.pipeline_version }}</div><h1>运行 <span class="mono">#{{ run.run_id }}</span> · <a href="/datasets/{{ run.dataset_id }}">{{ run.dataset_id }}</a></h1>
+<p class="sub">开始 {{ (run.started_at or '')|replace('T',' ') }} · 结束 {{ (run.finished_at or '–')|replace('T',' ') }} · <span id="run-status">{{ run.status }} · {{ run.stage }} · {{ run.n_blocks_done }}/{{ run.n_blocks }} blocks</span></p></div>
+<div class="actions">{% if run.status in ['queued','running'] %}<button class="danger" onclick="cancelRun({{ run.run_id }}, this)">取消</button>{% else %}<button onclick="rerun('{{ run.dataset_id }}', this)">再跑一次</button>{% endif %}</div></div>
+{% if run.status in ['queued','running'] %}<progress id="run-progress" max="100" value="{{ (run.progress * 100)|int if run.progress is not none else 0 }}" style="margin-bottom:14px"></progress>{% endif %}
+{% if run.error %}<div class="note" style="border-color:var(--high)"><b>错误</b><pre class="json" style="max-width:none">{{ run.error }}</pre></div>{% endif %}
+
+<div class="tiles">
+  <div class="tile accent"><div class="k">留存率</div><div class="v">{{ run.retention_rate|pct }}</div><div class="sub">{{ run.metrics.get('n_slices_passed')|fmt(0) }} / {{ run.metrics.get('n_slices_input')|fmt(0) }} tile-sections</div></div>
+  <div class="tile"><div class="k">quality</div><div class="v">{{ run.quality_score|fmt(3) }}</div></div>
+  <div class="tile"><div class="k">等级</div><div class="v" style="font-size:16px;margin-top:6px">{% for g, n in run.grade_counts|dictsort %}{{ m.grade(g) }}<span class="muted mono">×{{ n }}</span> {% else %}–{% endfor %}</div></div>
+  <div class="tile"><div class="k">findings</div><div class="v">{{ run.findings_by_severity.values()|sum }}</div>{{ m.sevstack(run.findings_by_severity) }}</div>
+  <div class="tile"><div class="k">blocks</div><div class="v">{{ run.n_blocks_done }}<small>/ {{ run.n_blocks }}</small></div></div>
+  <div class="tile"><div class="k">耗时</div><div class="v">{{ run.metrics.get('duration_s')|fmt(1) }}<small>s</small></div><div class="sub">{{ run.metrics.get('bytes_read')|bytes }} 读入</div></div>
+</div>
+
+<h2>执行节点图 <span class="cnt">点节点只看它的日志</span></h2>
+<div class="card" id="graph" data-run="{{ run.run_id }}"><span class="muted">加载中…</span></div>
+<div style="margin-top:8px" class="legend"><span class="l-pending">pending</span><span class="l-ingest">running</span><span class="l-none">done</span><span class="l-high">error</span></div>
+
+<h2>日志 <span class="cnt" id="log-count"></span></h2>
+<div id="logpanel" data-run="{{ run.run_id }}"></div>
+
+<h2>各阶段耗时 <span class="cnt">每个 block 一行，ingest 为共享解码时间的均摊</span></h2>
+<div class="card"><div class="timeline">
+{% for b in run.blocks %}<span class="lbl">{{ b.block_id }}</span>{{ m.stagebar(b.stage_durations, max_dur) }}{% endfor %}
+</div><div class="legend" style="margin-top:10px"><span class="l-ingest">ingest</span><span class="l-slice_qc">slice_qc</span><span class="l-serial_qc">serial_qc</span><span class="l-aggregate">aggregate</span><span class="l-persist">persist</span><span class="muted">条长 = 相对最慢 block（{{ max_dur|fmt(1) }} s）</span></div></div>
+
+<h2>各 block 结果与 ETL 指标</h2>
+<div class="scroll"><table class="dense"><thead><tr><th>block</th><th>等级</th><th class="num">留存率</th><th class="num">quality</th><th>最坏</th><th class="num">输入</th><th class="num">缺失</th><th class="num">损坏</th><th class="num">告警切片</th><th class="num">clean run</th><th class="num">耗时 s</th><th class="num">切片/s</th><th class="num">CPU s</th><th class="num">峰值 MB</th><th class="num">读入</th></tr></thead><tbody>
+{% for b in run.blocks %}{% set pm = per_block.get(b.block_id, {}) %}<tr>
+  <td><a href="/datasets/{{ run.dataset_id }}/blocks/{{ b.block_id }}?run_id={{ run.run_id }}" class="mono">{{ b.block_id }}</a></td>
+  <td>{{ m.grade(b.grade) }}</td><td class="num mono">{{ b.retention_rate|pct }}</td><td class="num mono">{{ b.quality_score|fmt(3) }}</td><td>{{ m.sev(b.max_severity) }}</td>
+  <td class="num mono">{{ pm.get('n_slices_input')|fmt(0) }}</td><td class="num mono">{{ pm.get('n_missing')|fmt(0) }}</td><td class="num mono">{{ pm.get('n_corrupt')|fmt(0) }}</td><td class="num mono">{{ pm.get('n_flagged')|fmt(0) }}</td><td class="num mono">{{ b.longest_clean_run }}</td>
+  <td class="num mono">{{ b.duration_s|fmt(1) }}</td><td class="num mono">{{ pm.get('slices_per_s')|fmt(1) }}</td><td class="num mono">{{ pm.get('cpu_time_s')|fmt(1) }}</td><td class="num mono">{{ pm.get('peak_rss_mb')|fmt(0) }}</td><td class="num mono">{{ pm.get('bytes_read')|bytes }}</td>
+</tr>{% endfor %}
+</tbody></table></div>
+
+<details style="margin-top:22px"><summary>本次运行的配置</summary><div class="card" style="margin-top:8px"><pre class="json" style="max-width:none">{{ run.config|tojson(indent=1) }}</pre></div></details>
+<script>document.addEventListener('DOMContentLoaded', () => runPageInit({{ run.run_id }}, {{ 'true' if run.status in ['queued','running'] else 'false' }}));</script>
+{% endblock %}

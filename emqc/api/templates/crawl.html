@@ -1,0 +1,56 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}数据采集{% endblock %}
+{% block crumbs %}<b>数据采集</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Acquisition</div><h1>数据采集</h1>
+<p class="sub">从云端 precomputed 卷（Neuroglancer 生态）按 XYZ 取数据。顺序是：看卷 → 预判 ROI 值不值得 → 注册（不下载，按需读）或下载落盘。注册后它就是一个普通数据集，QC、Patch Factory、交付全部照常。</p></div></div>
+
+<section class="card">
+  <h2 style="margin-top:0">1 · 卷信息 <span class="muted" style="font-weight:400;font-size:13px">不下载体素</span></h2>
+  <form onsubmit="return cwVolume(event)">
+    <div class="grid c3" style="gap:8px">
+      <div class="field" style="grid-column:span 2"><label>卷 URL</label><input name="url" class="text mono" value="gs://h01-release/data/20210601/4nm_raw"></div>
+      <div class="field"><label>mip</label><input name="mip" type="number" class="text" value="1" min="0"></div>
+    </div>
+    <div class="actions"><button class="primary" type="submit">查看</button><span class="muted" id="cw-vol-msg"></span></div>
+  </form>
+  <div id="cw-vol"></div>
+</section>
+
+<div class="grid c2" style="margin-top:14px">
+<section class="card">
+  <h2 style="margin-top:0">2 · ROI 预判 <span class="muted" style="font-weight:400;font-size:13px">几秒，先别爬</span></h2>
+  <form onsubmit="return cwPrecheck(event)">
+    <div class="field"><label>ROI <span class="muted">x0-x1,y0-y1,z0-z1，所选 mip 的体素单位</span></label><input name="roi" class="text mono" value="260000-260512,210000-210512,2600-2632"></div>
+    <div class="grid c3" style="gap:8px">
+      <div class="field" style="grid-column:span 2"><label>组织类型图 URL</label><input name="mask_url" class="text mono" value="gs://h01-release/data/20210601/masking"></div>
+      <div class="field"><label>neuropil 下限 / fissure 上限</label><div style="display:flex;gap:6px"><input name="min_wanted" type="number" step="0.05" class="text" value="0.5"><input name="max_defect" type="number" step="0.01" class="text" value="0.02"></div></div>
+    </div>
+    <div class="actions"><button class="primary" type="submit">预判</button><span class="muted" id="cw-pre-msg"></span></div>
+  </form>
+  <div id="cw-pre"></div>
+  <p class="muted" style="font-size:12px;margin:8px 0 0">masking 是<b>组织类型分割图</b>，不是缺陷掩码。只有 fissure（裂隙）是成像缺陷，neuropil（神经毡）才是有突触可学的区域。换算时逐轴取倍数：masking 是 64/64/66 nm，ROI 是 8/8/33 nm，所以 x、y 除 8 而 z 只除 2，三轴统一会读到完全不同的位置且不会报错。</p>
+</section>
+
+<section class="card">
+  <h2 style="margin-top:0">3 · 注册 / 下载</h2>
+  <form onsubmit="return cwRegister(event)">
+    <div class="grid c2" style="gap:8px">
+      <div class="field"><label>dataset_id</label><input name="dataset_id" class="text mono" placeholder="h01_roi_x260k"></div>
+      <div class="field"><label>分割卷 <span class="muted">同 ROI，可空</span></label><input name="seg_url" class="text mono" value="gs://h01-release/data/20210601/c3"></div>
+    </div>
+    <div class="grid c3" style="gap:8px">
+      <div class="field"><label>物种</label><input name="species" class="text" value="human"></div>
+      <div class="field"><label>脑区</label><input name="brain_region" class="text" value="temporal cortex"></div>
+      <div class="field"><label>分割 mip</label><input name="seg_mip" type="number" class="text" value="0" min="0"></div>
+    </div>
+    <div class="actions"><button class="primary" type="submit">注册（不下载）</button><button type="button" onclick="cwFetch()">下载落盘</button><label class="choice"><input type="checkbox" name="require_ok"> 预判不合格则拒绝</label><span class="muted" id="cw-reg-msg"></span></div>
+  </form>
+  <p class="muted" style="font-size:12px;margin:8px 0 0">注册后不复制任何体素：QC 与 patch 生成按需读取，按 z-chunk 缓存（一次取回覆盖 32 张切片）。请求范围会向外吸附到 chunk 网格——同样的流量拿到更多数据，所以默认开启。下载落盘用于同一块数据要反复读的场景，任务可中断续传。</p>
+</section>
+</div>
+
+<h2>采集任务 <span class="cnt" id="cw-count">0</span></h2>
+<div id="cw-jobs" class="active-list"><div class="empty">还没有采集任务</div></div>
+<script>document.addEventListener('DOMContentLoaded', () => cwInit());</script>
+{% endblock %}

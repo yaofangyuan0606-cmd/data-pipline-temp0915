@@ -1,0 +1,56 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}数据交付{% endblock %}
+{% block crumbs %}<b>数据交付</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Delivery</div><h1>数据交付</h1>
+<p class="sub">两条路：<b>训练分片</b>把通过 QC 的切片一次性写成本地分片，训练反复读本地文件；<b>推理流</b>让推理程序按 block 顺序即时取子块，整卷读一遍、不复制。</p></div></div>
+
+<div class="grid c2">
+<section class="card">
+  <h2 style="margin-top:0">训练分片 · 新建导出</h2>
+  <form id="export-form" onsubmit="return launchExport(event)">
+    <div class="field"><label>数据集</label><select name="dataset_id" class="text">{% for d in datasets %}<option value="{{ d.dataset_id }}" {{ 'selected' if d.dataset_id == preselect }}>{{ d.dataset_id }} · {{ d.n_blocks }} blocks · {{ d.latest_grade or '未运行' }}</option>{% endfor %}</select></div>
+    <div class="grid c3" style="gap:8px">
+      <div class="field"><label>最短连续段 <span class="muted">min_run</span></label><input name="min_run" type="number" min="1" value="8" class="text"></div>
+      <div class="field"><label>每片最多张数 <span class="muted">shard_z</span></label><input name="shard_z" type="number" min="0" value="16" class="text"></div>
+      <div class="field"><label>最低综合分 <span class="muted">可空</span></label><input name="min_quality" type="number" step="0.05" min="0" max="1" class="text" placeholder="0.8"></div>
+    </div>
+    <div class="field"><label>一并拷贝的资产 <span class="muted">同一批 z，原样复制</span></label><input name="with_assets" class="text mono" placeholder="gt_segmentation"></div>
+    <div class="field"><label>block <span class="muted">留空 = 全部</span></label><input name="block_ids" class="text mono" placeholder="z00000-00099_y00000_x00000, …"></div>
+    <div class="actions"><button class="primary" type="submit">开始导出</button><label class="choice"><input type="checkbox" name="resume" checked> 续传（已存在的分片跳过）</label><span id="export-msg" class="muted"></span></div>
+  </form>
+  <details style="margin-top:12px"><summary>训练侧怎么读</summary><pre class="json" style="max-width:none">from emqc.loader import ShardStore
+store = ShardStore("{{ export_dir }}/&lt;dataset&gt;")
+for meta, arr in store.shards():                 # arr: (n, H, W) 内存映射
+    ...
+patch, meta = store.random_patch(rng, (8, 256, 256))</pre></details>
+</section>
+
+<section class="card">
+  <h2 style="margin-top:0">推理流 · 新建会话</h2>
+  <form id="stream-form" onsubmit="return launchStream(event)">
+    <div class="field"><label>数据集</label><select name="dataset_id" class="text">{% for d in datasets %}<option value="{{ d.dataset_id }}" {{ 'selected' if d.dataset_id == preselect }}>{{ d.dataset_id }} · {{ d.n_blocks }} blocks</option>{% endfor %}</select></div>
+    <div class="grid c3" style="gap:8px">
+      <div class="field"><label>每个子块张数 <span class="muted">z_chunk</span></label><input name="z_chunk" type="number" min="1" value="16" class="text"></div>
+      <div class="field"><label>顺序</label><select name="order" class="text"><option value="z">空间顺序</option><option value="grade">好 block 优先</option></select></div>
+      <div class="field"><label>客户端名</label><input name="client" class="text" placeholder="unet-infer"></div>
+    </div>
+    <div class="actions"><button class="primary" type="submit">创建会话</button><label class="choice"><input type="checkbox" name="skip_failed"> 跳过含未通过切片的子块</label><span id="stream-msg" class="muted"></span></div>
+  </form>
+  <details style="margin-top:12px"><summary>推理侧怎么接</summary><pre class="json" style="max-width:none">from emqc.loader import StreamClient
+for item, arr in StreamClient("{{ api_base }}", "&lt;dataset&gt;", z_chunk=16, client="unet-infer").items():
+    pred = model(arr)                            # arr: (z1-z0, H, W)，一个 tile 的一段
+    ...                                          # 每个子块用完自动 ack，结束自动关闭会话</pre>
+  <p class="muted" style="font-size:12px;margin:6px 0 0">会话在右侧列表里实时显示进度、字节数与速率；每个子块的取数都记在取数日志里。</p></details>
+</section>
+</div>
+
+<h2>导出任务 <span class="cnt" id="export-count">{{ jobs|length }}</span></h2>
+<div id="exports" class="active-list">{% if not jobs %}<div class="empty">还没有导出任务</div>{% endif %}</div>
+
+<h2>推理流会话 <span class="cnt" id="stream-count">{{ sessions|length }}</span></h2>
+<div class="scroll"><table class="dense" id="streams"><thead><tr><th>会话</th><th>dataset</th><th>客户端</th><th>状态</th><th style="min-width:180px">进度</th><th class="num">子块</th><th class="num">已确认</th><th class="num">已取数据</th><th class="num">速率</th><th>创建</th><th></th></tr></thead><tbody id="streams-body">
+<tr><td colspan="11" class="muted">加载中…</td></tr>
+</tbody></table></div>
+<script>document.addEventListener('DOMContentLoaded', () => deliveryInit());</script>
+{% endblock %}

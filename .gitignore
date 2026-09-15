@@ -1,0 +1,18 @@
+# 虚拟环境
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 本机配置：含数据库密码，绝不提交
+.env
+.env.*.bak
+
+# 运行产物：含实验室真实 EM 影像（缓存 591M / 导出 321M / 预览 16M），绝不提交
+var/
+
+# 数据目录：数据集本体不进仓库
+data_root/
+
+.DS_Store
+.idea/

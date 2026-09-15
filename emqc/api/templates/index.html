@@ -1,0 +1,46 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}数据集{% endblock %}
+{% block crumbs %}<b>数据集</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Dataset registry</div><h1>数据集</h1>
+<p class="sub">已注册的数据集及其最近一次 QC 结果。</p></div>
+<div class="actions"><a class="btn" href="/pipeline">去流水线启动</a><button class="primary" onclick="scanDatasets(this)">扫描</button></div></div>
+
+<div class="tiles">
+  <div class="tile"><div class="k">数据集</div><div class="v">{{ kpi.n_datasets }}<small>{{ kpi.size.small or 0 }} small · {{ kpi.size.large or 0 }} large</small></div></div>
+  <div class="tile"><div class="k">切片</div><div class="v">{{ kpi.n_sections }}</div><div class="sub">{{ kpi.n_blocks }} 个 block</div></div>
+  <div class="tile accent"><div class="k">总留存率</div><div class="v">{{ kpi.retention|pct }}</div><div class="sub">{{ kpi.passed|int }} / {{ kpi.evaluated|int }} tile-sections 通过</div></div>
+  <div class="tile"><div class="k">block 等级</div><div class="v" style="font-size:14px;margin-top:8px">{% set tot = kpi.grades.values()|sum %}{% if tot %}<div class="stack" style="height:12px">{% for g in ['A','B','C','D'] %}{% if kpi.grades[g] %}<i style="width:{{ (100*kpi.grades[g]/tot)|round(1) }}%;background:var(--g{{ g }})" title="{{ g }} × {{ kpi.grades[g] }}"></i>{% endif %}{% endfor %}</div>{% else %}<span class="muted">尚未运行</span>{% endif %}</div><div class="sub">{% for g in ['A','B','C','D'] %}{% if kpi.grades[g] %}{{ g }}×{{ kpi.grades[g] }} {% endif %}{% endfor %}</div></div>
+  <div class="tile"><div class="k">取数请求</div><div class="v">{{ n_served }}</div><div class="sub">算法侧已取切片 / 子块次数</div></div>
+</div>
+
+<h2>数据集 <span class="cnt">{{ datasets|length }}</span></h2>
+{% if datasets %}
+<div class="scroll"><table>
+<thead><tr><th>dataset</th><th>规模</th><th>形状 z·y·x</th><th>体素 nm</th><th>物种 / 脑区</th><th>blocks</th><th>等级</th><th>留存率</th><th style="min-width:220px">逐切片（各 tile 取最差）</th><th>最近运行</th><th></th></tr></thead>
+<tbody>
+{% for d in datasets %}<tr>
+  <td class="top"><a href="/datasets/{{ d.dataset_id }}"><b>{{ d.dataset_id }}</b></a><div class="muted" style="font-size:12px">{{ d.name }}</div></td>
+  <td><span class="pill {{ 'on' if d.size_class == 'large' }}">{{ d.size_class }}</span><div class="muted" style="font-size:11px">{{ '远程' if d.source == 'sftp' else '本地' }}</div></td>
+  <td class="mono">{{ d.shape.z }} · {{ d.shape.y }} · {{ d.shape.x }}<div class="muted" style="font-size:11px">{{ d.em.format }} {{ d.em.dtype }}</div></td>
+  <td class="mono">{% if d.metadata.voxel_size_nm %}{{ d.metadata.voxel_size_nm|join(' × ') }}{% else %}<span class="muted">未确认</span>{% endif %}</td>
+  <td>{{ d.metadata.species or '–' }}<div class="muted" style="font-size:11px">{{ d.metadata.brain_region or '' }}</div></td>
+  <td><span class="mono">{{ d.n_blocks }}</span>{% set tot = d.blocks_grades.values()|sum %}{% if tot %}<div class="stack" style="height:8px;width:90px;margin-top:4px">{% for g in ['A','B','C','D','pending'] %}{% if d.blocks_grades[g] %}<i style="width:{{ (100*d.blocks_grades[g]/tot)|round(1) }}%;background:var(--{{ 'g' ~ g if g != 'pending' else 'surface-3' }})"></i>{% endif %}{% endfor %}</div>{% endif %}</td>
+  <td>{{ m.grade(d.latest_grade) }}</td>
+  <td style="min-width:120px"><div class="row" style="display:flex;gap:8px;align-items:center">{{ m.meter(d.latest_retention_rate) }}<span class="mono">{{ d.latest_retention_rate|pct }}</span></div></td>
+  <td>{% if d.strip %}{{ m.strip(d.strip, d.dataset_id, d.strip[0].block_id, axis=false) }}{% else %}<span class="muted">未运行</span>{% endif %}</td>
+  <td>{% if d.latest_run_id %}<a href="/runs/{{ d.latest_run_id }}" class="mono">#{{ d.latest_run_id }}</a>{% if d.n_findings is defined and d.n_findings is not none %}<div class="muted" style="font-size:11px">{{ d.n_findings|int }} findings</div>{% endif %}{% else %}<span class="pill">{{ d.status }}</span>{% endif %}</td>
+  <td><button onclick="runQC('{{ d.dataset_id }}', this)">运行 QC</button></td>
+</tr>{% endfor %}
+</tbody></table></div>
+{% else %}<div class="empty">还没有注册的数据集。点右上角"扫描"发现新数据。</div>{% endif %}
+
+<div class="grid side" style="margin-top:28px">
+<div><h2 style="margin-top:0">最近运行</h2>
+<table><thead><tr><th>run</th><th>dataset</th><th>状态</th><th>等级</th><th class="num">quality</th><th class="num">留存率</th><th>开始</th></tr></thead><tbody>
+{% for r in runs %}<tr><td><a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a></td><td><a href="/datasets/{{ r.dataset_id }}">{{ r.dataset_id }}</a></td><td><span class="pill {{ 'ok' if r.status == 'done' }}">{{ r.status }}</span></td><td>{% for g, n in r.grade_counts|dictsort %}{{ m.grade(g) }}<span class="muted mono">×{{ n }}</span> {% endfor %}</td><td class="num mono">{{ r.quality_score|fmt(3) }}</td><td class="num mono">{{ r.retention_rate|pct }}</td><td class="muted mono" style="font-size:11px">{{ (r.started_at or '')|replace('T',' ') }}</td></tr>{% else %}<tr><td colspan="7" class="muted">无</td></tr>{% endfor %}
+</tbody></table></div>
+<div><h2 style="margin-top:0">high 以上的问题 <span class="cnt">最近一次运行</span></h2>
+<div class="card">{% if failure_counts %}{{ m.hbars(failure_counts) }}{% else %}<span class="muted">没有 high 以上的问题</span>{% endif %}</div></div>
+</div>
+{% endblock %}

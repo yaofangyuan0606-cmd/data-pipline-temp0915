@@ -1,0 +1,97 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}{{ ds.dataset_id }}{% endblock %}
+{% block crumbs %}<a href="/">数据集</a> › <b>{{ ds.dataset_id }}</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Dataset · {{ ds.project or 'project_terminal' }}</div><h1>{{ ds.dataset_id }}</h1>
+<p class="sub">{{ ds.name }} · {% if ds.source == 'sftp' %}<span class="pill on">远程 · {{ ds.host }}</span>{% else %}<span class="pill">本地</span>{% endif %}</p></div>
+<div class="actions"><button class="primary" onclick="runQC('{{ ds.dataset_id }}', this)">运行 QC</button><a class="btn" href="/delivery?dataset={{ ds.dataset_id }}">导出训练分片 / 推理流</a><a class="btn" href="/patches?dataset={{ ds.dataset_id }}">Patch Factory</a><button class="danger" onclick="deleteDataset('{{ ds.dataset_id }}', this)">删除数据集</button></div></div>
+
+<div class="tiles">
+  <div class="tile"><div class="k">等级</div><div class="v">{{ m.grade(ds.latest_grade) }}{% if run and run.grade_counts %}<small>{% for g, n in run.grade_counts|dictsort %}{{ g }}×{{ n }} {% endfor %}</small>{% endif %}</div></div>
+  <div class="tile accent"><div class="k">留存率</div><div class="v">{{ ds.latest_retention_rate|pct }}</div>{% if run %}<div class="sub">{{ run.metrics.get('n_slices_passed')|int if run.metrics.get('n_slices_passed') is not none else '–' }} / {{ run.metrics.get('n_slices_input')|int if run.metrics.get('n_slices_input') is not none else '–' }} tile-sections</div>{% endif %}</div>
+  <div class="tile"><div class="k">quality</div><div class="v">{{ ds.latest_quality_score|fmt(3) }}</div><div class="sub">切片综合分均值</div></div>
+  <div class="tile"><div class="k">blocks</div><div class="v">{{ ds.blocks|length }}</div><div class="sub">{{ settings.block_size_z }} 张 × {% if settings.block_size_xy %}{{ settings.block_size_xy }}²{% else %}整张{% endif %}</div></div>
+  <div class="tile"><div class="k">形状 z·y·x</div><div class="v" style="font-size:16px">{{ ds.shape.z }} · {{ ds.shape.y }} · {{ ds.shape.x }}</div><div class="sub">{{ ds.em.format }} · {{ ds.em.dtype }} · {{ ds.size_class }}</div></div>
+  <div class="tile"><div class="k">体素 nm</div><div class="v" style="font-size:16px">{{ ds.metadata.voxel_size_nm|join(' × ') if ds.metadata.voxel_size_nm else '未确认' }}</div><div class="sub">{{ ds.metadata.species or '–' }} · {{ ds.metadata.brain_region or '–' }}</div></div>
+  {% if run %}<div class="tile"><div class="k">findings</div><div class="v">{{ run.findings_by_severity.values()|sum }}</div>{{ m.sevstack(run.findings_by_severity) }}</div>{% endif %}
+</div>
+
+<h2>block 地图 <span class="cnt">block = {{ settings.block_size_z }} 张连续切片 × 一个 XY tile</span></h2>
+<div class="grid side">
+  <div class="card">{{ m.blockmap(ds, ds.blocks, qc_blocks, 320) }}<div style="margin-top:10px">{{ m.legend_grade() }}</div></div>
+  <div class="card"><b>block 是什么</b>
+    <p style="font-size:13px;color:var(--text-2);margin:6px 0 0">左图每个矩形是切片平面上的一个 tile（{{ settings.block_size_xy or ds.shape.x }}×{{ settings.block_size_xy or ds.shape.y }} 像素）；同一张图里的 tile 共用图下标注的那段 z。一个 tile 加一段 z 就是一个 block，也就是"这块区域上连续 {{ settings.block_size_z }} 张切片"。这份数据是 {{ ((ds.shape.x / (settings.block_size_xy or ds.shape.x))|round(0, 'ceil'))|int }} × {{ ((ds.shape.y / (settings.block_size_xy or ds.shape.y))|round(0, 'ceil'))|int }} 个 tile × {{ ((ds.shape.z / settings.block_size_z)|round(0, 'ceil'))|int }} 段 z，共 {{ ds.blocks|length }} 个 block。颜色是该 block 最近一次 QC 的等级，点击进入逐切片结果。</p></div>
+</div>
+
+<h2>blocks 与逐切片结果 {% if run %}<span class="cnt">run <a href="/runs/{{ run.run_id }}">#{{ run.run_id }}</a> · {{ run.pipeline_version }}</span>{% endif %}</h2>
+{% if run %}{{ m.legend_sev() }}{% endif %}
+<div class="scroll" style="margin-top:8px"><table>
+<thead><tr><th>block</th><th>z</th><th>tile</th><th>split</th><th>等级</th><th style="width:34%">逐切片严重度</th><th class="num">quality</th><th>留存率</th><th class="num">clean run</th><th>主要问题</th><th>预览</th></tr></thead>
+<tbody>
+{% for b in ds.blocks %}{% set q = qc_blocks.get(b.block_id) %}
+<tr>
+  <td><a href="/datasets/{{ ds.dataset_id }}/blocks/{{ b.block_id }}" class="mono"><b>{{ b.block_id }}</b></a></td>
+  <td class="mono">{{ b.z_start }}–{{ b.z_end - 1 }}</td>
+  <td class="mono muted tilecol">y {{ b.y_start }}–{{ b.y_end }}<br>x {{ b.x_start }}–{{ b.x_end }}</td>
+  <td><span class="pill {{ 'on' if b.split in ['train','train_sample'] }}">{{ b.split }}</span></td>
+  <td>{{ m.grade(q.grade if q else b.latest_grade) }}</td>
+  <td>{% if profile_by_block.get(b.block_id) %}{{ m.strip(profile_by_block[b.block_id], ds.dataset_id, b.block_id) }}{% else %}<span class="muted">未运行</span>{% endif %}</td>
+  <td class="num mono">{{ q.quality_score|fmt(3) if q else '–' }}</td>
+  <td style="min-width:130px">{% if q %}<div style="display:flex;gap:8px;align-items:center">{{ m.meter(q.retention_rate) }}<span class="mono">{{ q.retention_rate|pct }}</span></div><div class="muted mono" style="font-size:11px">{{ q.n_passed }}/{{ q.n_slices }}</div>{% else %}–{% endif %}</td>
+  <td class="num mono">{{ q.longest_clean_run if q else '–' }}</td>
+  <td>{% if q and q.dominant_failure %}<span class="pill on">{{ q.dominant_failure }}</span>{% endif %}{% if q %}{% for ft in q.failure_types if ft != q.dominant_failure %}<span class="pill">{{ ft }}</span>{% endfor %}{% endif %}</td>
+  <td>{% if q and q.preview_url %}<a href="{{ q.preview_url }}" target="_blank"><img class="thumb" src="{{ q.preview_url }}" alt="montage"></a>{% endif %}</td>
+</tr>{% endfor %}
+</tbody></table></div>
+
+{% if run %}
+<div class="grid c3" style="margin-top:28px">
+  <div><h2 style="margin-top:0">问题类型 <span class="cnt">全部严重度</span></h2><div class="card">{% if by_type %}{{ m.hbars(by_type.items()|list) }}{% else %}<span class="muted">无</span>{% endif %}</div></div>
+  <div><h2 style="margin-top:0">high 以上</h2><div class="card">{% if by_type_hi %}{{ m.hbars(by_type_hi.items()|list) }}{% else %}<span class="muted">没有 high 以上的问题</span>{% endif %}</div></div>
+  <div><h2 style="margin-top:0">ETL 指标</h2><div class="card"><dl class="kv">
+    {% for k in ['n_slices_input','n_slices_passed','n_missing','n_corrupt','n_findings','n_train_blocks','n_train_slices'] %}<dt>{{ k }}</dt><dd class="mono">{{ run.metrics.get(k)|fmt(0) }}</dd>{% endfor %}
+    <dt>bytes read</dt><dd class="mono">{{ run.metrics.get('bytes_read')|bytes }}</dd><dt>duration</dt><dd class="mono">{{ run.metrics.get('duration_s')|fmt(1) }} s</dd></dl></div></div>
+</div>
+
+<h2>各检查项 <span class="cnt">跨 block 汇总</span></h2>
+<div class="scroll"><table class="dense">
+<thead><tr><th>check</th><th>failure type</th><th>层级</th><th>状态</th><th class="num">最低分</th><th class="num">平均分</th><th class="num">评估切片</th><th class="num">告警</th></tr></thead><tbody>
+{% for c in check_summary %}<tr class="{{ 'muted' if not c.implemented }}"><td class="mono">{{ c.name }}</td><td><span class="pill">{{ c.failure_type }}</span></td><td>{{ c.level }}</td><td>{% if c.implemented %}<span class="tag impl">{{ c.maturity }}</span>{% else %}<span class="tag stub">stub</span>{% endif %}</td><td class="num mono">{{ c.min|fmt(2) }}</td><td class="num mono">{{ c.mean|fmt(2) }}</td><td class="num mono">{{ c.n_evaluated }}</td><td class="num mono">{{ c.n_flagged }}</td></tr>{% endfor %}
+</tbody></table></div>
+
+<h2>findings <span class="cnt">medium 以上 · 最近一次运行</span></h2>
+<div class="scroll"><table class="dense"><thead><tr><th>block</th><th>z</th><th>层级</th><th>check → failure type</th><th>严重度</th><th class="num">score</th><th>坐标</th><th>证据</th><th>预览</th></tr></thead><tbody>
+{% for f in findings %}<tr>
+  <td class="mono"><a href="/datasets/{{ ds.dataset_id }}/blocks/{{ f.block_id }}">{{ f.block_id[-13:] if '_' in f.block_id else f.block_id }}</a></td>
+  <td class="mono">{% if f.z is not none %}<a href="/datasets/{{ ds.dataset_id }}/blocks/{{ f.block_id }}#z{{ f.z }}">{{ f.z }}</a>{% if f.z_to is not none %} <span class="muted">vs {{ f.z_to }}</span>{% endif %}{% else %}block{% endif %}</td>
+  <td>{{ f.level }}</td><td class="mono">{{ f.check }} → <b>{{ f.failure_type }}</b></td><td>{{ m.sev(f.severity) }}</td><td class="num mono">{{ f.score|fmt(2) }}</td>
+  <td class="mono" style="font-size:11px">{% if f.coordinate.bbox %}bbox {{ f.coordinate.bbox }}{% elif f.coordinate.shift %}shift dx={{ f.coordinate.shift.dx|fmt(0) }} dy={{ f.coordinate.shift.dy|fmt(0) }}{% else %}z_abs {{ f.coordinate.z_abs }}{% endif %}</td>
+  <td><details><summary>details</summary><pre class="json">{{ f.details|tojson(indent=0) }}</pre></details></td>
+  <td>{% if f.preview_url %}<a href="{{ f.preview_url }}" target="_blank"><img class="thumb" src="{{ f.preview_url }}" alt=""></a>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="9" class="muted">没有 medium 以上的问题</td></tr>{% endfor %}
+</tbody></table></div>
+{% endif %}
+
+<div class="grid c2" style="margin-top:28px">
+<div><h2 style="margin-top:0">元信息</h2><div class="card"><dl class="kv">
+  <dt>species</dt><dd>{{ ds.metadata.species or '–' }}</dd><dt>brain region</dt><dd>{{ ds.metadata.brain_region or '–' }}</dd>
+  <dt>staining</dt><dd>{{ ds.metadata.staining or '–' }}</dd><dt>imaging modality</dt><dd>{{ ds.metadata.imaging_modality or '–' }}</dd>
+  <dt>acquisition batch</dt><dd>{{ ds.metadata.acquisition_batch or '–' }}</dd><dt>EM volume</dt><dd class="mono">{{ ds.em.path }} · {{ ds.em.format }} · axes {{ ds.em.axes }} · z_offset {{ ds.metadata.z_offset }} · {{ ds.n_voxels }} voxels</dd>
+  <dt>versions</dt><dd>{% for v in ds.versions %}<span class="pill on">{{ v.kind }}: {{ v.version }}</span>{% endfor %}</dd>
+  <dt>inferred</dt><dd class="muted">{{ ds.metadata.extra.inferred_fields|join(', ') if ds.metadata.extra.inferred_fields else 'none · all from dataset.json' }}</dd>
+  {% if ds.metadata.extra.open_questions %}<dt>待确认</dt><dd><ul style="margin:0;padding-left:1.2em">{% for q in ds.metadata.extra.open_questions %}<li>{{ q }}</li>{% endfor %}</ul></dd>{% endif %}
+</dl></div></div>
+<div><h2 style="margin-top:0">资产 <span class="cnt">{{ ds.assets|length }}</span></h2><div class="card pad-0"><table style="border:0"><thead><tr><th>类型</th><th>路径</th><th>格式</th><th>版本</th><th class="num">大小</th></tr></thead><tbody>
+{% for t, items in assets_by_type.items() %}{% for a in items %}<tr><td>{% if loop.first %}<b>{{ t }}</b>{% endif %}</td><td class="mono">{{ a.path }} {% if not a.exists %}<span class="badge sev-missing">missing</span>{% endif %}</td><td class="muted">{{ a.format }}</td><td class="mono">{{ a.version }}{% if a.model_version %} · {{ a.model_version }}{% endif %}</td><td class="num mono">{{ a.size_bytes|bytes }}</td></tr>{% endfor %}{% endfor %}
+</tbody></table></div></div>
+</div>
+
+<div class="grid c2" style="margin-top:28px">
+<div><h2 style="margin-top:0">运行历史</h2><table class="dense"><thead><tr><th>run</th><th>状态</th><th>等级</th><th class="num">quality</th><th class="num">留存率</th><th>开始</th></tr></thead><tbody>
+{% for r in runs %}<tr><td><a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a></td><td><span class="pill {{ 'ok' if r.status == 'done' }}">{{ r.status }}</span></td><td>{% for g, n in r.grade_counts|dictsort %}{{ m.grade(g) }}<span class="muted mono">×{{ n }}</span> {% endfor %}</td><td class="num mono">{{ r.quality_score|fmt(3) }}</td><td class="num mono">{{ r.retention_rate|pct }}</td><td class="muted mono" style="font-size:11px">{{ (r.started_at or '')|replace('T',' ') }}</td></tr>{% endfor %}
+</tbody></table></div>
+<div><h2 style="margin-top:0">agent 执行记录</h2><table class="dense"><thead><tr><th>时间</th><th>agent</th><th>step</th><th>状态</th><th>输出</th></tr></thead><tbody>
+{% for t in traces %}<tr><td class="muted mono" style="font-size:11px">{{ (t.created_at or '')|replace('T',' ') }}</td><td>{{ t.agent }}</td><td>{{ t.step }}</td><td><span class="pill {{ 'ok' if t.status == 'ok' }}">{{ t.status }}</span></td><td><details><summary>output</summary><pre class="json">{{ t.output|tojson(indent=0) }}</pre></details></td></tr>{% else %}<tr><td colspan="5" class="muted">无</td></tr>{% endfor %}
+</tbody></table></div>
+</div>
+{% endblock %}

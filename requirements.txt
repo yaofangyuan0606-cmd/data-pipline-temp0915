@@ -1,0 +1,16 @@
+numpy
+scipy
+pillow
+tifffile
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+sqlalchemy>=2.0
+pymysql
+cryptography<45
+pydantic-settings
+pytest
+httpx
+psutil
+paramiko

@@ -1,0 +1,48 @@
+{% extends "base.html" %}{% import "_macros.html" as m %}
+{% block title %}Patch Factory{% endblock %}
+{% block crumbs %}<b>Patch Factory</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Training Data API</div><h1>Patch Factory</h1>
+<p class="sub">QC 之后才稳定出训练数据。这里做三件事：验证标签卷与 EM 是否对得上，给 block 分 train / val / test，按七种用途生成 patch 集合。patch 只存坐标与血缘，像素按需切。</p></div>
+<div class="actions"><select id="pf-ds" class="text" onchange="pfSelect(this.value)">{% for d in datasets %}<option value="{{ d.dataset_id }}" {{ 'selected' if d.dataset_id == preselect }}>{{ d.dataset_id }} · {{ d.n_blocks }} blocks · {{ d.latest_grade or '未运行' }}</option>{% endfor %}</select></div></div>
+
+<section class="card">
+  <h2 style="margin-top:0">标签卷 <span class="muted" style="font-weight:400;font-size:13px">与 EM 的一致性</span></h2>
+  <div class="scroll"><table class="dense" id="pf-labels"><thead><tr><th>类型</th><th>路径</th><th>形状 · 相对 EM</th><th>状态</th><th style="min-width:260px">问题</th><th></th></tr></thead><tbody><tr><td colspan="6" class="muted">加载中…</td></tr></tbody></table></div>
+  <p class="muted" style="font-size:12px;margin:8px 0 0">检查项：标签缺失、标签为空、EM 无数据处有标签、标签画在填充区、形状或层数不一致、编码不一致。只有逐层对齐、且能等距落到 EM 网格上的标签才能出 patch；对不上的资产直接判 fail 并写明原因。</p>
+</section>
+
+<div class="grid c2" style="margin-top:14px">
+<section class="card">
+  <h2 style="margin-top:0">holdout 划分 <span class="muted" style="font-weight:400;font-size:13px">按 block，稳定不重排</span></h2>
+  <div id="pf-partition" class="muted">加载中…</div>
+  <div class="actions" style="margin-top:10px"><input id="pf-ratios" class="text mono" style="width:120px" placeholder="0.8,0.1,0.1"><button onclick="pfPartition(false)">补齐未分配</button><button class="danger" onclick="pfPartition(true)">强制重排</button><span class="muted" id="pf-part-msg"></span></div>
+  <p class="muted" style="font-size:12px;margin:8px 0 0">用途轴（训练 / 推理）与划分轴（train / val / test）是两个独立字段。只有训练用途且等级 A/B/C 的 block 参与划分，D 级排除；块边界是硬切分，patch 不跨块，所以 overlap 泄漏在构造上为零。强制重排会改变测试集，请谨慎。</p>
+</section>
+<section class="card">
+  <h2 style="margin-top:0">生成 patch 集合</h2>
+  <div id="pf-ready" class="ready-grid"></div>
+  <form id="pf-form" onsubmit="return pfCreate(event)" style="margin-top:12px">
+    <div class="grid c3" style="gap:8px">
+      <div class="field"><label>类型</label><select name="patch_type" class="text">{% for t in types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select></div>
+      <div class="field"><label>尺寸 <span class="muted">dz,dy,dx</span></label><input name="size" class="text mono" value="16,256,256"></div>
+      <div class="field"><label>数量 / 种子</label><div style="display:flex;gap:6px"><input name="n" type="number" class="text" value="64" min="1"><input name="seed" type="number" class="text" value="0"></div></div>
+    </div>
+    <div class="grid c3" style="gap:8px">
+      <div class="field"><label>划分 <span class="muted">留空 = train/val/test</span></label><input name="partitions" class="text mono" placeholder="train val"></div>
+      <div class="field"><label>最低综合分 <span class="muted">可空</span></label><input name="min_quality" type="number" step="0.05" min="0" max="1" class="text"></div>
+      <div class="field"><label>阈值覆盖 <span class="muted">JSON</span></label><input name="params" class="text mono" placeholder='{"min_fg_frac": 0.3}'></div>
+    </div>
+    <div class="actions"><button class="primary" type="submit">生成</button><label class="choice"><input type="checkbox" name="only_passed" checked> 只用通过 QC 的切片</label><span id="pf-msg" class="muted"></span></div>
+  </form>
+  <details style="margin-top:10px"><summary>训练侧怎么读</summary><pre class="json" style="max-width:none">from emqc.loader import PatchSetClient
+ps = PatchSetClient("{{ api_base }}", set_id=&lt;id&gt;)
+for em, label, meta in ps.iter(partition="train"):     # em (dz,dy,dx)；label = ids / boundary / mask
+    ...                                                   # ps.manifest["preprocessing"] / ["augmentation"] 是声明的处理方式</pre></details>
+</section>
+</div>
+
+<h2>patch 集合 <span class="cnt" id="pf-count">0</span></h2>
+<div class="scroll"><table class="dense" id="pf-sets"><thead><tr><th>#</th><th>类型</th><th>状态</th><th class="num">patch</th><th>按划分</th><th>尺寸</th><th>标签版本</th><th>检查</th><th>QC run</th><th>创建</th><th></th></tr></thead><tbody id="pf-sets-body"><tr><td colspan="11" class="muted">加载中…</td></tr></tbody></table></div>
+<script>document.addEventListener('DOMContentLoaded', () => pfInit());</script>
+{% endblock %}
