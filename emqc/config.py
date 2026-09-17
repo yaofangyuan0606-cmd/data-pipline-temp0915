@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     allow_delete_files: bool = True
     deployment_name: str = ""  # shown in the UI topbar so people know which instance they are looking at
 
+    # slice annotation (VAST-style viewer): directory whose sub-directories hold em.npy (+ seg.npy) in (x, y, z) order
+    annotate_root: Path | None = None
+
     api_host: str = "127.0.0.1"
     api_port: int = 8765
 

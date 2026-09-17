@@ -216,3 +216,5 @@ demo 数据已删除。需要时可以再生成三份样例（合成缺陷集 + 
 2. 实现 5 个 stub 检查；用真实数据 + 人工标注回归阈值。
 3. XY tile 化 block；把 `QCRunner.process_block` 分发到多机（`persist_block` 已幂等）。
 4. GT / prediction 的一致性 QC（标签覆盖率、与 EM 的对齐）。
+
+- `docs/ANNOTATE.md` — 切片标注页（VAST 风格：叠加浏览、吸色填色、连续翻页；写时复制 + 精确撤销）
