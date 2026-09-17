@@ -279,6 +279,34 @@ class Block:
             self._invalidate(z)
             return self._record("paint", z, xs, ys, old, new_id, {"radius": radius, "n_points": len(points)})
 
+    def merge_pair(self, z: int, first: tuple[int, int], second: tuple[int, int]) -> dict | None:
+        """Relabel only the second clicked 4-connected region using the first's id.
+
+        Both ids are read under the edit lock, so stale client-side label tables
+        cannot choose the wrong keeper. Other islands and slices stay unchanged.
+        """
+        self._check_z(z)
+        W, H = self.em.shape[:2]
+        if any(not (0 <= x < W and 0 <= y < H) for x, y in (first, second)):
+            raise ValueError("outside the block")
+        if not self.has_seg:
+            raise ValueError("block has no segmentation")
+        with self.lock:
+            plane = self._seg()[:, :, z]
+            to_id, from_id = int(plane[first]), int(plane[second])
+            if not to_id or not from_id:
+                raise ValueError("请选择两个非背景色块")
+            if from_id == to_id:
+                return None
+            components, _ = ndimage.label(plane == from_id)
+            xs, ys = np.nonzero(components == components[second])
+            seg = self._seg_writable()
+            seg[xs, ys, z] = to_id
+            seg.flush()
+            self._invalidate(z)
+            return self._record("merge", z, xs, ys, from_id, to_id,
+                                {"scope": "component", "first": list(first), "second": list(second)})
+
     def merge(self, from_id: int, to_id: int, scope: str = "block", z: int | None = None) -> dict | None:
         """Give every voxel of `from_id` the id `to_id` — the two cells become one segment (one colour).
         scope "block": all sections; "slice": only section z. Returns the edit record, or None if nothing changed."""

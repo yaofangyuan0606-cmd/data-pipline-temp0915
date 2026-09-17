@@ -150,3 +150,39 @@ def test_merge_block_scope_and_legacy_undo(client, ann_root):
     np.savez_compressed(f, **d)
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["n"] == r["edit"]["n"]
     assert np.array_equal(np.load(b / "seg_edit.npy"), np.load(b / "seg.npy"))
+
+
+def test_merge_pairs_keep_first_and_leave_other_islands_and_slices(client, ann_root):
+    from annotation_data import IDS, POINTS, write_pairs
+
+    b = ann_root / "demo" / "pairs"
+    original = write_pairs(b)
+    client.get("/api/v1/annotate/blocks")  # discover the additional block
+    url = "/api/v1/annotate/blocks/pairs"
+    a, b_point, c, d = POINTS
+    for body in [
+        {"z": -1, "first": a, "second": b_point},
+        {"z": 0, "first": (-1, 0), "second": b_point},
+        {"z": 0, "first": a, "second": (64, 0)},
+        {"z": 0, "first": (0, 0), "second": b_point},
+    ]:
+        assert client.post(url + "/merge-pair", json=body).status_code == 422
+    assert not (b / "seg_edit.npy").exists()
+    result = client.post(url + "/merge-pair", json={"z": 0, "first": a, "second": b_point}).json()
+    assert result["edit"]["scope"] == "component"
+    assert result["edit"]["new_id"] == str(IDS[0]) and result["edit"]["n_px"] == 64
+    expected = original.copy()
+    expected[18:26, 2:10, 0] = IDS[0]
+    assert np.array_equal(np.load(b / "seg_edit.npy"), expected)
+    result = client.post(url + "/merge-pair", json={"z": 0, "first": c, "second": d}).json()
+    assert result["edit"]["new_id"] == str(IDS[2]) and result["n_edits"] == 2
+    after_first = expected.copy()
+    expected[50:58, 2:10, 0] = IDS[2]
+    assert np.array_equal(np.load(b / "seg_edit.npy"), expected)
+    assert np.array_equal(np.load(b / "seg.npy"), original)
+    same = client.post(url + "/merge-pair", json={"z": 0, "first": a, "second": b_point}).json()
+    assert same["edit"] is None and same["n_edits"] == 2
+    assert client.post(url + "/undo").json()["n_edits"] == 1
+    assert np.array_equal(np.load(b / "seg_edit.npy"), after_first)
+    assert client.post(url + "/undo").json()["n_edits"] == 0
+    assert np.array_equal(np.load(b / "seg_edit.npy"), original)
