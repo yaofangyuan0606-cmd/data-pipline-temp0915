@@ -117,6 +117,7 @@ class Block:
             "voxel_size_nm": g.get("voxel_size_nm"), "origin": g.get("origin"), "dataset": self.meta.get("dataset", {}).get("id"),
             "n_edits": len(self.edits()), "has_working_copy": (self.work / SEG_EDIT).exists(),
             "working_copy": str(self.work / SEG_EDIT), "workdir": str(self.work), "em_source": "visual/slices_em" if self.visual_em else "em.npy",
+            "em_version": "2-" + ("visual" if self.visual_em else "npy"),  # bump when the EM rendering changes; the viewer keys its image URLs on it
         }
 
     # ------------------------------------------------------------------ label volume access

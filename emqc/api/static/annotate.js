@@ -66,7 +66,7 @@
     if (S.loading.has(z)) return S.loading.get(z);
     const b = encodeURIComponent(S.block), ver = S.info?.n_edits || 0, version = S.cacheVersion;
     const p = Promise.all([
-      loadImg(`${API}/blocks/${b}/em/${z}.png`),
+      loadImg(`${API}/blocks/${b}/em/${z}.png?v=${encodeURIComponent(S.info.em_version || "1")}`),
       S.info.has_seg ? loadImg(`${API}/blocks/${b}/labels/${z}.png?v=${ver}`) : null,
       S.info.has_seg ? getJSON(`${API}/blocks/${b}/labels/${z}.json?v=${ver}`) : null,
     ]).then(([em, lab, tab]) => {

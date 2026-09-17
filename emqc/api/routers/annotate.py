@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from emqc.annotate.store import AnnotateStore
@@ -61,13 +61,17 @@ def block_info(block_id: str):
 
 
 @router.get("/blocks/{block_id}/em/{z}.png")
-def em_png(block_id: str, z: int):
+def em_png(block_id: str, z: int, request: Request):
     b = _block(block_id)
     try:
         data = b.em_png(z)
     except IndexError as e:
         raise HTTPException(404, str(e))
-    return Response(data, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+    import hashlib
+    etag = '"' + hashlib.md5(data).hexdigest()[:16] + '"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+    return Response(data, media_type="image/png", headers={"Cache-Control": "no-cache", "ETag": etag})
 
 
 @router.get("/blocks/{block_id}/labels/{z}.png")
