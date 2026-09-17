@@ -3,7 +3,7 @@
 {% block crumbs %}<b>切片标注</b>{% endblock %}
 {% block content %}
 <div class="page-head"><div class="grow"><div class="eyebrow">Annotation · VAST-style</div><h1>切片标注</h1>
-<p class="sub">EM 与分割在同一页对比：<b>叠加</b>模式把分割按透明度盖在 EM 上，<b>并排</b>模式左边纯 EM、右边 EM+分割叠加，缩放/平移/翻页同步、光标联动；<b>对比滑块</b>在同一张图上拖分界线看叠加前后；按住 Tab 闪烁对比。滚轮翻 z，Ctrl+滚轮缩放，右键拖动平移。工具：<b>拾取</b>（P，任何工具下 Alt+点击也是拾取）选中光标下的分段作为当前标签；<b>填充</b>（F）把点到的连通区域改成当前标签，Shift+点击改整片同 id；<b>合并</b>（M）两次点击：默认先点要改的细胞、再点目标，前者在所有切片上都变成目标的 id 和颜色（方向可在工具栏切换）；<b>画笔</b>（B）/<b>橡皮</b>（E）按半径涂抹；Ctrl+Z 撤销。所有改动写到 <span class="mono">seg_edit.npy</span>，原始 <span class="mono">seg.npy</span> 不动。</p></div></div>
+<p class="sub">EM 与分割在同一页对比：<b>叠加</b>模式把分割按透明度盖在 EM 上，<b>并排</b>模式左边纯 EM、右边 EM+分割叠加，缩放/平移/翻页同步、光标联动；<b>对比滑块</b>在同一张图上拖分界线看叠加前后；按住 Tab 闪烁对比。滚轮翻 z，Ctrl+滚轮缩放，右键拖动平移。工具：<b>拾取</b>（P，任何工具下 Alt+点击也是拾取）选中光标下的分段作为当前标签；<b>填充</b>（F）把点到的连通区域改成当前标签，Shift+点击改整片同 id；<b>合并</b>（M）两次点击：先点 A 再点 B，B 变为 A 的颜色；完成后再点 C、D，D 变为 C 的颜色。每一对独立操作，只改当前切片点到的色块；<b>画笔</b>（B）/<b>橡皮</b>（E）按半径涂抹；Ctrl+Z 撤销。所有改动写到 <span class="mono">seg_edit.npy</span>，原始 <span class="mono">seg.npy</span> 不动。</p></div></div>
 
 <div class="vast" id="vast">
   <aside class="vast-panel vast-tools">
@@ -16,16 +16,8 @@
       <button class="tool" data-tool="fill" title="填充 (F)"><svg viewBox="0 0 24 24"><path d="M7 3l10 10-6 6L3 11z"/><path d="M17 13c1.5 2 2 3.2 2 4a2 2 0 11-4 0c0-.8.5-2 2-4z"/></svg>填充</button>
       <button class="tool" data-tool="brush" title="画笔 (B)"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔</button>
       <button class="tool" data-tool="erase" title="橡皮 (E)"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮</button>
-      <button class="tool" data-tool="merge" title="合并 (M)：先点保留的细胞，再点要并入的细胞"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并</button>
+      <button class="tool" data-tool="merge" title="合并 (M)：先点第一块，再点第二块，保留第一块颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并</button>
       <button class="tool" data-tool="pan" title="平移 (H · 或右键拖动)"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>平移</button>
-    </div>
-    <div class="vast-scope" id="an-dir-box"><span class="muted">合并方向</span>
-      <label><input type="radio" name="an-dir" value="first_into_second" checked> 先点的并入后点的（先点要改的，再点目标）</label>
-      <label><input type="radio" name="an-dir" value="second_into_first"> 后点的并入先点的（先点保留的，再点要并入的）</label>
-    </div>
-    <div class="vast-scope" id="an-scope-box"><span class="muted">合并范围</span>
-      <label><input type="radio" name="an-scope" value="block" checked> 整块（所有切片）</label>
-      <label><input type="radio" name="an-scope" value="slice"> 只并本片</label>
     </div>
     <div class="vast-mergehint muted" id="an-merge-hint" hidden></div>
     <div class="field" style="margin-top:8px"><label>画笔半径 <span class="mono" id="an-brush-v">4</span> px <span class="muted">[ ]</span></label><input id="an-brush" type="range" min="0" max="60" value="4"></div>
@@ -76,7 +68,7 @@
     <label class="vast-layer"><input type="checkbox" id="an-show-seg" checked> 分割（上层） <span class="muted">透明度</span><input id="an-op" type="range" min="0" max="100" value="45" style="flex:1"><span class="mono muted" id="an-op-v">45%</span></label>
     <label class="vast-layer"><input type="checkbox" id="an-fade"> 透明度自动渐变 <span class="muted">(G) 分割在 EM 上淡入淡出；, . 手动步进</span></label>
     <label class="vast-layer"><input type="checkbox" id="an-outline"> 只画边界 <span class="muted">(O)</span></label>
-    <label class="vast-layer"><input type="checkbox" id="an-hover" checked> 悬停高亮</label>
+    <label class="vast-layer"><input type="checkbox" id="an-hover" checked> 仅高亮鼠标所在色块</label>
 
     <div class="vast-sec">本片分段 <span class="muted mono" id="an-nseg"></span></div>
     <input id="an-search" class="text mono" placeholder="按 id 查找…" style="width:100%">
@@ -87,5 +79,5 @@
   </aside>
 </div>
 <script>window.AN_PRESELECT = {{ (preselect or '')|tojson }};</script>
-<script src="/static/annotate.js" defer></script>
+<script src="/static/annotate.js?v=pairwise-regions-1" defer></script>
 {% endblock %}

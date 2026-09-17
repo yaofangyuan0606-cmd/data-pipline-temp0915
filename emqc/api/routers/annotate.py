@@ -107,6 +107,12 @@ class MergeIn(BaseModel):
     z: int | None = None
 
 
+class MergePairIn(BaseModel):
+    z: int
+    first: tuple[int, int]
+    second: tuple[int, int]
+
+
 class PaintIn(BaseModel):
     z: int
     points: list[list[int]] = Field(min_length=1)
@@ -140,6 +146,18 @@ def paint(block_id: str, body: PaintIn):
     pts = [(min(max(int(p[0]), 0), W - 1), min(max(int(p[1]), 0), H - 1)) for p in body.points if len(p) >= 2]
     try:
         rec = b.paint(body.z, pts, body.radius, _int_id(body.new_id))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return _edit_response(b, rec)
+
+
+@router.post("/blocks/{block_id}/merge-pair")
+def merge_pair(block_id: str, body: MergePairIn):
+    b = _block(block_id)
+    if not 0 <= body.z < b.shape_zyx[0]:
+        raise HTTPException(422, "invalid z")
+    try:
+        rec = b.merge_pair(body.z, body.first, body.second)
     except ValueError as e:
         raise HTTPException(422, str(e))
     return _edit_response(b, rec)

@@ -20,14 +20,14 @@ id 一律按字符串传——H01 的 id 超过 2^53，JSON 数字会丢精度�
 同时把 (z, x, y, new_id) 发给服务器，服务器在体数据上做同样的泛洪并落盘，返回后前端重新拉这一片校准。画笔 /
 橡皮按半径涂抹，鼠标抬起时把整条轨迹一次发过去。
 
-**合并**。这是"把相邻两个细胞搞成一个颜色"的专用工具（M），两次点击一对。默认方向是**先点要改的细胞，再点目标**：
-点 4 再点 1，4 在所有切片上的体素都改成 1 的 id，颜色随 id 走，4 立刻变成 1 的颜色，1 本身以及之前并进 1 的细胞都不动。
-合并完成后当前标签变成结果（目标）的颜色，选择清空，下一对从头点。工具栏可以把方向切成"先点保留的、再点要并入的"，
-提示栏会随方向说明这一击会发生什么。合并范围默认整块所有切片，也可只并本片。Alt+点击重选第一个细胞，Esc 取消。
-合并是一次改动，Ctrl+Z 整体撤销。
+**悬停高亮**。只高亮当前鼠标所在的四连通区域，同一标签在画面里其他不相连的位置不会一起亮。
+第一块的黄色选框也只圈出点击位置所在的连通区域。
 
-一个容易踩的点：合并是按 id 做的，不是按你点的那一块。1、2、3 并成一个 id 之后它们就是同一个细胞，再把它并到别处会整组一起走——
-这是分割数据的语义，不是显示问题。要只改其中一块，用填充工具（它只改点到的那个连通区域、只改本片）。
+**合并**。工具 M，每两次点击为一对，固定保留第一块的颜色：先点 A、再点 B，B 变成 A 的标签和颜色；
+选择立即清空，再点 C、D，D 变成 C 的标签和颜色。只改当前切片中第二次点击的四连通区域，其他不相连区域与其他切片不变。
+界面不再提供方向和范围选择。保存期间暂停编辑，防止连点复用上一对的选择；成功、无变化或失败后都从新的一对开始。
+Alt+点击可重选第一块；Esc、切换工具、切片或数据块会取消未完成的一对。Ctrl+Z 一次撤销一对。
+已经具有相同标签的两块无需再改，点击后也清空选择。底层 `/merge` 接口仍保留整片/整块按标签合并供脚本使用。
 
 **连续翻页**。滚轮一格一片（Ctrl+滚轮是缩放），↑↓ 或 W/S 单步，PageUp/Down 十步，Home/End 首尾，
 也有滑块和"连播"（可调每秒张数）。浏览器缓存最近 24 片并预取前后各 3 片，翻页基本不等待。
@@ -52,7 +52,8 @@ GET  /api/v1/annotate/blocks/{b}/labels/{z}.json      索引→id 表与像素�
 GET  /api/v1/annotate/blocks/{b}/pick?z=&x=&y=        光标处 id
 POST /api/v1/annotate/blocks/{b}/fill                 {z,x,y,new_id,whole_slice}
 POST /api/v1/annotate/blocks/{b}/paint                {z,points,radius,new_id}
-POST /api/v1/annotate/blocks/{b}/merge                {from_id,to_id,scope:block|slice,z}
+POST /api/v1/annotate/blocks/{b}/merge-pair           {z,first:[x,y],second:[x,y]}
+POST /api/v1/annotate/blocks/{b}/merge                {from_id,to_id,scope:block|slice,z}（脚本接口）
 POST /api/v1/annotate/blocks/{b}/undo
 POST /api/v1/annotate/blocks/{b}/new-id               最大 id + 1
 GET  /api/v1/annotate/blocks/{b}/edits
@@ -60,11 +61,25 @@ GET  /api/v1/annotate/blocks/{b}/edits
 
 ## 快捷键
 
-P 拾取 · F 填充 · M 合并（先点要改的，再点目标；方向可切） · B 画笔 · E 橡皮 · H 平移（或右键拖动 / 空格+拖动） · [ ] 画笔半径 · N 新建 id ·
+P 拾取 · F 填充 · M 合并（两次点击一对，保留第一块颜色） · B 画笔 · E 橡皮 · H 平移（或右键拖动 / 空格+拖动） · [ ] 画笔半径 · N 新建 id ·
 O 只画边界 · V 并排/叠加 · C 对比滑块 · G 透明度渐变 · , . 透明度步进 · 按住 Tab 隐藏分割 · 0 适合窗口 · 1 原始尺寸 · +/- 缩放 · Ctrl+Z 撤销
 
 ## 已知限制
 
 - 单片最多 65535 个 id（uint16 索引）；H01 一片几百到几千，够用。
-- 填充、涂抹是二维的，只改当前这一片；合并可以整块。三维分裂（把一个错并的细胞拆开）还没做。
+- 页面上的填充、涂抹、两块合并都是二维的，只改当前这一片。三维分裂（把一个错并的细胞拆开）还没做。
 - 没有多人并发控制；同一个块同时开两个页面改，后写的覆盖先写的。
+
+## 回归验证
+
+默认 `python -m pytest tests -q` 覆盖标注接口、两两合并、其他同标签区域与切片保持不变、精确撤销及原始标签保护。
+
+真实浏览器交互测试单独启用，使用本机 Chromium 和独立合成数据：
+
+```bash
+EMQC_BROWSER_TESTS=1 python -m pytest tests/test_annotate_browser.py -q
+```
+
+需安装 `google-chrome` 或 `chromium`，以及 `websockets`（已包含于 `uvicorn[standard]`）。
+如果临时目录路径过长，设置 `CHROME_TMPDIR` 为较短的可写临时目录，避免 Chromium Unix socket 路径长度限制。
+浏览器测试不连接真实标注数据；无浏览器的环境可以运行默认接口回归。

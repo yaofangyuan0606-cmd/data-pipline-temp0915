@@ -18,8 +18,8 @@
     view: "overlay", rightSegOnly: false, curtain: false, curtainX: 0, blink: false, fade: false, fadeMax: 0.45, fadeRaf: 0,
     opacity: 0.45, outline: false, showEm: true, showSeg: true, hover: true,
     zoom: 1, tx: 0, ty: 0,
-    cache: new Map(), loading: new Map(), hoverIdx: -1, hoverXY: null, hoverPane: 0,
-    playing: null, drag: null, stroke: null, mergeFrom: null, pinIdx: -1, spacePan: false, curtainDrag: false,
+    cache: new Map(), loading: new Map(), cacheVersion: 0, hoverXY: null, hoverPane: 0, regionEntry: null, regions: [],
+    playing: null, drag: null, stroke: null, mergeFirst: null, mergeBusy: false, spacePan: false, curtainDrag: false,
   };
   function mkPane(id) {
     const stage = $(id), cv = stage.querySelector(".vast-canvas"), [em, seg, hi] = cv.querySelectorAll("canvas");
@@ -64,23 +64,24 @@
   function fetchZ(z) {
     if (S.cache.has(z)) return Promise.resolve(S.cache.get(z));
     if (S.loading.has(z)) return S.loading.get(z);
-    const b = encodeURIComponent(S.block), ver = S.info?.n_edits || 0;
+    const b = encodeURIComponent(S.block), ver = S.info?.n_edits || 0, version = S.cacheVersion;
     const p = Promise.all([
       loadImg(`${API}/blocks/${b}/em/${z}.png`),
       S.info.has_seg ? loadImg(`${API}/blocks/${b}/labels/${z}.png?v=${ver}`) : null,
       S.info.has_seg ? getJSON(`${API}/blocks/${b}/labels/${z}.json?v=${ver}`) : null,
     ]).then(([em, lab, tab]) => {
       const e = { em, idx: lab ? decodeIdx(lab) : null, ids: tab ? tab.ids : ["0"], counts: tab ? tab.counts : [], segImgs: new Map() };
+      if (version !== S.cacheVersion || S.loading.get(z) !== p) return e;
       S.cache.set(z, e); S.loading.delete(z);
       while (S.cache.size > 24) { const k = S.cache.keys().next().value; if (k !== S.z) S.cache.delete(k); else break; }
       return e;
-    }).catch(err => { S.loading.delete(z); throw err; });
+    }).catch(err => { if (S.loading.get(z) === p) S.loading.delete(z); throw err; });
     S.loading.set(z, p);
     return p;
   }
   function prefetch() { for (const d of [1, -1, 2, -2, 3, -3]) { const z = S.z + d; if (z >= 0 && z < S.info.shape_zyx[0]) fetchZ(z).catch(() => {}); } }
-  function invalidate(z) { S.cache.delete(z); S.loading.delete(z); }
-  function dropAll() { S.cache.clear(); S.loading.clear(); }
+  function invalidate(z) { S.cache.delete(z); S.loading.delete(z); if (z === S.z) clearRegions(); }
+  function dropAll() { S.cacheVersion++; S.cache.clear(); S.loading.clear(); clearRegions(); }
 
   // ------------------------------------------------------------------ rendering
   function segCanvas(e, outline) {
@@ -127,18 +128,10 @@
   function renderHi() {
     for (const p of P) p.gHi.clearRect(0, 0, S.W, S.H);
     const e = S.cache.get(S.z); if (!e) return;
-    const marks = [];
-    if (S.pinIdx > 0 && e.idx) marks.push([S.pinIdx, [255, 214, 10], 90]);
-    if (S.hover && e.idx && S.hoverIdx > 0 && S.hoverIdx !== S.pinIdx) marks.push([S.hoverIdx, [255, 255, 255], 60]);
-    if (marks.length) {
-      const img = P[0].gHi.createImageData(S.W, S.H), d = img.data, idx = e.idx, W = S.W, H = S.H;
-      for (const [k, c, fillA] of marks) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-        const i = y * W + x; if (idx[i] !== k) continue;
-        const edge = (x + 1 < W && idx[i + 1] !== k) || (y + 1 < H && idx[i + W] !== k) || (x > 0 && idx[i - 1] !== k) || (y > 0 && idx[i - W] !== k);
-        const j = i * 4; d[j] = c[0]; d[j + 1] = c[1]; d[j + 2] = c[2]; d[j + 3] = edge ? 235 : fillA;
-      }
-      for (const p of panes()) p.gHi.putImageData(img, 0, 0);
-    }
+    const pin = S.mergeFirst && S.mergeFirst.z === S.z ? regionAt(e, ...S.mergeFirst.xy) : null;
+    const hover = S.hover && S.hoverXY ? regionAt(e, ...S.hoverXY) : null;
+    if (pin) drawRegion(pin, [255, 214, 10], 90);
+    if (hover && (!pin || !pin.mask[S.hoverXY[1] * S.W + S.hoverXY[0]])) drawRegion(hover, [255, 255, 255], 60);
     if (S.view === "overlay" && S.curtain) {
       const g = P[0].gHi, cx = S.curtainX + 0.5, lw = 1 / S.zoom;
       g.lineWidth = 3 * lw; g.strokeStyle = "rgba(0,0,0,.55)"; g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, S.H); g.stroke();
@@ -159,6 +152,51 @@
       g.beginPath(); g.moveTo(x + 0.5 - r, y + 0.5); g.lineTo(x + 0.5 + r, y + 0.5); g.moveTo(x + 0.5, y + 0.5 - r); g.lineTo(x + 0.5, y + 0.5 + r); g.stroke();
       g.strokeStyle = "rgba(0,0,0,.7)"; g.lineWidth = lw / 2; g.stroke();
     });
+  }
+  // A label may occur in several disconnected places. Cache only the two regions
+  // currently pointed at/selected, and flood from the actual cursor pixel.
+  function clearRegions() { S.regionEntry = null; S.regions = []; }
+  function regionAt(e, x, y) {
+    if (!e.idx || !inside(x, y)) return null;
+    const W = S.W, H = S.H, idx = e.idx, seed = y * W + x, label = idx[seed];
+    if (!label) return null;
+    if (S.regionEntry !== e) { clearRegions(); S.regionEntry = e; }
+    const hit = S.regions.find(r => r.mask[seed]); if (hit) return hit;
+    const mask = new Uint8Array(idx.length), pixels = [], stack = [seed];
+    let minX = x, maxX = x, minY = y, maxY = y;
+    while (stack.length) {
+      const pos = stack.pop(); if (mask[pos] || idx[pos] !== label) continue;
+      const py = Math.floor(pos / W); let left = pos % W, right = left;
+      while (left > 0 && idx[py * W + left - 1] === label && !mask[py * W + left - 1]) left--;
+      while (right + 1 < W && idx[py * W + right + 1] === label && !mask[py * W + right + 1]) right++;
+      minX = Math.min(minX, left); maxX = Math.max(maxX, right); minY = Math.min(minY, py); maxY = Math.max(maxY, py);
+      let above = false, below = false;
+      for (let px = left; px <= right; px++) {
+        const i = py * W + px; mask[i] = 1; pixels.push(i);
+        const up = py > 0 && idx[i - W] === label && !mask[i - W];
+        const down = py + 1 < H && idx[i + W] === label && !mask[i + W];
+        if (up && !above) stack.push(i - W);
+        if (down && !below) stack.push(i + W);
+        above = up; below = down;
+      }
+    }
+    const region = { label, mask, pixels, minX, maxX, minY, maxY, idx };
+    S.regions.unshift(region); S.regions.length = Math.min(2, S.regions.length);
+    return region;
+  }
+  function drawRegion(r, color, alpha) {
+    const W = S.W, H = S.H, width = r.maxX - r.minX + 1;
+    const img = P[0].gHi.createImageData(width, r.maxY - r.minY + 1), d = img.data;
+    for (const i of r.pixels) {
+      const x = i % W, y = Math.floor(i / W), k = r.label;
+      const edge = x === 0 || y === 0 || x === W - 1 || y === H - 1 || r.idx[i - 1] !== k || r.idx[i + 1] !== k || r.idx[i - W] !== k || r.idx[i + W] !== k;
+      const j = ((y - r.minY) * width + x - r.minX) * 4;
+      d[j] = color[0]; d[j + 1] = color[1]; d[j + 2] = color[2]; d[j + 3] = edge ? 235 : alpha;
+    }
+    // A transparent bounding box must not erase another selected region.
+    const canvas = document.createElement("canvas"); canvas.width = img.width; canvas.height = img.height;
+    canvas.getContext("2d").putImageData(img, 0, 0);
+    for (const p of panes()) p.gHi.drawImage(canvas, r.minX, r.minY);
   }
   function applyView() { const t = `translate(${S.tx}px,${S.ty}px) scale(${S.zoom})`; for (const p of P) p.cv.style.transform = t; status(); }
   function fit() {
@@ -209,13 +247,16 @@
   }
 
   // ------------------------------------------------------------------ z navigation
-  async function goZ(z, keepHover) {
+  async function goZ(z, keepHover, force = false) {
+    if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
+    if (z !== S.z) mergeArm(null);
+    const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
-    if (!keepHover) S.hoverIdx = -1;
-    try { await fetchZ(z); } catch (e) { $("an-status").textContent = "加载失败: " + e.message; return; }
-    if (S.z !== z) return;                                // user moved on while we were loading
-    S.pinIdx = S.mergeFrom ? S.cache.get(z).ids.indexOf(S.mergeFrom) : -1;
+    if (!keepHover) S.hoverXY = null;
+    let entry;
+    try { entry = await fetchZ(z); } catch (e) { $("an-status").textContent = "加载失败: " + e.message; return; }
+    if (S.z !== z || S.block !== block || S.cache.get(z) !== entry) return;
     render(); status(); segList(); prefetch();
   }
   let wheelAcc = 0;
@@ -228,13 +269,15 @@
 
   // ------------------------------------------------------------------ tools
   function setTool(t) {
+    if (S.mergeBusy) return;
     S.tool = t; mergeArm(null);
+    if (t === "merge" && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     document.querySelectorAll(".tool").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
     for (const p of P) p.stage.classList.toggle("pan", t === "pan");
     renderHi();
   }
   function setCur(id) { S.cur = String(id); $("an-cur-id").textContent = S.cur; $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur)); status(); segList(); }
-  function pick(x, y) { const id = idAt(x, y); if (id == null) return; setCur(id); if (S.tool === "merge") mergeArm(id !== "0" ? id : null); }   // Alt+click in merge mode: (re)select the first cell
+  function pick(x, y) { const id = idAt(x, y); if (id == null) return; setCur(id); if (S.tool === "merge") mergeArm(id !== "0" ? { id, xy: [x, y], z: S.z } : null); }
 
   function floodLocal(e, x, y, newIdx) {           // scanline flood fill on the index map, 4-connectivity
     const W = S.W, H = S.H, idx = e.idx, target = idx[y * W + x]; if (target === newIdx) return 0;
@@ -259,47 +302,42 @@
     const k = ensureIdx(e, S.cur), z = S.z;
     if (whole) { const t = e.idx[y * S.W + x]; for (let i = 0; i < e.idx.length; i++) if (e.idx[i] === t) e.idx[i] = k; }
     else floodLocal(e, x, y, k);
-    e.segImgs.clear(); render();                                // optimistic: show it now, reconcile after the server answers
+    e.segImgs.clear(); clearRegions(); render();               // optimistic: show it now, reconcile after the server answers
     try {
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/fill`, { z, x, y, new_id: S.cur, whole_slice: !!whole });
       afterEdit(r, z);
     } catch (err) { flash("填充失败: " + err.message, true); invalidate(z); goZ(z, true); }
   }
 
-  // Merge is a two-click gesture. Which click is the keeper is a setting (an-dir):
-  //   first_into_second (default): click the cell to change, then the target -> the first takes the second's id/colour
-  //   second_into_first:           click the keeper, then the cell to absorb   -> the second takes the first's id/colour
-  const mergeDir = () => document.querySelector("input[name=an-dir]:checked").value;
-  function mergeArm(id) {
-    S.mergeFrom = id; const e = S.cache.get(S.z); S.pinIdx = id && e ? e.ids.indexOf(id) : -1;
-    const h = $("an-merge-hint"); h.hidden = !id;
-    if (id) h.textContent = mergeDir() === "first_into_second"
-      ? `已选 ${id}（黄框）。再点目标细胞，${id} 会变成目标的 id 和颜色；Esc 取消`
-      : `保留方 ${id}（黄框）。再点要并入的细胞，它会变成 ${id} 的 id 和颜色；Esc 取消`;
+  // Each pair is independent: A then B -> B takes A's colour; C then D -> D takes C's.
+  function mergeArm(first) {
+    S.mergeFirst = first;
+    const h = $("an-merge-hint"); h.hidden = S.tool !== "merge";
+    h.textContent = S.mergeBusy ? "正在合并，请稍候…" : first
+      ? "已选第一块（黄框），请点第二块，保留第一块颜色。Esc 取消"
+      : "请点第一块，再点第二块。仅合并当前切片点到的色块，保留第一块颜色。";
     renderHi();
   }
-  const mergeScope = () => document.querySelector("input[name=an-scope]:checked").value;
+  function mergeBusy(on) {
+    S.mergeBusy = on;
+    document.querySelectorAll(".vast-tools button, .vast-tools input, #an-block").forEach(el => el.disabled = on);
+  }
   async function mergeInto(x, y) {
+    if (S.mergeBusy) return;
     const clicked = idAt(x, y); if (clicked == null) return;
-    if (!S.mergeFrom) { if (clicked === "0") { flash("先点一个细胞"); return; } mergeArm(clicked); setCur(clicked); return; }
-    if (clicked === S.mergeFrom) { flash("点的是同一个细胞"); return; }
-    if (clicked === "0") { flash("不能并到背景；要删细胞请用橡皮"); return; }
-    const firstIntoSecond = mergeDir() === "first_into_second";
-    const from = firstIntoSecond ? S.mergeFrom : clicked, to = firstIntoSecond ? clicked : S.mergeFrom;
-    const scope = mergeScope(), z = S.z, e = S.cache.get(z);
-    if (e && e.idx) {                                            // optimistic: recolour this slice now
-      const kf = e.ids.indexOf(from), kt = ensureIdx(e, to);
-      if (kf >= 0) { for (let i = 0; i < e.idx.length; i++) if (e.idx[i] === kf) e.idx[i] = kt; e.counts[kt] = (e.counts[kt] || 0) + (e.counts[kf] || 0); e.counts[kf] = 0; }
-      e.segImgs.clear(); render();
-    }
+    if (clicked === "0") { flash("请选择色块，背景不参与合并"); return; }
+    if (!S.mergeFirst) { mergeArm({ id: clicked, xy: [x, y], z: S.z }); setCur(clicked); return; }
+    const first = S.mergeFirst, z = S.z;
+    mergeBusy(true); mergeArm(null);                         // consume the pair before sending; repeated clicks cannot reuse it
     try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/merge`, { from_id: from, to_id: to, scope, z });
-      if (!r.edit) { flash("没有可合并的体素"); return; }
-      if (scope === "block") dropAll();
-      flash(`已把 ${from} 并入 ${to}：${from} 现在是 ${to} 的 id 和颜色（${r.edit.n_px} 个体素，${r.edit.n_slices} 片）。再点一个细胞开始下一次`);
-      mergeArm(null); setCur(to);                                // pairwise: the result becomes the current label, next click starts afresh
-      afterEdit(r, z);
-    } catch (err) { flash("合并失败: " + err.message, true); dropAll(); goZ(z, true); }
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/merge-pair`, { z, first: first.xy, second: [x, y] });
+      await afterEdit(r, z);
+      setCur(r.edit ? r.edit.new_id : first.id);
+      flash(r.edit ? "合并完成，保留第一块颜色。请点下一对的第一块。" : "两块已是同一颜色。请点下一对的第一块。");
+    } catch (err) {
+      flash("合并失败，请重新点选这一对：" + err.message, true);
+      invalidate(z); await goZ(z, true, true);
+    } finally { mergeBusy(false); mergeArm(null); }
   }
 
   function strokeStart(x, y) { S.stroke = { pts: [[x, y]], z: S.z, id: S.tool === "erase" ? "0" : S.cur }; strokeDot(x, y); }
@@ -324,19 +362,24 @@
       afterEdit(r, st.z);
     } catch (err) { flash("涂抹失败: " + err.message, true); invalidate(st.z); goZ(st.z, true); }
   }
-  function afterEdit(r, z) {
+  async function afterEdit(r, z) {
     S.info.n_edits = r.n_edits; $("an-nedit").textContent = `${r.n_edits} 次改动`;
-    invalidate(z); if (z === S.z) goZ(z, true); editList();
+    invalidate(z); if (z === S.z) await goZ(z, true, true); editList();
   }
   async function undo() {
+    if (S.mergeBusy) return;
+    mergeBusy(true);
+    mergeArm(null);
+    $("an-merge-hint").textContent = "正在撤销，请稍候…";
     try {
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/undo`);
       if (!r.undone) { flash("没有可撤销的改动"); return; }
       S.info.n_edits = r.n_edits; $("an-nedit").textContent = `${r.n_edits} 次改动`;
       if (r.undone.z == null || r.undone.kind === "merge") dropAll();       // 3-D edit: every slice may differ
       else { invalidate(r.undone.z); if (r.undone.z !== S.z) invalidate(S.z); }
-      goZ(S.z, true); editList();
+      await goZ(S.z, true, true); editList();
     } catch (err) { flash("撤销失败: " + err.message, true); }
+    finally { mergeBusy(false); mergeArm(null); }
   }
   async function newId() {
     try { const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/new-id`); setCur(r.id); if (S.tool === "pick") setTool("fill"); flash(`新标签 ${r.id}，已选为当前标签`); }
@@ -353,6 +396,7 @@
       if (ev.button === 0 && nearCurtain(x)) { S.curtainDrag = true; return; }
       if (ev.button === 2 || ev.button === 1 || S.tool === "pan" || S.spacePan) { S.drag = { x: ev.clientX, y: ev.clientY, tx: S.tx, ty: S.ty }; for (const q of P) q.stage.classList.add("panning"); return; }
       if (ev.button !== 0 || !inside(x, y)) return;
+      if (S.mergeBusy) return;
       if (ev.altKey || S.tool === "pick") { pick(x, y); return; }
       if (S.tool === "fill") { fill(x, y, ev.shiftKey); return; }
       if (S.tool === "merge") { mergeInto(x, y); return; }
@@ -361,15 +405,14 @@
     let pending = false;
     p.stage.addEventListener("mousemove", ev => {
       if (S.drag) { S.tx = S.drag.tx + ev.clientX - S.drag.x; S.ty = S.drag.ty + ev.clientY - S.drag.y; applyView(); return; }
-      const [x, y] = toImg(ev, p); S.hoverXY = inside(x, y) ? [x, y] : null; S.hoverPane = i;
+      const previous = S.hoverXY, [x, y] = toImg(ev, p); S.hoverXY = inside(x, y) ? [x, y] : null; S.hoverPane = i;
       if (S.curtainDrag) { S.curtainX = Math.max(0, Math.min(S.W, x)); render(); return; }
       p.stage.style.cursor = nearCurtain(x) ? "col-resize" : "";
       if (S.stroke) { if (S.hoverXY) strokeMove(x, y); return; }
-      const e = S.cache.get(S.z), k = e && e.idx && S.hoverXY ? e.idx[y * S.W + x] : -1;
-      const changed = k !== S.hoverIdx; S.hoverIdx = k; status();
+      const changed = !previous || !S.hoverXY || previous[0] !== x || previous[1] !== y; status();
       if (!pending && (changed || S.view === "side" || S.tool === "brush" || S.tool === "erase")) { pending = true; requestAnimationFrame(() => { pending = false; renderHi(); }); }
     });
-    p.stage.addEventListener("mouseleave", () => { S.hoverXY = null; S.hoverIdx = -1; renderHi(); status(); });
+    p.stage.addEventListener("mouseleave", () => { S.hoverXY = null; renderHi(); status(); });
   }
   P.forEach(bindStage);
   window.addEventListener("mouseup", () => { S.curtainDrag = false; if (S.drag) { S.drag = null; for (const q of P) q.stage.classList.remove("panning"); } if (S.stroke) strokeEnd(); });
@@ -377,6 +420,7 @@
   // ------------------------------------------------------------------ keyboard
   document.addEventListener("keydown", ev => {
     if (ev.target instanceof Element && ev.target.matches("input,select,textarea")) return;
+    if (S.mergeBusy) return;
     const k = ev.key;
     if ((ev.ctrlKey || ev.metaKey) && k.toLowerCase() === "z") { ev.preventDefault(); undo(); return; }
     if (k === "ArrowUp" || k === "w") { ev.preventDefault(); goZ(S.z - 1, true); }
@@ -384,7 +428,7 @@
     else if (k === "PageUp") { ev.preventDefault(); goZ(S.z - 10, true); }
     else if (k === "PageDown") { ev.preventDefault(); goZ(S.z + 10, true); }
     else if (k === "Home") goZ(0); else if (k === "End") goZ(S.info.shape_zyx[0] - 1);
-    else if (k === "Escape") { if (S.mergeFrom) mergeArm(null); }
+    else if (k === "Escape") { mergeArm(null); }
     else if (k === "m") setTool("merge");
     else if (k === "p") setTool("pick"); else if (k === "f") setTool("fill"); else if (k === "b") setTool("brush"); else if (k === "e") setTool("erase"); else if (k === "h") setTool("pan");
     else if (k === "[") setBrush(S.brush - 1); else if (k === "]") setBrush(S.brush + 1);
@@ -416,14 +460,12 @@
       + (rows.length > 400 ? `<div class="row"><span class="n">… 还有 ${rows.length - 400} 个，用搜索框过滤</span></div>` : "");
   }
   $("an-segs").addEventListener("click", ev => { const r = ev.target.closest(".row[data-id]"); if (r) setCur(r.dataset.id); });
-  $("an-segs").addEventListener("mouseover", ev => { const r = ev.target.closest(".row[data-id]"); if (r) { S.hoverIdx = +r.dataset.k; renderHi(); } });
-  $("an-segs").addEventListener("mouseleave", () => { S.hoverIdx = -1; renderHi(); });
   $("an-search").addEventListener("input", segList);
 
   async function editList() {
     try {
       const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/edits?limit=30`);
-      const label = e => e.kind === "merge" ? (e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
+      const label = e => e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
       $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${e.new_id === "0" ? "transparent" : css(colorOf(e.new_id))}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${e.new_id}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">还没有改动</span></div>`;
     } catch (_) { /* panel is informational */ }
   }
@@ -454,13 +496,13 @@
   $("an-rightseg").addEventListener("change", ev => { S.rightSegOnly = ev.target.checked; render(); });
   $("an-curtain").addEventListener("change", ev => { S.curtain = ev.target.checked; if (S.curtain && !S.curtainX) S.curtainX = S.W >> 1; render(); });
   document.querySelectorAll("input[name=an-view]").forEach(r => r.addEventListener("change", () => setView(r.value)));
-  document.querySelectorAll("input[name=an-dir]").forEach(r => r.addEventListener("change", () => { if (S.mergeFrom) mergeArm(S.mergeFrom); }));
   window.addEventListener("resize", () => { if (S.info) fit(); });
 
   // ------------------------------------------------------------------ blocks
   async function selectBlock(id) {
+    if (S.mergeBusy) return;
     if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
-    S.block = id; dropAll(); S.hoverIdx = -1; mergeArm(null);
+    S.block = id; dropAll(); S.hoverXY = null; mergeArm(null);
     S.info = await getJSON(`${API}/blocks/${encodeURIComponent(id)}`);
     const [nz, H, W] = S.info.shape_zyx; S.W = W; S.H = H; S.curtainX = W >> 1;
     for (const p of P) { for (const c of [p.em, p.seg, p.hi]) { c.width = W; c.height = H; } p.cv.style.width = W + "px"; p.cv.style.height = H + "px"; }
