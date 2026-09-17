@@ -235,3 +235,8 @@ def crawl_page(request: Request, s: Session = Depends(get_session)):
     from emqc.api.routers.crawl import PRESETS
 
     return _render("crawl.html", request, presets=PRESETS, active="crawl")
+
+
+@router.get("/annotate", response_class=HTMLResponse)
+def annotate_page(request: Request, block: str | None = None):
+    return _render("annotate.html", request, preselect=block, active="annotate")

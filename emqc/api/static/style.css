@@ -241,3 +241,43 @@ td.tilecol { white-space: nowrap; font-size: 11px; line-height: 1.35; }
 .ready .why{color:var(--muted);font-size:11px;line-height:1.35;display:block;margin-top:3px;max-height:4.2em;overflow:hidden}
 .pill.warn{background:color-mix(in srgb,var(--medium) 22%,var(--surface));color:var(--text)}
 .pill.bad{background:color-mix(in srgb,var(--critical) 22%,var(--surface));color:var(--text)}
+
+/* ---------------------------------------------------------------- annotation (VAST-style viewer) */
+.vast { display: grid; grid-template-columns: 220px minmax(0, 1fr) 290px; gap: 12px; height: calc(100vh - 210px); min-height: 600px; }
+.vast-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.vast-sec { font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent-ink); margin-top: 10px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.vast-meta { font-size: 11px; line-height: 1.5; word-break: break-all; }
+.vast-toolgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.vast-toolgrid .tool { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--r-s); background: var(--surface-2); color: var(--text-2); font: inherit; cursor: pointer; }
+.vast-toolgrid .tool svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.vast-toolgrid .tool:hover { background: var(--surface-3); color: var(--text); }
+.vast-toolgrid .tool.active { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-line); }
+.vast-cur { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-s); background: var(--surface-2); font-size: 12px; word-break: break-all; }
+.vast-cur .sw, .vast-list .sw { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(0,0,0,.25); flex: none; background: transparent; }
+.vast-z { display: flex; align-items: center; gap: 6px; }
+.vast-z input[type=number] { width: 72px; }
+.vast-z button, .actions button, .vast-toolgrid .tool { min-height: 30px; }
+.vast-stage { position: relative; background: #0b0d10; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; cursor: crosshair; outline: none; user-select: none; }
+.vast-stage:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.vast-stage.pan { cursor: grab; } .vast-stage.panning { cursor: grabbing; }
+.vast-canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.vast-canvas canvas { position: absolute; left: 0; top: 0; image-rendering: pixelated; }
+.vast-status { position: absolute; left: 10px; bottom: 8px; font-size: 12px; color: #dfe5eb; background: rgba(10,13,16,.72); padding: 4px 9px; border-radius: 4px; pointer-events: none; }
+.vast-hint { position: absolute; right: 10px; bottom: 8px; font-size: 11px; color: #8a949e; pointer-events: none; }
+.vast-layer { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
+.vast-list { overflow: auto; min-height: 80px; max-height: 36vh; border: 1px solid var(--border); border-radius: var(--r-s); background: var(--surface-2); font: 12px var(--mono); }
+.vast-list .row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; cursor: pointer; border-bottom: 1px solid var(--border); }
+.vast-list .row:hover { background: var(--surface-3); } .vast-list .row.cur { background: var(--accent-soft); }
+.vast-list .row .id { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vast-list .row .n { color: var(--muted); }
+.vast-edits .row { cursor: default; }
+@media (max-width: 1100px) { .vast { grid-template-columns: 1fr; height: auto; } .vast-stage { height: 70vh; } }
+.vast-scope { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; margin-top: 6px; }
+.vast-scope label { display: inline-flex; align-items: center; gap: 4px; }
+.vast-mergehint { font-size: 12px; padding: 6px 8px; border: 1px dashed var(--accent-line); border-radius: var(--r-s); background: var(--accent-soft); color: var(--accent-ink); margin-top: 6px; }
+.vast-stages { display: flex; gap: 8px; min-width: 0; min-height: 0; }
+.vast-stages .vast-stage { flex: 1 1 0; min-width: 0; }
+.vast-stage.off, .vast-layer.off { display: none; }
+.vast-label { position: absolute; left: 10px; top: 8px; font-size: 11px; color: #dfe5eb; background: rgba(10,13,16,.72); padding: 2px 8px; border-radius: 4px; pointer-events: none; }
+.vast-stage .side-only { display: none; } .vast-stages.side .side-only { display: block; }
+@media (max-width: 1100px) { .vast-stages { flex-direction: column; } .vast-stages .vast-stage { height: 60vh; } }
