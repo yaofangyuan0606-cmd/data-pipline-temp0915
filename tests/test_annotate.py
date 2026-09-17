@@ -27,19 +27,24 @@ def ann_root(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def client(ann_root):
+def workdir(tmp_path_factory):
+    return tmp_path_factory.mktemp("ann-work")
+
+
+@pytest.fixture(scope="module")
+def client(ann_root, workdir):
     from fastapi.testclient import TestClient
 
     from emqc.api.app import app
     from emqc.api.routers.annotate import reset_store
     from emqc.config import settings
 
-    old = settings.annotate_root
-    settings.annotate_root = ann_root
+    old = settings.annotate_root, settings.annotate_workdir
+    settings.annotate_root, settings.annotate_workdir = ann_root, workdir
     reset_store()
     with TestClient(app) as c:
         yield c
-    settings.annotate_root = old
+    settings.annotate_root, settings.annotate_workdir = old
     reset_store()
 
 
@@ -50,15 +55,16 @@ def _idx_map(png_bytes):
 
 def test_blocks_and_slices(client, ann_root):
     r = client.get("/api/v1/annotate/blocks").json()
-    assert r["blocks"][0]["block_id"] == "b0" and r["blocks"][0]["nz"] == 5 and r["blocks"][0]["width"] == 32 and r["blocks"][0]["height"] == 24
+    assert r["blocks"][0]["block_id"] == "b0" and r["blocks"][0]["nz"] == 5 and r["blocks"][0]["width"] == 24 and r["blocks"][0]["height"] == 32
     info = client.get("/api/v1/annotate/blocks/b0").json()
-    assert info["shape_zyx"] == [5, 24, 32] and info["has_seg"] and info["voxel_size_nm"] == [8, 8, 33]
+    assert info["shape_zyx"] == [5, 32, 24] and info["has_seg"] and info["voxel_size_nm"] == [8, 8, 33]
+    assert info["em_source"] == "em.npy" and info["workdir"].endswith("b0")
 
     em = np.load(ann_root / "demo" / "b0" / "em.npy")
     png = client.get("/api/v1/annotate/blocks/b0/em/2.png")
     assert png.status_code == 200
     got = np.asarray(Image.open(io.BytesIO(png.content)))
-    assert got.shape == (24, 32) and np.array_equal(got, em[:, :, 2].T)  # (y, x) for display
+    assert got.shape == (32, 24) and np.array_equal(got, em[:, :, 2])  # rows = axis 0, same orientation as visual/slices_em
     assert client.get("/api/v1/annotate/blocks/b0/em/9.png").status_code == 404
 
 
@@ -67,20 +73,24 @@ def test_label_index_map_and_exact_ids(client):
     assert tab["ids"][0] == "0" and set(tab["ids"]) == {"0", "5", str(BIG)}
     assert sum(tab["counts"]) == 32 * 24
     idx = _idx_map(client.get("/api/v1/annotate/blocks/b0/labels/0.png").content)
-    assert idx.shape == (24, 32)
-    assert tab["ids"][idx[10, 20]] == str(BIG) and tab["ids"][idx[10, 2]] == "5" and tab["ids"][idx[5, 5]] == "0"
-    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 20, "y": 10}).json()["id"] == str(BIG)
-    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 40, "y": 0}).status_code == 404
+    assert idx.shape == (32, 24)                       # (rows, cols)
+    assert tab["ids"][idx[20, 10]] == str(BIG) and tab["ids"][idx[10, 2]] == "5" and tab["ids"][idx[5, 5]] == "0"
+    # screen (x = column, y = row) -> plane[y, x]
+    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 10, "y": 20}).json()["id"] == str(BIG)
+    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 10, "y": 5}).json()["id"] == "5"
+    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 30, "y": 0}).status_code == 404
 
 
-def test_fill_is_copy_on_write_and_undoable(client, ann_root):
+def test_fill_is_copy_on_write_and_undoable(client, ann_root, workdir):
     b = ann_root / "demo" / "b0"
+    w = workdir / "b0"
     r = client.post("/api/v1/annotate/blocks/b0/fill", json={"z": 0, "x": 5, "y": 5, "new_id": "5"}).json()
     assert r["edit"]["kind"] == "fill" and r["edit"]["n_px"] == 16 and r["edit"]["old_id"] == "0" and r["n_edits"] == 1
-    assert (b / "seg_edit.npy").exists()
+    assert (w / "seg_edit.npy").exists() and (w / "edits.jsonl").exists()
+    assert sorted(p.name for p in b.iterdir()) == ["em.npy", "meta.json", "seg.npy"], "the data directory must stay exactly as delivered"
     assert np.load(b / "seg.npy", mmap_mode="r")[5, 5, 0] == 0, "the original must never change"
-    assert np.load(b / "seg_edit.npy", mmap_mode="r")[5, 5, 0] == 5
-    assert np.load(b / "seg_edit.npy", mmap_mode="r")[5, 5, 1] == 0, "fill is per slice"
+    assert np.load(w / "seg_edit.npy", mmap_mode="r")[5, 5, 0] == 5
+    assert np.load(w / "seg_edit.npy", mmap_mode="r")[5, 5, 1] == 0, "fill is per slice"
     tab = client.get("/api/v1/annotate/blocks/b0/labels/0.json").json()
     assert tab["counts"][tab["ids"].index("0")] == 0
 
@@ -90,25 +100,25 @@ def test_fill_is_copy_on_write_and_undoable(client, ann_root):
     # whole-slice relabel of id 5 -> BIG, exact 64-bit id round-trips through JSON as a string
     r = client.post("/api/v1/annotate/blocks/b0/fill", json={"z": 0, "x": 1, "y": 1, "new_id": str(BIG), "whole_slice": True}).json()
     assert r["edit"]["n_px"] == 16 * 24 and r["n_edits"] == 2
-    assert int(np.load(b / "seg_edit.npy", mmap_mode="r")[1, 1, 0]) == BIG
+    assert int(np.load(w / "seg_edit.npy", mmap_mode="r")[1, 1, 0]) == BIG
     assert client.get("/api/v1/annotate/blocks/b0/labels/0.json").json()["ids"] == ["0", str(BIG)]
 
-    # paint a 3-px line with a brand-new id; the brush records the previous id of every pixel it touches
+    # paint a 3-px line (columns 1..3 of row 1) with a brand-new id; the brush records the previous id of every pixel
     r = client.post("/api/v1/annotate/blocks/b0/paint", json={"z": 1, "points": [[1, 1], [3, 1]], "radius": 0, "new_id": "42"}).json()
     assert r["edit"]["kind"] == "paint" and r["edit"]["n_px"] == 3 and r["edit"]["old_id"] is None
-    seg = np.load(b / "seg_edit.npy", mmap_mode="r")
-    assert [int(seg[x, 1, 1]) for x in (1, 2, 3)] == [42, 42, 42] and int(seg[4, 1, 1]) == 5
+    seg = np.load(w / "seg_edit.npy", mmap_mode="r")
+    assert [int(seg[1, x, 1]) for x in (1, 2, 3)] == [42, 42, 42] and int(seg[1, 4, 1]) == 5
     assert client.post("/api/v1/annotate/blocks/b0/new-id").json()["id"] == str(BIG + 1)
 
     # undo restores exactly, most recent first
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["kind"] == "paint"
-    seg = np.load(b / "seg_edit.npy", mmap_mode="r")
-    assert [int(seg[x, 1, 1]) for x in (1, 2, 3)] == [5, 5, 5]
+    seg = np.load(w / "seg_edit.npy", mmap_mode="r")
+    assert [int(seg[1, x, 1]) for x in (1, 2, 3)] == [5, 5, 5]
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["n"] == 2
-    assert int(np.load(b / "seg_edit.npy", mmap_mode="r")[1, 1, 0]) == 5
+    assert int(np.load(w / "seg_edit.npy", mmap_mode="r")[1, 1, 0]) == 5
     assert client.get("/api/v1/annotate/blocks/b0/edits").json()["n"] == 1
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["n_edits"] == 0
-    assert np.array_equal(np.load(b / "seg_edit.npy"), np.load(b / "seg.npy"))
+    assert np.array_equal(np.load(w / "seg_edit.npy"), np.load(b / "seg.npy"))
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"] is None
 
 
@@ -117,13 +127,14 @@ def test_page_renders(client):
     assert r.status_code == 200 and "an-stage" in r.text and "annotate.js" in r.text
 
 
-def test_merge_block_scope_and_legacy_undo(client, ann_root):
+def test_merge_block_scope_and_legacy_undo(client, ann_root, workdir):
     b = ann_root / "demo" / "b0"
+    w = workdir / "b0"
     # merge BIG into 5 across the whole block: every section changes, one edit record
     r = client.post("/api/v1/annotate/blocks/b0/merge", json={"from_id": str(BIG), "to_id": "5", "scope": "block"}).json()
     assert r["edit"]["kind"] == "merge" and r["edit"]["scope"] == "block" and r["edit"]["z"] is None
     assert r["edit"]["n_px"] == 16 * 24 * 5 and r["edit"]["n_slices"] == 5 and r["edit"]["old_id"] == str(BIG)
-    seg = np.load(b / "seg_edit.npy", mmap_mode="r")
+    seg = np.load(w / "seg_edit.npy", mmap_mode="r")
     assert not (np.asarray(seg) == BIG).any() and int(seg[20, 10, 4]) == 5
     for z in range(5):
         assert client.get(f"/api/v1/annotate/blocks/b0/labels/{z}.json").json()["ids"] == ["0", "5"]
@@ -133,26 +144,26 @@ def test_merge_block_scope_and_legacy_undo(client, ann_root):
     # slice scope touches one section only
     r = client.post("/api/v1/annotate/blocks/b0/merge", json={"from_id": "5", "to_id": "9", "scope": "slice", "z": 2}).json()
     assert r["edit"]["n_slices"] == 1 and r["edit"]["z"] == 2
-    seg = np.load(b / "seg_edit.npy", mmap_mode="r")
+    seg = np.load(w / "seg_edit.npy", mmap_mode="r")
     assert int(seg[1, 1, 2]) == 9 and int(seg[1, 1, 3]) == 5
     assert client.post("/api/v1/annotate/blocks/b0/merge", json={"from_id": "5", "to_id": "9", "scope": "slice"}).status_code == 422
 
     # undo both (3-D undo restores per-voxel z)
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["kind"] == "merge"
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["n_slices"] == 5
-    assert np.array_equal(np.load(b / "seg_edit.npy"), np.load(b / "seg.npy"))
+    assert np.array_equal(np.load(w / "seg_edit.npy"), np.load(b / "seg.npy"))
 
     # a record written by the first version (no zs array) still undoes
     r = client.post("/api/v1/annotate/blocks/b0/fill", json={"z": 3, "x": 5, "y": 5, "new_id": "5"}).json()
-    f = b / "edits" / f"{r['edit']['n']:06d}.npz"
+    f = w / "edits" / f"{r['edit']['n']:06d}.npz"
     d = dict(np.load(f))
     d.pop("zs")
     np.savez_compressed(f, **d)
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["n"] == r["edit"]["n"]
-    assert np.array_equal(np.load(b / "seg_edit.npy"), np.load(b / "seg.npy"))
+    assert np.array_equal(np.load(w / "seg_edit.npy"), np.load(b / "seg.npy"))
 
 
-def test_merge_pairs_keep_first_and_leave_other_islands_and_slices(client, ann_root):
+def test_merge_pairs_keep_first_and_leave_other_islands_and_slices(client, ann_root, workdir):
     from annotation_data import IDS, POINTS, write_pairs
 
     b = ann_root / "demo" / "pairs"
@@ -167,22 +178,42 @@ def test_merge_pairs_keep_first_and_leave_other_islands_and_slices(client, ann_r
         {"z": 0, "first": (0, 0), "second": b_point},
     ]:
         assert client.post(url + "/merge-pair", json=body).status_code == 422
-    assert not (b / "seg_edit.npy").exists()
+    w = workdir / "pairs"
+    assert not (w / "seg_edit.npy").exists()
     result = client.post(url + "/merge-pair", json={"z": 0, "first": a, "second": b_point}).json()
     assert result["edit"]["scope"] == "component"
     assert result["edit"]["new_id"] == str(IDS[0]) and result["edit"]["n_px"] == 64
     expected = original.copy()
     expected[18:26, 2:10, 0] = IDS[0]
-    assert np.array_equal(np.load(b / "seg_edit.npy"), expected)
+    assert np.array_equal(np.load(w / "seg_edit.npy"), expected)
     result = client.post(url + "/merge-pair", json={"z": 0, "first": c, "second": d}).json()
     assert result["edit"]["new_id"] == str(IDS[2]) and result["n_edits"] == 2
     after_first = expected.copy()
     expected[50:58, 2:10, 0] = IDS[2]
-    assert np.array_equal(np.load(b / "seg_edit.npy"), expected)
+    assert np.array_equal(np.load(w / "seg_edit.npy"), expected)
     assert np.array_equal(np.load(b / "seg.npy"), original)
     same = client.post(url + "/merge-pair", json={"z": 0, "first": a, "second": b_point}).json()
     assert same["edit"] is None and same["n_edits"] == 2
     assert client.post(url + "/undo").json()["n_edits"] == 1
-    assert np.array_equal(np.load(b / "seg_edit.npy"), after_first)
+    assert np.array_equal(np.load(w / "seg_edit.npy"), after_first)
     assert client.post(url + "/undo").json()["n_edits"] == 0
-    assert np.array_equal(np.load(b / "seg_edit.npy"), original)
+    assert np.array_equal(np.load(w / "seg_edit.npy"), original)
+
+
+def test_legacy_edits_in_data_dir_are_migrated(tmp_path):
+    """Older builds wrote seg_edit.npy / edits into the block directory; opening the block moves them out."""
+    from emqc.annotate.store import Block
+
+    b = tmp_path / "blk"
+    b.mkdir()
+    np.save(b / "em.npy", np.zeros((8, 6, 2), np.uint8))
+    np.save(b / "seg.npy", np.ones((8, 6, 2), np.uint64))
+    np.save(b / "seg_edit.npy", np.full((8, 6, 2), 7, np.uint64))
+    (b / "edits").mkdir()
+    (b / "edits" / "000001.npz").write_bytes(b"x")
+    (b / "edits.jsonl").write_text('{"n": 1}\n')
+    work = tmp_path / "work"
+    blk = Block(b, work)
+    assert sorted(p.name for p in b.iterdir()) == ["em.npy", "seg.npy"]
+    assert (work / "blk" / "seg_edit.npy").exists() and (work / "blk" / "edits" / "000001.npz").exists()
+    assert blk.edits() == [{"n": 1}] and int(blk.pick(0, 0, 0)) == 7

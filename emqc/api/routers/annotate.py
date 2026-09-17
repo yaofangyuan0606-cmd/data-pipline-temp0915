@@ -1,6 +1,8 @@
 """Annotation API behind the VAST-style slice viewer: per-slice images, label index maps, pick / fill / paint / undo."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
@@ -11,10 +13,18 @@ router = APIRouter(prefix="/api/v1/annotate", tags=["annotation"])
 _store: AnnotateStore | None = None
 
 
+def _roots() -> list:
+    extra = [Path(x.strip()).resolve() for x in settings.annotate_extra_roots.split(";") if x.strip()]
+    if settings.sam_blocks_dir and Path(settings.sam_blocks_dir).exists():
+        extra.append(Path(settings.sam_blocks_dir).resolve())
+    return extra
+
+
 def get_store() -> AnnotateStore:
     global _store
-    if _store is None or _store.root != (settings.annotate_root and settings.annotate_root.resolve()):
-        _store = AnnotateStore(settings.annotate_root.resolve() if settings.annotate_root else None)
+    root = settings.annotate_root.resolve() if settings.annotate_root else None
+    if _store is None or _store.roots != [r for r in [root, *_roots()] if r]:
+        _store = AnnotateStore(root, settings.annotate_workdir, _roots())
     return _store
 
 

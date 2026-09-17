@@ -1,9 +1,16 @@
 """On-disk annotation store.
 
-A *block* is a directory with `em.npy` (x, y, z) uint8 and optionally `seg.npy` (x, y, z) integer ids,
-plus `meta.json`. Edits never touch `seg.npy`: the first write copies it to `seg_edit.npy` (copy-on-write)
-and every subsequent change goes there. Each edit is also logged as `edits/<n>.npz` (the pixels it changed
-and their previous ids) so it can be undone exactly, and summarised in `edits.jsonl` for the UI.
+A *block* is a directory with `em.npy` and optionally `seg.npy` (both (axis0, axis1, z); a section is
+`arr[:, :, z]` and is displayed as-is, axis0 = image rows, axis1 = image columns — the same orientation as the
+delivery's `visual/slices_em/*.png`, which are served verbatim as the EM layer when present), plus `meta.json`.
+
+The data directory is treated as read-only. Everything the viewer writes lives in a separate *work directory*
+(`<workdir>/<block_id>/`): the first edit copies `seg.npy` there as `seg_edit.npy` (copy-on-write) and every
+change goes to that copy; each edit is logged as `edits/<n>.npz` (the voxels it changed and their previous ids)
+so it can be undone exactly, and summarised in `edits.jsonl` for the UI.
+
+Screen coordinates are (x = column, y = row); array access is `plane[y, x]`. Edit records store array indices:
+`xs` = axis-0 (row) indices, `ys` = axis-1 (column) indices — the historical names, kept so older records replay.
 
 Per slice the viewer gets a *label index map*: ids are renumbered 0..k (0 stays background) into a uint16
 image, shipped as a lossless RGB PNG (R = hi byte, G = lo byte) together with the index -> id table. The
@@ -14,6 +21,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import threading
 import time
 from collections import OrderedDict
@@ -45,20 +53,50 @@ def _png(img: Image.Image) -> bytes:
 
 
 class Block:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, workdir: Path | None = None):
         self.path = Path(path)
         self.id = self.path.name
-        self.em = np.load(self.path / "em.npy", mmap_mode="r")  # (x, y, z)
+        self.work = Path(workdir) / self.id if workdir else self.path  # None only for legacy callers/tests
+        self.em = np.load(self.path / "em.npy", mmap_mode="r")  # (rows, cols, z)
         if self.em.ndim != 3:
-            raise ValueError(f"{self.path}/em.npy must be 3-D (x, y, z), got {self.em.shape}")
+            raise ValueError(f"{self.path}/em.npy must be 3-D, got {self.em.shape}")
         self.has_seg = (self.path / "seg.npy").exists()
         self._seg_ro = np.load(self.path / "seg.npy", mmap_mode="r") if self.has_seg else None
         self._seg_rw = None
         self.meta = json.load(open(self.path / "meta.json")) if (self.path / "meta.json").exists() else {}
+        self.visual_em = self._find_visual_em()
+        self._migrate_legacy()
         self.lock = threading.RLock()
         self._max_id: int | None = None
         self._png_cache: OrderedDict[tuple, bytes] = OrderedDict()
         self._label_cache: OrderedDict[int, tuple[np.ndarray, np.ndarray]] = OrderedDict()
+
+    def _find_visual_em(self) -> Path | None:
+        """`visual/slices_em/z0000.png` next to em.npy: the delivery's reference rendering of each section.
+        Used verbatim as the EM layer when its size matches the array (rows x cols)."""
+        d = self.path / "visual" / "slices_em"
+        f = d / "z0000.png"
+        if not f.exists():
+            return None
+        try:
+            with Image.open(f) as im:
+                w, h = im.size
+        except Exception:
+            return None
+        return d if (h, w) == tuple(int(v) for v in self.em.shape[:2]) else None
+
+    def _migrate_legacy(self) -> None:
+        """Earlier versions wrote seg_edit.npy / edits into the data directory. Move them to the work directory
+        once, so the data directory is left exactly as delivered and no edit is lost."""
+        if self.work == self.path:
+            return
+        legacy = [self.path / SEG_EDIT, self.path / EDIT_DIR, self.path / EDIT_LOG]
+        if not any(p.exists() for p in legacy):
+            return
+        self.work.mkdir(parents=True, exist_ok=True)
+        for src in legacy:
+            if src.exists() and not (self.work / src.name).exists():
+                shutil.move(str(src), str(self.work / src.name))
 
     # ------------------------------------------------------------------ geometry
     @property
@@ -67,8 +105,8 @@ class Block:
 
     @property
     def shape_zyx(self) -> tuple[int, int, int]:
-        x, y, z = self.em.shape
-        return (int(z), int(y), int(x))
+        rows, cols, z = self.em.shape
+        return (int(z), int(rows), int(cols))
 
     def info(self) -> dict:
         g = self.meta.get("geometry", {})
@@ -77,26 +115,27 @@ class Block:
             "shape_zyx": list(self.shape_zyx), "dtype_em": str(self.em.dtype),
             "dtype_seg": str(self._seg_ro.dtype) if self.has_seg else None,
             "voxel_size_nm": g.get("voxel_size_nm"), "origin": g.get("origin"), "dataset": self.meta.get("dataset", {}).get("id"),
-            "n_edits": len(self.edits()), "has_working_copy": (self.path / SEG_EDIT).exists(),
-            "working_copy": str(self.path / SEG_EDIT),
+            "n_edits": len(self.edits()), "has_working_copy": (self.work / SEG_EDIT).exists(),
+            "working_copy": str(self.work / SEG_EDIT), "workdir": str(self.work), "em_source": "visual/slices_em" if self.visual_em else "em.npy",
         }
 
     # ------------------------------------------------------------------ label volume access
     def _seg(self) -> np.ndarray:
         """Read view: the working copy when it exists, else the pristine seg.npy."""
-        if self._seg_rw is None and (self.path / SEG_EDIT).exists():
-            self._seg_rw = np.load(self.path / SEG_EDIT, mmap_mode="r+")
+        if self._seg_rw is None and (self.work / SEG_EDIT).exists():
+            self._seg_rw = np.load(self.work / SEG_EDIT, mmap_mode="r+")
         return self._seg_rw if self._seg_rw is not None else self._seg_ro
 
     def _seg_writable(self) -> np.ndarray:
         """Copy-on-write: materialise seg_edit.npy from seg.npy on first edit; seg.npy is never modified."""
         if not self.has_seg:
             raise ValueError("block has no seg.npy")
-        p = self.path / SEG_EDIT
+        p = self.work / SEG_EDIT
         if self._seg_rw is None:
             if not p.exists():
+                self.work.mkdir(parents=True, exist_ok=True)
                 src = self._seg_ro
-                tmp = self.path / (SEG_EDIT + ".part")
+                tmp = self.work / (SEG_EDIT + ".part")
                 dst = np.lib.format.open_memmap(tmp, mode="w+", dtype=src.dtype, shape=src.shape)
                 step = max(1, src.shape[2] // 10)
                 for k in range(0, src.shape[2], step):  # chunked so an 800 MB volume never sits in RAM twice
@@ -108,11 +147,11 @@ class Block:
         return self._seg_rw
 
     def em_slice(self, z: int) -> np.ndarray:
-        """(y, x) view of section z for display."""
-        return np.ascontiguousarray(self.em[:, :, z].T)
+        """(rows, cols) section z for display — same orientation as visual/slices_em."""
+        return np.ascontiguousarray(self.em[:, :, z])
 
     def seg_slice(self, z: int) -> np.ndarray:
-        return np.ascontiguousarray(self._seg()[:, :, z].T)
+        return np.ascontiguousarray(self._seg()[:, :, z])
 
     def _check_z(self, z: int) -> None:
         if not 0 <= z < self.nz:
@@ -133,6 +172,10 @@ class Block:
 
     def em_png(self, z: int) -> bytes:
         self._check_z(z)
+        if self.visual_em is not None:
+            f = self.visual_em / f"z{z:04d}.png"
+            if f.exists():
+                return self._cached(("em", z), f.read_bytes)  # the delivery's own PNG, byte for byte
         return self._cached(("em", z), lambda: _png(Image.fromarray(self.em_slice(z), mode="L")))
 
     def labels(self, z: int) -> tuple[np.ndarray, np.ndarray]:
@@ -172,7 +215,7 @@ class Block:
 
     def pick(self, z: int, x: int, y: int) -> int:
         self._check_z(z)
-        return int(self._seg()[x, y, z])
+        return int(self._seg()[y, x, z])
 
     def _invalidate(self, z: int) -> None:
         with self.lock:
@@ -196,12 +239,12 @@ class Block:
 
     # ------------------------------------------------------------------ edits
     def _edit_dir(self) -> Path:
-        d = self.path / EDIT_DIR
-        d.mkdir(exist_ok=True)
+        d = self.work / EDIT_DIR
+        d.mkdir(parents=True, exist_ok=True)
         return d
 
     def edits(self) -> list[dict]:
-        p = self.path / EDIT_LOG
+        p = self.work / EDIT_LOG
         if not p.exists():
             return []
         return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
@@ -219,7 +262,8 @@ class Block:
         rec = {"n": n, "kind": kind, "z": (None if z is None else int(z)), "n_px": int(xs.size), "new_id": str(int(new_id)),
                "old_id": (str(int(old)) if np.ndim(old) == 0 else None), "n_slices": int(np.unique(zs).size),
                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **(extra or {})}
-        with open(self.path / EDIT_LOG, "a") as f:
+        self.work.mkdir(parents=True, exist_ok=True)
+        with open(self.work / EDIT_LOG, "a") as f:
             f.write(json.dumps(rec) + "\n")
         self._max_id = None if self._max_id is None else max(self._max_id, int(new_id))
         return rec
@@ -231,14 +275,14 @@ class Block:
         self._check_z(z)
         with self.lock:
             seg = self._seg_writable()
-            plane = seg[:, :, z]  # (x, y) view on the memmap: writes go straight to disk
-            old = int(plane[x, y])
+            plane = seg[:, :, z]  # (rows, cols) view on the memmap: writes go straight to disk
+            old = int(plane[y, x])
             if old == new_id:
                 return None
             mask = plane == old
             if not whole_slice:
                 lab, _ = ndimage.label(mask)
-                mask = lab == lab[x, y]
+                mask = lab == lab[y, x]
             xs, ys = np.nonzero(mask)
             plane[mask] = new_id
             seg.flush()
@@ -255,7 +299,7 @@ class Block:
         with self.lock:
             seg = self._seg_writable()
             plane = seg[:, :, z]
-            W, H = plane.shape
+            H, W = plane.shape
             mask = np.zeros(plane.shape, dtype=bool)
             yy, xx = np.ogrid[-radius:radius + 1, -radius:radius + 1]
             disc = (xx * xx + yy * yy) <= radius * radius
@@ -263,12 +307,12 @@ class Block:
             for (x0, y0), (x1, y1) in zip(points, points[1:]):  # bridge gaps between sampled mouse positions
                 n = int(max(abs(x1 - x0), abs(y1 - y0)))
                 pts.extend((int(round(x0 + (x1 - x0) * t / n)), int(round(y0 + (y1 - y0) * t / n))) for t in range(1, n + 1))
-            for x, y in pts:
-                x0, x1 = max(0, x - radius), min(W, x + radius + 1)
-                y0, y1 = max(0, y - radius), min(H, y + radius + 1)
-                if x1 <= x0 or y1 <= y0:
+            for x, y in pts:  # x = column, y = row
+                c0, c1 = max(0, x - radius), min(W, x + radius + 1)
+                r0, r1 = max(0, y - radius), min(H, y + radius + 1)
+                if c1 <= c0 or r1 <= r0:
                     continue
-                mask[x0:x1, y0:y1] |= disc[x0 - (x - radius):x1 - (x - radius), y0 - (y - radius):y1 - (y - radius)]
+                mask[r0:r1, c0:c1] |= disc[r0 - (y - radius):r1 - (y - radius), c0 - (x - radius):c1 - (x - radius)]
             mask &= plane != new_id
             xs, ys = np.nonzero(mask)
             if xs.size == 0:
@@ -286,20 +330,21 @@ class Block:
         cannot choose the wrong keeper. Other islands and slices stay unchanged.
         """
         self._check_z(z)
-        W, H = self.em.shape[:2]
+        H, W = self.em.shape[:2]
         if any(not (0 <= x < W and 0 <= y < H) for x, y in (first, second)):
             raise ValueError("outside the block")
         if not self.has_seg:
             raise ValueError("block has no segmentation")
         with self.lock:
             plane = self._seg()[:, :, z]
-            to_id, from_id = int(plane[first]), int(plane[second])
+            (fx, fy), (sx, sy) = first, second
+            to_id, from_id = int(plane[fy, fx]), int(plane[sy, sx])
             if not to_id or not from_id:
                 raise ValueError("请选择两个非背景色块")
             if from_id == to_id:
                 return None
             components, _ = ndimage.label(plane == from_id)
-            xs, ys = np.nonzero(components == components[second])
+            xs, ys = np.nonzero(components == components[sy, sx])
             seg = self._seg_writable()
             seg[xs, ys, z] = to_id
             seg.flush()
@@ -351,7 +396,7 @@ class Block:
                 seg[xs[m], ys[m], int(k)] = d["old"][m] if np.ndim(d["old"]) else d["old"]
             seg.flush()
             f.unlink()
-            (self.path / EDIT_LOG).write_text("".join(json.dumps(r) + "\n" for r in log[:-1]))
+            (self.work / EDIT_LOG).write_text("".join(json.dumps(r) + "\n" for r in log[:-1]))
             for k in np.unique(zs):
                 self._invalidate(int(k))
             self._max_id = None
@@ -359,18 +404,20 @@ class Block:
 
 
 class AnnotateStore:
-    def __init__(self, root: Path | None):
+    def __init__(self, root: Path | None, workdir: Path | None = None, extra_roots: list[Path] | None = None):
         self.root = Path(root) if root else None
+        self.roots = [r for r in [self.root, *(Path(x) for x in (extra_roots or []))] if r]
+        self.workdir = Path(workdir) if workdir else None
         self._blocks: dict[str, Block] = {}
         self._lock = threading.Lock()
 
     def refresh(self) -> list[dict]:
-        found = find_blocks(self.root)
+        found = [p for r in self.roots for p in find_blocks(r)]
         with self._lock:
             for p in found:
                 if p.name not in self._blocks:
                     try:
-                        self._blocks[p.name] = Block(p)
+                        self._blocks[p.name] = Block(p, self.workdir)
                     except Exception as e:  # a half-copied block must not take the page down
                         self._blocks[p.name] = e  # type: ignore[assignment]
             return [self._summary(k) for k in sorted(self._blocks)]
@@ -381,7 +428,7 @@ class AnnotateStore:
             return {"block_id": key, "error": str(b)}
         z, y, x = b.shape_zyx
         return {"block_id": b.id, "has_seg": b.has_seg, "nz": z, "height": y, "width": x, "dataset": b.meta.get("dataset", {}).get("id"),
-                "n_edits": len(b.edits()), "has_working_copy": (b.path / SEG_EDIT).exists()}
+                "n_edits": len(b.edits()), "has_working_copy": (b.work / SEG_EDIT).exists()}
 
     def get(self, block_id: str) -> Block:
         if block_id not in self._blocks:

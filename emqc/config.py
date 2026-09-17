@@ -56,6 +56,10 @@ class Settings(BaseSettings):
 
     # slice annotation (VAST-style viewer): directory whose sub-directories hold em.npy (+ seg.npy) in (x, y, z) order
     annotate_root: Path | None = None
+    # where the viewer keeps its working copies (seg_edit.npy, edits/) — never inside the data directory
+    annotate_workdir: Path = PROJECT_ROOT / "var" / "annotate"
+    annotate_extra_roots: str = ""  # more block roots, semicolon separated (e.g. where SAM pre-labels are written)
+    sam_blocks_dir: Path = PROJECT_ROOT / "var" / "sam_blocks"  # blocks produced by scripts/sam_label.py (em + SAM seg)
 
     api_host: str = "127.0.0.1"
     api_port: int = 8765

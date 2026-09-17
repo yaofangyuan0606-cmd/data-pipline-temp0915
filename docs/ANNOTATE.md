@@ -1,7 +1,18 @@
 # 切片标注（VAST 风格）
 
-页面：`/annotate`。数据源由 `EMQC_ANNOTATE_ROOT` 指定，该目录下每个含 `em.npy` 的子目录是一个数据块
-（H01 交付的 `blocks/h01/<block>/` 布局直接可用；`em.npy`、`seg.npy` 均为 (x, y, z) 轴序）。
+页面：`/annotate`。数据源由 `EMQC_ANNOTATE_ROOT` 指定（可用 `EMQC_ANNOTATE_EXTRA_ROOTS` 以分号追加更多根目录），
+该目录下每个含 `em.npy` 的子目录是一个数据块，H01 交付的 `blocks/h01/<block>/` 布局直接可用。
+
+**数据目录是只读的。** 页面写出的一切——`seg_edit.npy` 工作副本、`edits/` 逐次记录、`edits.jsonl` 摘要——都放在
+`EMQC_ANNOTATE_WORKDIR`（默认平台的 `var/annotate/<block_id>/`），交付目录里一个字节都不会多。早期版本曾把这些写进数据目录，
+打开数据块时会自动迁移到工作目录，已有的改动不会丢。
+
+**显示方向以 `visual/slices_em/*.png` 为准。** 数组的第一维是图像的行、第二维是列，一张切片就是 `arr[:, :, z]`，
+不做转置；数据块目录里若有 `visual/slices_em/`，EM 层直接原样下发这些 PNG（字节相同）。屏幕坐标 x 是列、y 是行，
+服务端按 `plane[y, x]` 取值。
+
+`visual/slices_seg_color/*.png` 不能当标签用：它是 EM 与哈希颜色的叠加图，同一个 id 的像素在图里有几千种颜色，
+和 EM 灰度的相关系数 0.79，id 无法从颜色反推。标签只来自 `seg.npy`；页面上的着色由 id 哈希生成，与那套 PNG 不同。
 
 ## 三个核心功能怎么实现的
 
@@ -38,8 +49,8 @@ Alt+点击可重选第一块；Esc、切换工具、切片或数据块会取消�
 之后所有改动都写在副本上。每次改动另存一份 `edits/<n>.npz`——被改的每个体素的 (x, y, z) 坐标和它改动前的 id——所以撤销是精确
 还原而不是"再填回去"（填充可能已把两个区域并成一个，反向泛洪会改错）。`edits.jsonl` 是给界面看的摘要。
 
-交付给下游时直接用 `seg_edit.npy`，它和 `seg.npy` 同形同类型；想回到原始状态删掉 `seg_edit.npy`、`edits/`、
-`edits.jsonl` 三样即可。
+交付给下游时直接用工作目录里的 `seg_edit.npy`，它和 `seg.npy` 同形同类型；想回到原始状态删掉工作目录里的
+`seg_edit.npy`、`edits/`、`edits.jsonl` 三样即可，数据目录本来就没被碰过。
 
 ## 接口
 
