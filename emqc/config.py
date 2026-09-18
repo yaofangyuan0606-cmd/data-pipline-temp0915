@@ -54,12 +54,16 @@ class Settings(BaseSettings):
     allow_delete_files: bool = True
     deployment_name: str = ""  # shown in the UI topbar so people know which instance they are looking at
 
-    # slice annotation (VAST-style viewer): directory whose sub-directories hold em.npy (+ seg.npy) in (x, y, z) order
+    # slice annotation: em.npy (+ seg.npy) use (rows, columns, z) order
     annotate_root: Path | None = None
     # where the viewer keeps its working copies (seg_edit.npy, edits/) — never inside the data directory
     annotate_workdir: Path = PROJECT_ROOT / "var" / "annotate"
     annotate_extra_roots: str = ""  # more block roots, semicolon separated (e.g. where SAM pre-labels are written)
     sam_blocks_dir: Path = PROJECT_ROOT / "var" / "sam_blocks"  # blocks produced by scripts/sam_label.py (em + SAM seg)
+
+    sam_checkpoint: Path = PROJECT_ROOT / "var" / "models" / "sam2.1_hiera_large.pt"
+    sam_config: str = "configs/sam2.1/sam2.1_hiera_l.yaml"
+    sam_device: str = "cuda:0"
 
     api_host: str = "127.0.0.1"
     api_port: int = 8765
@@ -70,7 +74,7 @@ class Settings(BaseSettings):
         roots += [r.strip() for r in self.remote_roots.split(";") if r.strip()]
         return roots
 
-    @field_validator("data_root", "preview_dir", "cache_dir", "manifest_dir", "export_dir", mode="after")
+    @field_validator("data_root", "preview_dir", "cache_dir", "manifest_dir", "export_dir", "sam_checkpoint", "annotate_workdir", "sam_blocks_dir", mode="after")
     @classmethod
     def _absolute(cls, v: Path) -> Path:
         # relative paths in .env are relative to the project root, never to the current working directory

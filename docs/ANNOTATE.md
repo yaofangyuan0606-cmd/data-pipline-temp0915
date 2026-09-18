@@ -1,5 +1,7 @@
 # 切片标注（VAST 风格）
 
+需要用 SAM 圈选并补充标签时，请看 [SAM 切片补标使用指南](SAM_USER_GUIDE.md)。
+
 页面：`/annotate`。数据源由 `EMQC_ANNOTATE_ROOT` 指定（可用 `EMQC_ANNOTATE_EXTRA_ROOTS` 以分号追加更多根目录），
 该目录下每个含 `em.npy` 的子目录是一个数据块，H01 交付的 `blocks/h01/<block>/` 布局直接可用。
 

@@ -10,6 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 TMP = Path(tempfile.mkdtemp(prefix="emqc-test-"))
 os.environ["EMQC_DB_URL"] = f"sqlite:///{TMP / 'test.db'}"
 os.environ["EMQC_DATA_ROOT"] = str(TMP / "data_root")
+os.environ["EMQC_DATASET_GLOB"] = "project_terminal/*/datasets/datasets/*"
+os.environ["EMQC_ANNOTATE_ROOT"] = str(TMP / "annotation")
+os.environ["EMQC_ANNOTATE_WORKDIR"] = str(TMP / "annotation-work")
+os.environ["EMQC_ANNOTATE_EXTRA_ROOTS"] = ""
+os.environ["EMQC_SAM_BLOCKS_DIR"] = str(TMP / "sam-blocks")
 os.environ["EMQC_PREVIEW_DIR"] = str(TMP / "previews")
 os.environ["EMQC_BLOCK_SIZE_Z"] = "20"
 os.environ["EMQC_BLOCK_SIZE_XY"] = "0"
