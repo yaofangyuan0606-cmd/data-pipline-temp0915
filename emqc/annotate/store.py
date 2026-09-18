@@ -269,6 +269,29 @@ class Block:
         self._max_id = None if self._max_id is None else max(self._max_id, int(new_id))
         return rec
 
+    def apply_mask(self, z: int, mask: np.ndarray, new_id: int, metadata: dict) -> dict | None:
+        """Apply a SAM preview in display (y, x) coordinates; preserve exact undo."""
+        self._check_z(z)
+        if mask.shape != self.shape_zyx[1:] or mask.dtype != np.bool_:
+            raise ValueError("mask shape or dtype does not match the slice")
+        with self.lock:
+            if not self.has_seg:
+                raise ValueError("当前数据块没有标签基线，无法应用；仍可预览分割")
+            limits = np.iinfo(self._seg_ro.dtype)
+            if not 0 <= new_id <= limits.max:
+                raise ValueError("label id is outside the segmentation dtype range")
+            changed = mask & (self._seg()[:, :, z] != new_id)
+            xs, ys = np.nonzero(changed)
+            if not xs.size:
+                return None
+            seg = self._seg_writable()
+            old = seg[xs, ys, z].copy()
+            rec = self._record("sam", z, xs, ys, old, new_id, metadata)
+            seg[xs, ys, z] = new_id
+            seg.flush()
+            self._invalidate(z)
+            return rec
+
     def fill(self, z: int, x: int, y: int, new_id: int, whole_slice: bool = False) -> dict | None:
         """Bucket fill: relabel the connected component of the clicked pixel (4-connectivity within the slice) to
         `new_id`; with whole_slice, every pixel of that id in the slice. Returns the edit record, or None if the

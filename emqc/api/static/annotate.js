@@ -20,6 +20,7 @@
     zoom: 1, tx: 0, ty: 0,
     cache: new Map(), loading: new Map(), cacheVersion: 0, hoverXY: null, hoverPane: 0, regionEntry: null, regions: [],
     playing: null, drag: null, stroke: null, mergeFirst: null, mergeBusy: false, spacePan: false, curtainDrag: false,
+    samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null,
   };
   function mkPane(id) {
     const stage = $(id), cv = stage.querySelector(".vast-canvas"), [em, seg, hi] = cv.querySelectorAll("canvas");
@@ -132,6 +133,7 @@
     const hover = S.hover && S.hoverXY ? regionAt(e, ...S.hoverXY) : null;
     if (pin) drawRegion(pin, [255, 214, 10], 90);
     if (hover && (!pin || !pin.mask[S.hoverXY[1] * S.W + S.hoverXY[0]])) drawRegion(hover, [255, 255, 255], 60);
+    drawSAM();
     if (S.view === "overlay" && S.curtain) {
       const g = P[0].gHi, cx = S.curtainX + 0.5, lw = 1 / S.zoom;
       g.lineWidth = 3 * lw; g.strokeStyle = "rgba(0,0,0,.55)"; g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, S.H); g.stroke();
@@ -250,7 +252,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) mergeArm(null);
+    if (z !== S.z) { mergeArm(null); clearSAM(); }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     if (!keepHover) S.hoverXY = null;
@@ -270,8 +272,9 @@
   // ------------------------------------------------------------------ tools
   function setTool(t) {
     if (S.mergeBusy) return;
+    if (!t.startsWith("sam")) clearSAM();
     S.tool = t; mergeArm(null);
-    if (t === "merge" && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
+    if ((t === "merge" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     document.querySelectorAll(".tool").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
     for (const p of P) p.stage.classList.toggle("pan", t === "pan");
     renderHi();
@@ -320,7 +323,8 @@
   }
   function mergeBusy(on) {
     S.mergeBusy = on;
-    document.querySelectorAll(".vast-tools button, .vast-tools input, #an-block").forEach(el => el.disabled = on);
+    document.querySelectorAll(".vast-tools button, .vast-tools input, .vast-tools select").forEach(el => el.disabled = on);
+    samButtons();
   }
   async function mergeInto(x, y) {
     if (S.mergeBusy) return;
@@ -363,11 +367,13 @@
     } catch (err) { flash("涂抹失败: " + err.message, true); invalidate(st.z); goZ(st.z, true); }
   }
   async function afterEdit(r, z) {
+    clearSAM();
     S.info.n_edits = r.n_edits; $("an-nedit").textContent = `${r.n_edits} 次改动`;
     invalidate(z); if (z === S.z) await goZ(z, true, true); editList();
   }
   async function undo() {
     if (S.mergeBusy) return;
+    clearSAM();
     mergeBusy(true);
     mergeArm(null);
     $("an-merge-hint").textContent = "正在撤销，请稍候…";
@@ -386,6 +392,72 @@
     catch (err) { flash("新建失败: " + err.message, true); }
   }
 
+  // SAM previews never change labels until the user applies them.
+  function samButtons() {
+    const disabled = S.mergeBusy || !S.samPreview?.n_px || !S.info?.has_seg;
+    $("an-sam-apply").disabled = disabled;
+    $("an-sam-new").disabled = disabled;
+  }
+  function discardSAMPreview() { S.samPreview = null; S.samMask = null; samButtons(); }
+  function clearSAM() {
+    S.samPoints = []; S.samLabels = []; S.samBox = null; S.samStart = null;
+    discardSAMPreview();
+    $("an-sam-result").textContent = "仅处理当前切片；应用后可 Ctrl+Z 撤销。";
+    renderHi();
+  }
+  function drawSAM() {
+    if (S.blink) return;
+    for (const p of panes()) {
+      const g = p.gHi;
+      if (S.samMask) g.drawImage(S.samMask, 0, 0);
+      g.save(); g.lineWidth = 2 / S.zoom;
+      if (S.samBox) { const [x0,y0,x1,y1] = S.samBox; g.strokeStyle = "#00e6c8"; g.strokeRect(x0,y0,x1-x0,y1-y0); }
+      S.samPoints.forEach(([x,y], i) => {
+        g.beginPath(); g.arc(x+.5, y+.5, 4 / S.zoom, 0, Math.PI*2);
+        g.fillStyle = S.samLabels[i] ? "#00e6c8" : "#ff6262"; g.fill();
+        g.strokeStyle = "#111"; g.stroke();
+      });
+      g.restore();
+    }
+  }
+  async function predictSAM() {
+    if (S.mergeBusy || !S.block) return;
+    if (!S.samPoints.length && !S.samBox) { flash("请先选择 SAM 点选或框选，在图像上添加提示"); return; }
+    discardSAMPreview(); mergeBusy(true);
+    $("an-sam-result").textContent = "正在分割，首次加载模型需要稍候…";
+    try {
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/sam/predict`, {
+        z: S.z, points: S.samPoints, labels: S.samLabels, box: S.samBox,
+        only_background: $("an-sam-background").checked,
+        candidate: $("an-sam-candidate").value === "" ? null : +$("an-sam-candidate").value,
+      });
+      S.samMask = await loadImg(r.mask_png); S.samPreview = r;
+      $("an-sam-result").textContent = `候选 ${r.candidate+1} · ${r.n_px} 像素 · ${r.seconds}s。` + (r.n_px ? "请核对青色边界，再填为新标签或当前标签。" : "没有可填区域，请调整提示或取消仅补未标注区域。");
+      $("an-sam-status").textContent = "SAM 2.1 · 模型已加载";
+    } catch (err) { $("an-sam-result").textContent = "分割失败：" + err.message; }
+    finally { mergeBusy(false); renderHi(); }
+  }
+  async function applySAM(makeNew) {
+    if (S.mergeBusy || !S.samPreview?.n_px) return;
+    if (!makeNew && S.cur === "0") { flash("请先拾取已有颜色，或使用“填为新标签”"); return; }
+    const z = S.z, token = S.samPreview.token;
+    mergeBusy(true);
+    try {
+      const id = makeNew ? (await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/new-id`)).id : S.cur;
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/sam/apply`, {token, new_id: id});
+      await afterEdit(r, z); setCur(id);
+      $("an-sam-result").textContent = `已填 ${r.edit?.n_px || 0} 像素，可 Ctrl+Z 撤销。`;
+    } catch (err) { discardSAMPreview(); $("an-sam-result").textContent = "应用失败：" + err.message; }
+    finally { mergeBusy(false); renderHi(); }
+  }
+  $("an-sam-predict").addEventListener("click", predictSAM);
+  $("an-sam-clear").addEventListener("click", clearSAM);
+  $("an-sam-new").addEventListener("click", () => applySAM(true));
+  $("an-sam-apply").addEventListener("click", () => applySAM(false));
+  for (const id of ["an-sam-background", "an-sam-candidate"]) $(id).addEventListener("change", () => {
+    discardSAMPreview(); renderHi(); if (S.samPoints.length || S.samBox) predictSAM();
+  });
+
   // ------------------------------------------------------------------ mouse: the same handlers on every pane
   function bindStage(p, i) {
     p.stage.addEventListener("contextmenu", ev => ev.preventDefault());
@@ -398,6 +470,12 @@
       if (ev.button !== 0 || !inside(x, y)) return;
       if (S.mergeBusy) return;
       if (ev.altKey || S.tool === "pick") { pick(x, y); return; }
+      if (S.tool === "sam") {
+        if (S.samPoints.length >= 64) { flash("最多 64 个提示点，请清除后重试"); return; }
+        discardSAMPreview(); S.samPoints.push([x,y]); S.samLabels.push(ev.shiftKey ? 0 : 1);
+        renderHi(); predictSAM(); return;
+      }
+      if (S.tool === "sam-box") { discardSAMPreview(); S.samStart = [x,y]; S.samBox = [x,y,x,y]; return; }
       if (S.tool === "fill") { fill(x, y, ev.shiftKey); return; }
       if (S.tool === "merge") { mergeInto(x, y); return; }
       if (S.tool === "brush" || S.tool === "erase") strokeStart(x, y);
@@ -406,6 +484,11 @@
     p.stage.addEventListener("mousemove", ev => {
       if (S.drag) { S.tx = S.drag.tx + ev.clientX - S.drag.x; S.ty = S.drag.ty + ev.clientY - S.drag.y; applyView(); return; }
       const previous = S.hoverXY, [x, y] = toImg(ev, p); S.hoverXY = inside(x, y) ? [x, y] : null; S.hoverPane = i;
+      if (S.samStart) {
+        const [sx,sy] = S.samStart, bx = Math.max(0,Math.min(S.W-1,x)), by = Math.max(0,Math.min(S.H-1,y));
+        S.samBox = [Math.min(sx,bx),Math.min(sy,by),Math.max(sx,bx)+1,Math.max(sy,by)+1];
+        renderHi(); return;
+      }
       if (S.curtainDrag) { S.curtainX = Math.max(0, Math.min(S.W, x)); render(); return; }
       p.stage.style.cursor = nearCurtain(x) ? "col-resize" : "";
       if (S.stroke) { if (S.hoverXY) strokeMove(x, y); return; }
@@ -415,6 +498,12 @@
     p.stage.addEventListener("mouseleave", () => { S.hoverXY = null; renderHi(); status(); });
   }
   P.forEach(bindStage);
+  window.addEventListener("mouseup", () => {
+    if (!S.samStart) return;
+    S.samStart = null;
+    if (S.samBox[2] <= S.samBox[0] || S.samBox[3] <= S.samBox[1]) { S.samBox = null; renderHi(); return; }
+    predictSAM();
+  });
   window.addEventListener("mouseup", () => { S.curtainDrag = false; if (S.drag) { S.drag = null; for (const q of P) q.stage.classList.remove("panning"); } if (S.stroke) strokeEnd(); });
 
   // ------------------------------------------------------------------ keyboard
@@ -428,7 +517,7 @@
     else if (k === "PageUp") { ev.preventDefault(); goZ(S.z - 10, true); }
     else if (k === "PageDown") { ev.preventDefault(); goZ(S.z + 10, true); }
     else if (k === "Home") goZ(0); else if (k === "End") goZ(S.info.shape_zyx[0] - 1);
-    else if (k === "Escape") { mergeArm(null); }
+    else if (k === "Escape") { mergeArm(null); clearSAM(); }
     else if (k === "m") setTool("merge");
     else if (k === "p") setTool("pick"); else if (k === "f") setTool("fill"); else if (k === "b") setTool("brush"); else if (k === "e") setTool("erase"); else if (k === "h") setTool("pan");
     else if (k === "[") setBrush(S.brush - 1); else if (k === "]") setBrush(S.brush + 1);
@@ -465,7 +554,7 @@
   async function editList() {
     try {
       const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/edits?limit=30`);
-      const label = e => e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
+      const label = e => e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
       $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${e.new_id === "0" ? "transparent" : css(colorOf(e.new_id))}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${e.new_id}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">还没有改动</span></div>`;
     } catch (_) { /* panel is informational */ }
   }
@@ -501,6 +590,7 @@
   // ------------------------------------------------------------------ blocks
   async function selectBlock(id) {
     if (S.mergeBusy) return;
+    clearSAM();
     if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     S.block = id; dropAll(); S.hoverXY = null; mergeArm(null);
     S.info = await getJSON(`${API}/blocks/${encodeURIComponent(id)}`);
@@ -515,6 +605,10 @@
   }
   async function init() {
     setView(S.view);
+    getJSON(`${API}/sam/status`).then(r => {
+      $("an-sam-status").textContent = r.installed && r.checkpoint_exists
+        ? `SAM 2.1 · ${r.device} · ${r.loaded ? "已加载" : "首次点选时加载"}` : "SAM 尚未安装，请联系部署者";
+    }).catch(() => { $("an-sam-status").textContent = "模型状态暂不可用"; });
     const r = await getJSON(`${API}/blocks`);
     const sel = $("an-block");
     if (!r.blocks.length) { sel.innerHTML = `<option>没有数据块</option>`; $("an-status").textContent = r.root ? `在 ${r.root} 下没有找到 em.npy` : "未配置 EMQC_ANNOTATE_ROOT"; return; }

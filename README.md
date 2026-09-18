@@ -219,3 +219,5 @@ demo 数据已删除。需要时可以再生成三份样例（合成缺陷集 + 
 4. GT / prediction 的一致性 QC（标签覆盖率、与 EM 的对齐）。
 
 - `docs/ANNOTATE.md` — 切片标注页（VAST 风格：叠加浏览、吸色填色、连续翻页；写时复制 + 精确撤销）
+- [SAM 切片补标使用指南](docs/SAM_USER_GUIDE.md) — 给标注同事的操作步骤、修正边界、填色、撤销和常见问题，入口 `/annotate`。
+- [SAM 部署与接口说明](docs/SAM.md) — SAM 2.1 安装、GPU 配置、API 和回归验证；安装 `bash scripts/install_sam.sh`。
