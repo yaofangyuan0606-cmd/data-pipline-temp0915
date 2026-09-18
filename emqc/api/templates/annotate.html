@@ -22,6 +22,19 @@
     <div class="vast-mergehint muted" id="an-merge-hint" hidden></div>
     <div class="field" style="margin-top:8px"><label>画笔半径 <span class="mono" id="an-brush-v">4</span> px <span class="muted">[ ]</span></label><input id="an-brush" type="range" min="0" max="60" value="4"></div>
 
+    <div class="vast-sec">SAM 辅助分割</div>
+    <div class="muted" id="an-sam-status" style="font-size:12px">检查模型…</div>
+    <div class="vast-toolgrid" style="margin-top:6px">
+      <button class="tool" data-tool="sam" title="点击要圈出的膜内区域；Shift+点击排除">SAM 点选</button>
+      <button class="tool" data-tool="sam-box" title="拖出矩形限制目标区域">SAM 框选</button>
+    </div>
+    <p class="muted" style="font-size:12px">膜内点击加点，Shift+点击排除；可补多个点。青色为待填区域，核对边界后应用。</p>
+    <label class="vast-layer"><input id="an-sam-background" type="checkbox" checked> 仅补未标注区域（标签 0）</label>
+    <div class="field"><label>分割候选</label><select id="an-sam-candidate" class="text"><option value="">自动选择</option><option value="0">候选 1</option><option value="1">候选 2</option><option value="2">候选 3</option></select></div>
+    <div class="actions"><button id="an-sam-predict">预览分割</button><button id="an-sam-clear">清除提示</button></div>
+    <div class="actions" style="margin-top:6px"><button id="an-sam-new" class="primary" disabled>填为新标签</button><button id="an-sam-apply" disabled>填为当前标签</button></div>
+    <div class="muted" id="an-sam-result" role="status" style="font-size:12px;margin-top:6px">仅处理当前切片；应用后可 Ctrl+Z 撤销。</div>
+
     <div class="vast-sec">当前标签</div>
     <div class="vast-cur"><span class="sw" id="an-cur-sw"></span><span class="mono" id="an-cur-id">0</span></div>
     <div class="actions" style="margin-top:6px"><button id="an-newid" class="primary" title="N">新建 ID</button><button id="an-bg" title="设为背景 0">背景</button></div>
@@ -79,5 +92,5 @@
   </aside>
 </div>
 <script>window.AN_PRESELECT = {{ (preselect or '')|tojson }};</script>
-<script src="/static/annotate.js?v=pairwise-regions-1" defer></script>
+<script src="/static/annotate.js?v=sam21-1" defer></script>
 {% endblock %}

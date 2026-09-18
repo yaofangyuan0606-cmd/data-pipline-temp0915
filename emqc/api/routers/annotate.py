@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
+from typing import Literal
 
 from emqc.annotate.store import AnnotateStore
 from emqc.config import settings
@@ -23,7 +24,8 @@ def _roots() -> list:
 def get_store() -> AnnotateStore:
     global _store
     root = settings.annotate_root.resolve() if settings.annotate_root else None
-    if _store is None or _store.roots != [r for r in [root, *_roots()] if r]:
+    if (_store is None or _store.roots != [r for r in [root, *_roots()] if r]
+            or _store.workdir != settings.annotate_workdir):
         _store = AnnotateStore(root, settings.annotate_workdir, _roots())
     return _store
 
@@ -53,6 +55,60 @@ def _int_id(v: str | int) -> int:
 def list_blocks():
     st = get_store()
     return {"root": str(st.root) if st.root else None, "blocks": st.refresh()}
+
+
+class SAMPredictIn(BaseModel):
+    z: int = Field(ge=0)
+    points: list[tuple[int, int]] = Field(default_factory=list, max_length=64)
+    labels: list[Literal[0, 1]] = Field(default_factory=list, max_length=64)
+    box: tuple[int, int, int, int] | None = None
+    only_background: bool = True
+    candidate: int | None = Field(default=None, ge=0, le=2)
+
+
+class SAMApplyIn(BaseModel):
+    token: str = Field(min_length=32, max_length=32)
+    new_id: str | int
+
+
+@router.get("/sam/status")
+def sam_status():
+    from emqc.annotate.sam import service
+    return service.status()
+
+
+@router.post("/blocks/{block_id}/sam/predict")
+def sam_predict(block_id: str, body: SAMPredictIn):
+    from emqc.annotate.sam import SAMUnavailable, service
+    b = _block(block_id)
+    Z, H, W = b.shape_zyx
+    if body.z >= Z or len(body.points) != len(body.labels):
+        raise HTTPException(422, "invalid z or mismatched point labels")
+    if not body.points and body.box is None:
+        raise HTTPException(422, "请添加提示点或框选区域")
+    if any(not (0 <= x < W and 0 <= y < H) for x, y in body.points):
+        raise HTTPException(422, "point outside the slice")
+    if body.box is not None:
+        x0, y0, x1, y1 = body.box
+        if not (0 <= x0 < x1 <= W and 0 <= y0 < y1 <= H):
+            raise HTTPException(422, "invalid box")
+    try:
+        return service.predict(b, body.z, body.points, body.labels, body.box, body.only_background, body.candidate)
+    except SAMUnavailable as exc:
+        raise HTTPException(503, str(exc))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.post("/blocks/{block_id}/sam/apply")
+def sam_apply(block_id: str, body: SAMApplyIn):
+    from emqc.annotate.sam import service
+    b = _block(block_id)
+    try:
+        rec = service.apply(b, body.token, _int_id(body.new_id))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return _edit_response(b, rec)
 
 
 @router.get("/blocks/{block_id}")

@@ -89,7 +89,8 @@ class Browser:
     def position(self, point):
         return self.evaluate(f"""(() => {{
             const c = document.querySelector('#an-stage .vast-canvas'), r = c.getBoundingClientRect();
-            return [r.left + ({point[0]} + .5) * r.width / 64, r.top + ({point[1]} + .5) * r.height / 32];
+            const image = c.querySelector('canvas');
+            return [r.left + ({point[0]} + .5) * r.width / image.width, r.top + ({point[1]} + .5) * r.height / image.height];
         }})()""")
 
     def move(self, point, click=False):
@@ -110,7 +111,7 @@ class Browser:
 def browser(tmp_path):
     if os.environ.get("EMQC_BROWSER_TESTS") != "1":
         pytest.skip("Set EMQC_BROWSER_TESTS=1 to run local Chromium integration tests")
-    chrome = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+    chrome = os.environ.get("EMQC_BROWSER_BINARY") or shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
     if not chrome:
         pytest.skip("Chromium is not installed")
     connect = pytest.importorskip("websockets.sync.client").connect
@@ -121,7 +122,8 @@ def browser(tmp_path):
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     env = dict(os.environ, EMQC_DB_URL=f"sqlite:///{tmp_path / 'browser.db'}", EMQC_API_HOST="127.0.0.1",
-               EMQC_ANNOTATE_ROOT=str(data.parent), EMQC_PREVIEW_DIR=str(tmp_path / "previews"),
+               EMQC_ANNOTATE_ROOT=str(data.parent), EMQC_ANNOTATE_WORKDIR=str(tmp_path / "work"),
+               EMQC_ANNOTATE_EXTRA_ROOTS="", EMQC_SAM_BLOCKS_DIR=str(tmp_path / "sam_blocks"), EMQC_PREVIEW_DIR=str(tmp_path / "previews"),
                EMQC_DATA_ROOT=str(tmp_path / "unused"), EMQC_REMOTE_ROOTS="", PYTHONDONTWRITEBYTECODE="1")
     profile = tmp_path / "chrome"
     processes = []
@@ -160,7 +162,7 @@ def browser(tmp_path):
             page.call("Network.enable")
             page.call("Fetch.enable", patterns=[{"urlPattern": "*", "requestStage": "Request"}])
             page.call("Page.navigate", url=f"http://127.0.0.1:{port}/annotate?block=pairs")
-            page.wait("document.querySelector('#an-meta')?.textContent.startsWith('64×32×2') && document.querySelectorAll('#an-segs .row').length >= 4")
+            page.wait("document.querySelector('#an-meta')?.textContent.startsWith('32×64×2') && document.querySelectorAll('#an-segs .row').length >= 4")
             page.evaluate("document.getElementById('an-stage').scrollIntoView({block:'center'})")
             yield page, data, original
             assert not page.errors, page.errors
@@ -183,20 +185,21 @@ def browser(tmp_path):
 
 def test_hover_and_independent_merge_pairs_in_browser(browser):
     page, data, original = browser
+    work = data.parent.parent / "work" / "pairs"
     a, b, c, d = POINTS
     page.move(a)
     page.wait(page.alpha(a) + ' > 0')
-    assert page.evaluate(page.alpha((4, 20))) == 0
+    assert page.evaluate(page.alpha((20, 4))) == 0
     assert page.evaluate(page.alpha((10, 10))) == 0
     # Move directly to a disconnected island of the same id: highlight must move.
-    page.move((4, 20))
-    page.wait(page.alpha((4, 20)) + ' > 0')
+    page.move((20, 4))
+    page.wait(page.alpha((20, 4)) + ' > 0')
     assert page.evaluate(page.alpha(a)) == 0
     page.evaluate("document.querySelector('[data-tool=merge]').click()")
     page.move(a, click=True)
     page.move(b)
     page.wait(page.alpha(a) + ' > 0 && ' + page.alpha(b) + ' > 0')
-    assert page.evaluate(page.alpha((4, 20))) == 0
+    assert page.evaluate(page.alpha((20, 4))) == 0
     # Simulate B, C, D in the same event turn: only B may complete the pending pair.
     coords = [page.position(p) for p in (b, c, d)]
     page.evaluate(f"""{json.dumps(coords)}.forEach(([x,y]) => document.getElementById('an-stage').dispatchEvent(
@@ -204,12 +207,12 @@ def test_hover_and_independent_merge_pairs_in_browser(browser):
     page.edits(1)
     expected = original.copy()
     expected[18:26, 2:10, 0] = IDS[0]
-    assert np.array_equal(np.load(data / "seg_edit.npy"), expected)
+    assert np.array_equal(np.load(work / "seg_edit.npy"), expected)
     page.move(c, click=True)
     page.move(d, click=True)
     page.edits(2)
     expected[50:58, 2:10, 0] = IDS[2]
-    assert np.array_equal(np.load(data / "seg_edit.npy"), expected)
+    assert np.array_equal(np.load(work / "seg_edit.npy"), expected)
     assert np.array_equal(np.load(data / "seg.npy"), original)
     # Same-colour pairs are consumed, rather than keeping an old first click armed.
     page.move(a, click=True)
@@ -231,11 +234,11 @@ def test_hover_and_independent_merge_pairs_in_browser(browser):
     page.move(c, click=True)
     page.move(d, click=True)
     page.edits(2)
-    assert np.array_equal(np.load(data / "seg_edit.npy"), expected)
+    assert np.array_equal(np.load(work / "seg_edit.npy"), expected)
     # Each undo restores one whole pair, with the earlier pair left intact.
     page.evaluate("document.getElementById('an-undo').click()")
     page.edits(1)
     page.evaluate("document.getElementById('an-undo').click()")
     page.edits(0)
-    assert np.array_equal(np.load(data / "seg_edit.npy"), original)
+    assert np.array_equal(np.load(work / "seg_edit.npy"), original)
     assert page.evaluate("document.querySelectorAll('[name=an-dir], [name=an-scope]').length") == 0
