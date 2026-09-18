@@ -131,3 +131,61 @@ def test_real_sam_preview_apply_undo_in_browser(tmp_path):
         page.wait_for_function("document.getElementById('an-z').value === '1'")
         assert page.locator("#an-sam-new").is_disabled()
         assert page.locator("#an-sam-apply").is_disabled()
+
+
+def test_sam_click_starts_target_modifiers_refine_it(tmp_path):
+    import base64
+    import io
+    from PIL import Image
+    data = tmp_path / 'blocks' / 'prompts'
+    original = write_pairs(data)
+    png = io.BytesIO()
+    Image.new('RGBA', (original.shape[1], original.shape[0]), (0, 230, 200, 160)).save(png, format='PNG')
+    requests = []
+    with browser_for(tmp_path, data) as (adapter, page):
+        def predict(route):
+            requests.append(route.request.post_data_json)
+            route.fulfill(json={'token': 'a' * 32, 'candidate': 0, 'n_px': 1, 'seconds': .01,
+                                'mask_png': 'data:image/png;base64,' + base64.b64encode(png.getvalue()).decode()})
+        page.route('**/sam/predict', predict)
+        page.locator('[data-tool="sam"]').click()
+
+        def click(point, modifier=None):
+            count = len(requests)
+            if modifier:
+                page.keyboard.down(modifier)
+            page.mouse.click(*adapter.position(point))
+            if modifier:
+                page.keyboard.up(modifier)
+            page.wait_for_function("!document.getElementById('an-sam-new').disabled")
+            assert len(requests) == count + 1
+
+        click((5, 5))
+        first = requests[-1]['points'][0]
+        click((10, 10))
+        assert len(requests[-1]['points']) == 1 and requests[-1]['points'][0] != first
+        click((15, 15), 'Meta')
+        assert requests[-1]['labels'] == [1, 1]
+        click((20, 20), 'Control')
+        assert requests[-1]['labels'] == [1, 1, 1]
+        click((25, 25), 'Shift')
+        assert requests[-1]['labels'] == [1, 1, 1, 0]
+        click((5, 30))
+        assert requests[-1]['labels'] == [1]  # clears positive and negative prompts
+
+        page.locator('[data-tool="sam-box"]').click()
+        page.mouse.move(*adapter.position((3, 3)))
+        page.mouse.down()
+        page.mouse.move(*adapter.position((20, 40)))
+        page.mouse.up()
+        page.wait_for_function("!document.getElementById('an-sam-new').disabled")
+        box = requests[-1]['box']
+        assert box is not None and requests[-1]['points'] == []
+        page.locator('[data-tool="sam"]').click()
+        click((10, 10), 'Meta')
+        assert requests[-1]['box'] == box and requests[-1]['labels'] == [1]
+        click((20, 20))
+        assert requests[-1]['box'] is None and requests[-1]['labels'] == [1]
+        page.locator('#an-sam-clear').click()
+        assert page.locator('#an-sam-new').is_disabled()
+        assert not (tmp_path / 'work' / 'prompts' / 'seg_edit.npy').exists()
