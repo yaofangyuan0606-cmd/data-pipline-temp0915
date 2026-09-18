@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}使用说明{% endblock %}
+{% block crumbs %}<a href="/annotate">切片标注</a> › <b>使用说明</b>{% endblock %}
+{% block topright %}<a class="btn primary" href="/annotate">打开工作台</a>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Annotation · guide</div><h1>使用说明</h1>
+<p class="sub">工作台参照 Harvard VAST 的看图习惯：EM 做底图，分割按透明度盖在上面，滚轮翻 z，一手看图一手改标签。这一页把工具、快捷键和数据去向说清楚；工作台里按 <kbd>?</kbd> 有精简版。</p></div></div>
+
+<div class="grid c2">
+<div class="card">
+  <h3 style="margin-top:0">看图与对比</h3>
+  <dl class="kv">
+    <dt>叠加</dt><dd>一个画面：EM 底图 + 分割上层，透明度滑块或 <kbd>,</kbd> <kbd>.</kbd> 调；勾「透明度自动渐变」（<kbd>G</kbd>）分割在 EM 上来回淡入淡出，适合看边界贴不贴。</dd>
+    <dt>并排</dt><dd><kbd>V</kbd> 切换。左边纯 EM、右边 EM+分割，缩放、平移、翻页同步，光标联动；可勾「右侧只看分割」。</dd>
+    <dt>对比滑块</dt><dd><kbd>C</kbd>。同一张图上拖一根黄线：线左是原图，线右是叠加。</dd>
+    <dt>闪烁</dt><dd>按住 <kbd>Tab</kbd> 临时隐藏分割，松开恢复。</dd>
+    <dt>边界</dt><dd><kbd>O</kbd> 只画每个分段的轮廓，不填色。</dd>
+    <dt>翻页</dt><dd>滚轮或 <kbd>↑</kbd> <kbd>↓</kbd>；左栏「连播」按设定速度连续翻 z，用来顺着看一个细胞的走向。</dd>
+    <dt>缩放 / 平移</dt><dd><kbd>Ctrl</kbd>+滚轮缩放，<kbd>0</kbd> 适合窗口，<kbd>1</kbd> 1:1；右键拖动或 <kbd>H</kbd> 平移。</dd>
+  </dl>
+</div>
+<div class="card">
+  <h3 style="margin-top:0">改标签</h3>
+  <dl class="kv">
+    <dt>拾取 <kbd>P</kbd></dt><dd>点一下，光标下的分段 id 成为「当前标签」。任何工具下 <kbd>Alt</kbd>+点击也是拾取。</dd>
+    <dt>填充 <kbd>F</kbd></dt><dd>点到的连通区域改成当前标签；<kbd>Shift</kbd>+点击改整片里所有同 id 的像素。</dd>
+    <dt>合并 <kbd>M</kbd></dt><dd>两次点击：先点 A，再点 B，B 点到的那块变成 A 的颜色（id）。每一对独立，做完再点 C、D；只改当前切片点到的色块，不跨片。</dd>
+    <dt>画笔 <kbd>B</kbd> / 橡皮 <kbd>E</kbd></dt><dd>按半径涂当前标签 / 涂成背景 0；<kbd>[</kbd> <kbd>]</kbd> 改半径。</dd>
+    <dt>新建 ID <kbd>N</kbd></dt><dd>取块内最大 id + 1 作为当前标签，用来给漏标的细胞起新号。</dd>
+    <dt>撤销 <kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>按次精确回退，每次改动都记录了每个像素的旧 id。</dd>
+    <dt>本片分段</dt><dd>右栏列出当前片全部 id 和像素数，点一行选中，搜索框按 id 过滤。</dd>
+  </dl>
+</div>
+</div>
+
+<h2>数据去向</h2>
+<div class="card">
+  <dl class="kv">
+    <dt>数据目录</dt><dd><b>只读。</b>由 <span class="mono">EMQC_ANNOTATE_ROOT</span> 指定，<span class="mono">EMQC_ANNOTATE_EXTRA_ROOTS</span> 可用分号追加更多根目录；每个含 <span class="mono">em.npy</span> 的子目录是一个块。交付目录里不会多出一个字节。</dd>
+    <dt>工作目录</dt><dd><span class="mono">{{ workdir }}/&lt;block&gt;/</span>：第一次改动时把 <span class="mono">seg.npy</span> 复制成 <span class="mono">seg_edit.npy</span>（写时复制），之后每次改动写一个 <span class="mono">edits/&lt;n&gt;.npz</span>，<span class="mono">edits.jsonl</span> 是摘要。修好的标签就是 <span class="mono">seg_edit.npy</span>，形状与 dtype 同原始。</dd>
+    <dt>显示方向</dt><dd>与交付目录 <span class="mono">visual/slices_em/</span> 的 PNG 一致（行 = 数组第 0 轴），有这套 PNG 时直接用它做 EM 底图。<span class="mono">visual/slices_seg_color/</span> 是掺了 EM 灰度的彩色图，不能当标签，标签只来自 <span class="mono">seg.npy</span>。</dd>
+    <dt>颜色</dt><dd>页面上的颜色由 id 哈希生成，同一个 id 在任何片、任何块都是同一个颜色；合并后 B 变成 A 的颜色就是因为它拿到了 A 的 id。</dd>
+    <dt>SAM 预标注</dt><dd>没有分割的块可以先用 <span class="mono">scripts/sam_label.py</span> 在 GPU 上跑 Segment Anything，输出到 <span class="mono">{{ sam_dir }}/&lt;block&gt;_sam/</span>，自动出现在「数据块」列表，再来这里修。</dd>
+  </dl>
+</div>
+
+<h2>已知限制</h2>
+<div class="card" style="font-size:13px;color:var(--text-2)">
+  <ul style="margin:0;padding-left:18px">
+    <li>填充、涂抹、合并都是二维的，只改当前这一片；三维分裂（把错并的细胞拆开）还没做。</li>
+    <li>没有多人并发控制：同一个块同时开两个页面改，后写的覆盖先写的。</li>
+    <li>没有登录与权限；服务端 <span class="mono">EMQC_ALLOW_DELETE_FILES=0</span> 时任何页面都删不了磁盘文件。</li>
+  </ul>
+</div>
+
+<h2>接口</h2>
+<div class="card pad-0"><table class="dense">
+<thead><tr><th>方法</th><th>路径</th><th>作用</th></tr></thead>
+<tbody>
+{% for m, p, d in [
+  ('GET', '/api/v1/annotate/blocks', '列出数据块'),
+  ('GET', '/api/v1/annotate/blocks/{b}', '形状、体素尺寸、改动数、工作目录'),
+  ('GET', '/api/v1/annotate/blocks/{b}/em/{z}.png', 'EM 切片'),
+  ('GET', '/api/v1/annotate/blocks/{b}/labels/{z}.png', '标签索引图（R 高字节、G 低字节）'),
+  ('GET', '/api/v1/annotate/blocks/{b}/labels/{z}.json', '索引 → id 表与像素数'),
+  ('GET', '/api/v1/annotate/blocks/{b}/pick?z=&x=&y=', '光标处 id'),
+  ('POST', '/api/v1/annotate/blocks/{b}/fill', '{z, x, y, new_id, whole_slice}'),
+  ('POST', '/api/v1/annotate/blocks/{b}/paint', '{z, points, radius, new_id}'),
+  ('POST', '/api/v1/annotate/blocks/{b}/merge-pair', '{z, first:[x,y], second:[x,y]}'),
+  ('POST', '/api/v1/annotate/blocks/{b}/merge', '{from_id, to_id, scope: block|slice, z}（脚本接口）'),
+  ('POST', '/api/v1/annotate/blocks/{b}/undo', '撤销最近一次'),
+  ('POST', '/api/v1/annotate/blocks/{b}/new-id', '最大 id + 1'),
+  ('GET', '/api/v1/annotate/blocks/{b}/edits', '改动记录'),
+] %}<tr><td><span class="pill {{ 'on' if m == 'POST' }}">{{ m }}</span></td><td class="mono">{{ p }}</td><td>{{ d }}</td></tr>{% endfor %}
+</tbody></table></div>
+<p class="muted" style="font-size:12px">细节见仓库里的 <span class="mono">docs/ANNOTATE.md</span>。</p>
+{% endblock %}

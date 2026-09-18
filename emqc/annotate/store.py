@@ -429,7 +429,8 @@ class AnnotateStore:
             return {"block_id": key, "error": str(b)}
         z, y, x = b.shape_zyx
         return {"block_id": b.id, "has_seg": b.has_seg, "nz": z, "height": y, "width": x, "dataset": b.meta.get("dataset", {}).get("id"),
-                "n_edits": len(b.edits()), "has_working_copy": (b.work / SEG_EDIT).exists()}
+                "n_edits": len(b.edits()), "has_working_copy": (b.work / SEG_EDIT).exists(), "path": str(b.path),
+                "em_source": "visual/slices_em" if b.visual_em else "em.npy", "voxel_size_nm": b.meta.get("geometry", {}).get("voxel_size_nm")}
 
     def get(self, block_id: str) -> Block:
         if block_id not in self._blocks:

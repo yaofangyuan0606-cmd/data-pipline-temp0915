@@ -14,7 +14,8 @@ Tailscale 挂载目录 (EMQC_DATA_ROOT)
   └──────────────────────────┘    │              / etl_metrics / agent_traces)        │
           │                       └──────────────────────────────────────────────────┘
           ▼
-  FastAPI  ─ 控制台 (/pipeline) ─ 看板 (/)  ─ REST (/api/v1/…)  ─ 算法侧实时切块 (/api/v1/data/…, 写 serve_log)
+  FastAPI  ─ 数据清洗工作区：控制台 (/pipeline) ─ 看板 (/)  ─ REST (/api/v1/…)  ─ 算法侧实时切块 (/api/v1/data/…, 写 serve_log)
+           ─ 切片标注工作区：工作台 (/annotate) ─ 数据块 (/annotate/blocks) ─ 说明 (/annotate/guide)，见 docs/ANNOTATE.md
 ```
 
 - **不重切不落盘**：QC 只保存缩略图和数字；算法要数据时按坐标从源卷即时读取。
@@ -55,7 +56,7 @@ cd em-qc-platform
 .venv/bin/python -m emqc run synthetic_defects
 .venv/bin/python -m emqc datasets
 # 5. 看板 + API
-.venv/bin/python -m emqc serve        # http://127.0.0.1:8765  控制台 /pipeline，看板 /，OpenAPI /docs
+.venv/bin/python -m emqc serve        # http://127.0.0.1:8765  数据清洗 /pipeline 与 /，切片标注 /annotate，OpenAPI /docs
 # 测试
 .venv/bin/python -m pytest tests -q
 ```

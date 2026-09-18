@@ -30,6 +30,7 @@
   --gA: #51cf66; --gB: #9ccc2b; --gC: #ff922b; --gD: #c92a2a;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }   /* .pill etc. set display and would otherwise draw an empty box for hidden elements */
 html { font-size: 14px; }
 body { margin: 0; background: var(--ground); color: var(--text); font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
 a { color: var(--accent-ink); text-decoration: none; } a:hover { text-decoration: underline; }
@@ -49,7 +50,7 @@ aside.nav { background: var(--surface); border-right: 1px solid var(--border); p
 .nav .sep { height: 1px; background: var(--border); margin: 8px 6px; }
 .nav .foot { margin-top: auto; font: 11px/1.5 var(--mono); color: var(--muted); padding: 8px; word-break: break-all; }
 .nav .foot b { color: var(--text-2); font-weight: 500; }
-.content { min-width: 0; }
+.content { min-width: 0; display: flex; flex-direction: column; }
 .topbar { display: flex; align-items: center; gap: 14px; padding: 10px 28px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 5; }
 .topbar .crumbs { font-size: 13px; color: var(--text-2); display: flex; gap: 8px; align-items: center; }
 .topbar .crumbs a { color: var(--text-2); } .topbar .crumbs b { color: var(--text); font-weight: 600; }
@@ -60,7 +61,7 @@ aside.nav { background: var(--surface); border-right: 1px solid var(--border); p
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
 main { padding: 22px 28px 72px; max-width: 1440px; }
 @media (max-width: 900px) {
-  .shell { grid-template-columns: 1fr; } aside.nav { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; border-right: 0; border-bottom: 1px solid var(--border); padding: 10px 14px; }
+  .shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } aside.nav { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; border-right: 0; border-bottom: 1px solid var(--border); padding: 10px 14px; }
   .brand { padding: 0 8px; } .nav .sep, .nav .foot { display: none; } main { padding: 16px; }
 }
 
@@ -244,6 +245,7 @@ td.tilecol { white-space: nowrap; font-size: 11px; line-height: 1.35; }
 
 /* ---------------------------------------------------------------- annotation (VAST-style viewer) */
 .vast { display: grid; grid-template-columns: 220px minmax(0, 1fr) 290px; gap: 12px; height: calc(100vh - 210px); min-height: 600px; }
+.vast.full { flex: 1 1 0; height: auto; min-height: 0; }   /* panels scroll inside; the grid never grows past the viewport */
 .vast-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .vast-sec { font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--accent-ink); margin-top: 10px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
 .vast-meta { font-size: 11px; line-height: 1.5; word-break: break-all; }
@@ -280,4 +282,39 @@ td.tilecol { white-space: nowrap; font-size: 11px; line-height: 1.35; }
 .vast-stage.off, .vast-layer.off { display: none; }
 .vast-label { position: absolute; left: 10px; top: 8px; font-size: 11px; color: #dfe5eb; background: rgba(10,13,16,.72); padding: 2px 8px; border-radius: 4px; pointer-events: none; }
 .vast-stage .side-only { display: none; } .vast-stages.side .side-only { display: block; }
-@media (max-width: 1100px) { .vast-stages { flex-direction: column; } .vast-stages .vast-stage { height: 60vh; } }
+@media (max-width: 1100px) {
+  .vast-stages { flex-direction: column; } .vast-stages .vast-stage { flex: none; height: 60vh; }
+  main.full { display: block; flex: none; }  .vast.full { flex: none; height: auto; }   /* stacked: let the page scroll instead of squeezing the stage */
+}
+
+/* ---------------------------------------------------------------- workspaces
+   Two shells share one stylesheet: "数据清洗" (QC, teal) and "切片标注" (annotation, violet). The switcher sits above the
+   brand so the first thing in the sidebar says which half of the platform you are in; everything below it is per-workspace. */
+.ws-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; margin: 0 2px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-s); }
+.ws-switch a { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 4px; border-radius: 4px; font-size: 12.5px; font-weight: 500; color: var(--text-2); }
+.ws-switch a i { font: 700 9.5px var(--mono); letter-spacing: .04em; padding: 1px 4px; border-radius: 3px; background: var(--surface-3); color: var(--muted); font-style: normal; }
+.ws-switch a:hover { color: var(--text); text-decoration: none; }
+.ws-switch a.on { background: var(--surface); color: var(--accent-ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.ws-switch a.on i { background: var(--accent); color: #fff; }
+body.ws-annotate { --accent: #5b4fb8; --accent-ink: #46399a; --accent-soft: #e6e2f7; --accent-line: #9a90d8; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) body.ws-annotate { --accent: #8f84e0; --accent-ink: #b7aef0; --accent-soft: #2a2550; --accent-line: #6b5fc4; } }
+:root[data-theme="dark"] body.ws-annotate { --accent: #8f84e0; --accent-ink: #b7aef0; --accent-soft: #2a2550; --accent-line: #6b5fc4; }
+main.full { max-width: none; padding: 12px 16px 12px; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+main.full { position: relative; }
+main.full .flash { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6; max-width: min(720px, calc(100% - 32px)); box-shadow: 0 6px 20px rgba(0,0,0,.18); margin: 0; }
+@media (max-width: 1100px) { main.full .flash { position: fixed; top: auto; bottom: 16px; } }   /* stacked layout scrolls: the message follows the viewport (must come after the rule above) */
+.topbar .btn, .topbar button { padding: 5px 11px; font-size: 12.5px; }
+@media (max-width: 900px) { .topbar { flex-wrap: wrap; row-gap: 6px; } .topbar .crumbs { white-space: nowrap; } body.ws-annotate .topbar .pill.hint { display: none; } }
+kbd { display: inline-block; font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border-2); border-bottom-width: 2px; border-radius: 4px; background: var(--surface-2); color: var(--text); line-height: 1.4; vertical-align: middle; }
+
+/* ---------------------------------------------------------------- annotation help dialog */
+.an-help { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text); padding: 16px 18px; width: min(760px, 92vw); box-shadow: 0 18px 50px rgba(0,0,0,.25); }
+.an-help::backdrop { background: rgba(10,13,16,.45); }
+.an-help-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.an-help-head b { font-size: 15px; } .an-help-head .spacer { flex: 1; }
+.an-help-head button { padding: 2px 8px; }
+.an-help-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.an-help-grid h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-ink); }
+.kbd-row { font-size: 13px; color: var(--text-2); padding: 3px 0; border-bottom: 1px dashed var(--border); }
+.kbd-row:last-child { border-bottom: 0; }
+@media (max-width: 700px) { .an-help-grid { grid-template-columns: 1fr; } }

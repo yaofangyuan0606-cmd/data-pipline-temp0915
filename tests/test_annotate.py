@@ -127,6 +127,26 @@ def test_page_renders(client):
     assert r.status_code == 200 and "an-stage" in r.text and "annotate.js" in r.text
 
 
+def test_annotation_is_its_own_workspace(client, workdir):
+    """The annotation pages and the QC pages are two shells: each has its own nav, and the switcher is the only link between them."""
+    ann = client.get("/annotate").text
+    assert 'class="ws-annotate"' in ann and "ws-switch" in ann
+    assert 'href="/annotate/blocks"' in ann and 'href="/annotate/guide"' in ann
+    assert 'id="live"' not in ann, "the QC pipeline status pill does not belong on annotation pages"
+    for qc_href in ('href="/crawl"', 'href="/patches"', 'href="/runs"', 'href="/checks"', 'href="/traces"', 'href="/delivery"'):
+        assert qc_href not in ann, f"QC nav item {qc_href} leaked into the annotation shell"
+    qc = client.get("/pipeline").text
+    assert 'class="ws-qc"' in qc and "ws-switch" in qc and 'id="live"' in qc
+    assert 'href="/annotate/blocks"' not in qc and 'href="/annotate/guide"' not in qc and "an-stage" not in qc
+
+    blocks = client.get("/annotate/blocks")
+    assert blocks.status_code == 200 and "b0" in blocks.text and "5 · 32 · 24" in blocks.text and str(workdir) in blocks.text
+    guide = client.get("/annotate/guide")
+    assert guide.status_code == 200 and "merge-pair" in guide.text and str(workdir) in guide.text
+    summary = client.get("/api/v1/annotate/blocks").json()["blocks"][0]
+    assert summary["em_source"] == "em.npy" and summary["voxel_size_nm"] == [8, 8, 33] and summary["path"].endswith("b0")
+
+
 def test_merge_block_scope_and_legacy_undo(client, ann_root, workdir):
     b = ann_root / "demo" / "b0"
     w = workdir / "b0"
@@ -217,3 +237,17 @@ def test_legacy_edits_in_data_dir_are_migrated(tmp_path):
     assert sorted(p.name for p in b.iterdir()) == ["em.npy", "seg.npy"]
     assert (work / "blk" / "seg_edit.npy").exists() and (work / "blk" / "edits" / "000001.npz").exists()
     assert blk.edits() == [{"n": 1}] and int(blk.pick(0, 0, 0)) == 7
+
+
+def test_blocks_page_survives_an_unreadable_block(client, ann_root):
+    """A half-copied block is listed with an error by the store; the page must render it as such, not 500."""
+    broken = ann_root / "demo" / "zz_broken"
+    broken.mkdir()
+    (broken / "em.npy").write_bytes(b"not a numpy file")
+    api = client.get("/api/v1/annotate/blocks").json()["blocks"]
+    bad = [b for b in api if b["block_id"] == "zz_broken"]
+    assert bad and "error" in bad[0]
+    page = client.get("/annotate/blocks")
+    assert page.status_code == 200
+    assert "无法打开" in page.text and "zz_broken" in page.text and "1 个打不开" in page.text
+    assert "b0" in page.text, "the healthy block is still listed"

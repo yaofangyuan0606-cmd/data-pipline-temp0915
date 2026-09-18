@@ -1,22 +1,26 @@
 {% extends "base.html" %}
-{% block title %}切片标注{% endblock %}
-{% block crumbs %}<b>切片标注</b>{% endblock %}
+{% block title %}标注工作台{% endblock %}
+{% block crumbs %}<a href="/annotate">切片标注</a> › <b>标注工作台</b>{% endblock %}
+{% block topright %}
+<span id="instance" class="pill" hidden></span>
+<span class="pill hint" title="交付目录不写入；seg_edit.npy 与 edits/ 都在工作目录">原始数据只读 · 改动写入工作目录</span>
+<a class="btn" href="/annotate/blocks">数据块</a>
+<button id="an-help-btn" title="快捷键与操作说明 (?)">快捷键 <kbd>?</kbd></button>
+{% endblock %}
+{% block mainclass %}full{% endblock %}
 {% block content %}
-<div class="page-head"><div class="grow"><div class="eyebrow">Annotation · VAST-style</div><h1>切片标注</h1>
-<p class="sub">EM 与分割在同一页对比：<b>叠加</b>模式把分割按透明度盖在 EM 上，<b>并排</b>模式左边纯 EM、右边 EM+分割叠加，缩放/平移/翻页同步、光标联动；<b>对比滑块</b>在同一张图上拖分界线看叠加前后；按住 Tab 闪烁对比。滚轮翻 z，Ctrl+滚轮缩放，右键拖动平移。工具：<b>拾取</b>（P，任何工具下 Alt+点击也是拾取）选中光标下的分段作为当前标签；<b>填充</b>（F）把点到的连通区域改成当前标签，Shift+点击改整片同 id；<b>合并</b>（M）两次点击：先点 A 再点 B，B 变为 A 的颜色；完成后再点 C、D，D 变为 C 的颜色。每一对独立操作，只改当前切片点到的色块；<b>画笔</b>（B）/<b>橡皮</b>（E）按半径涂抹；Ctrl+Z 撤销。所有改动写到 <span class="mono">seg_edit.npy</span>，原始 <span class="mono">seg.npy</span> 不动。</p></div></div>
-
-<div class="vast" id="vast">
+<div class="vast full" id="vast">
   <aside class="vast-panel vast-tools">
-    <div class="field"><label>数据块</label><select id="an-block" class="text mono"></select></div>
+    <div class="field" style="margin-top:0"><label>数据块</label><select id="an-block" class="text mono"></select></div>
     <div class="vast-meta mono muted" id="an-meta">—</div>
 
     <div class="vast-sec">工具</div>
     <div class="vast-toolgrid">
-      <button class="tool active" data-tool="pick" title="拾取 (P)"><svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M13 6l5 5"/></svg>拾取</button>
-      <button class="tool" data-tool="fill" title="填充 (F)"><svg viewBox="0 0 24 24"><path d="M7 3l10 10-6 6L3 11z"/><path d="M17 13c1.5 2 2 3.2 2 4a2 2 0 11-4 0c0-.8.5-2 2-4z"/></svg>填充</button>
-      <button class="tool" data-tool="brush" title="画笔 (B)"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔</button>
-      <button class="tool" data-tool="erase" title="橡皮 (E)"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮</button>
-      <button class="tool" data-tool="merge" title="合并 (M)：先点第一块，再点第二块，保留第一块颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并</button>
+      <button class="tool active" data-tool="pick" title="拾取 (P)：选中光标下的分段作为当前标签；任何工具下 Alt+点击也是拾取"><svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M13 6l5 5"/></svg>拾取</button>
+      <button class="tool" data-tool="fill" title="填充 (F)：把点到的连通区域改成当前标签；Shift+点击改整片同 id"><svg viewBox="0 0 24 24"><path d="M7 3l10 10-6 6L3 11z"/><path d="M17 13c1.5 2 2 3.2 2 4a2 2 0 11-4 0c0-.8.5-2 2-4z"/></svg>填充</button>
+      <button class="tool" data-tool="brush" title="画笔 (B)：按半径涂当前标签"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔</button>
+      <button class="tool" data-tool="erase" title="橡皮 (E)：按半径涂成背景 0"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮</button>
+      <button class="tool" data-tool="merge" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并</button>
       <button class="tool" data-tool="pan" title="平移 (H · 或右键拖动)"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>平移</button>
     </div>
     <div class="vast-mergehint muted" id="an-merge-hint" hidden></div>
@@ -45,7 +49,7 @@
       <div class="vast-canvas"><canvas></canvas><canvas></canvas><canvas></canvas></div>
       <div class="vast-label mono side-only">EM</div>
       <div class="vast-status mono" id="an-status">加载中…</div>
-      <div class="vast-hint mono">滚轮 z · Ctrl+滚轮 缩放 · 右键拖动 平移 · V 并排/叠加 · 0 适合窗口</div>
+      <div class="vast-hint mono">滚轮 z · Ctrl+滚轮 缩放 · 右键拖动 平移 · V 并排/叠加 · 0 适合窗口 · ? 说明</div>
     </div>
     <div class="vast-stage off" id="an-stage2" tabindex="0">
       <div class="vast-canvas"><canvas></canvas><canvas></canvas><canvas></canvas></div>
@@ -54,7 +58,7 @@
   </div>
 
   <aside class="vast-panel vast-side">
-    <div class="vast-sec">视图</div>
+    <div class="vast-sec" style="margin-top:0">视图</div>
     <div class="vast-scope">
       <label><input type="radio" name="an-view" value="overlay" checked> 叠加</label>
       <label><input type="radio" name="an-view" value="side"> 并排 <span class="muted">左 EM · 右分割 (V)</span></label>
@@ -78,6 +82,47 @@
     <div class="vast-list vast-edits" id="an-edits"></div>
   </aside>
 </div>
-<script>window.AN_PRESELECT = {{ (preselect or '')|tojson }};</script>
+
+<dialog id="an-help" class="an-help">
+  <div class="an-help-head"><b>快捷键与操作</b><span class="spacer"></span><a href="/annotate/guide">完整说明 ›</a><button id="an-help-close" title="关闭 (Esc)" autofocus>✕</button></div>
+  <div class="an-help-grid">
+    <section><h3>看图</h3>
+      <div class="kbd-row"><kbd>滚轮</kbd> 翻 z</div>
+      <div class="kbd-row"><kbd>Ctrl</kbd>+<kbd>滚轮</kbd> 缩放 · <kbd>0</kbd> 适合窗口 · <kbd>1</kbd> 1:1</div>
+      <div class="kbd-row"><kbd>右键拖动</kbd> / <kbd>H</kbd> 平移</div>
+      <div class="kbd-row"><kbd>V</kbd> 叠加 ⇄ 并排 · <kbd>C</kbd> 对比滑块</div>
+      <div class="kbd-row"><kbd>Tab</kbd> 按住隐藏分割 · <kbd>G</kbd> 透明度渐变 · <kbd>,</kbd> <kbd>.</kbd> 步进</div>
+      <div class="kbd-row"><kbd>O</kbd> 只画边界</div>
+    </section>
+    <section><h3>改标签</h3>
+      <div class="kbd-row"><kbd>P</kbd> 拾取（任何工具下 <kbd>Alt</kbd>+点击）</div>
+      <div class="kbd-row"><kbd>F</kbd> 填充连通区域 · <kbd>Shift</kbd>+点击改整片同 id</div>
+      <div class="kbd-row"><kbd>M</kbd> 合并：先点 A 再点 B，B 变成 A 的颜色；每一对独立，只改当前片点到的色块</div>
+      <div class="kbd-row"><kbd>B</kbd> 画笔 · <kbd>E</kbd> 橡皮 · <kbd>[</kbd> <kbd>]</kbd> 半径</div>
+      <div class="kbd-row"><kbd>N</kbd> 新建 ID · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</div>
+    </section>
+  </div>
+  <p class="muted" style="margin:10px 0 0;font-size:12px">所有改动写到工作目录的 <span class="mono">seg_edit.npy</span>，交付目录里的 <span class="mono">seg.npy</span> 与 PNG 不会被碰。</p>
+</dialog>
+<script>
+  window.AN_PRESELECT = {{ (preselect or '')|tojson }};
+  (() => {
+    const dlg = document.getElementById("an-help");
+    const open = () => { if (!dlg.open) dlg.showModal(); };
+    document.getElementById("an-help-btn").addEventListener("click", open);
+    document.getElementById("an-help-close").addEventListener("click", () => dlg.close());
+    dlg.addEventListener("click", e => {                                          // a click outside the box (on the backdrop) closes it;
+      const r = dlg.getBoundingClientRect();                                        // clicks on the box's own padding must not
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dlg.close();
+    });
+    // while the help is open, keys must not reach the workbench shortcuts (v, m, Tab...) underneath
+    dlg.addEventListener("keydown", e => { if (!dlg.open) return; e.stopPropagation(); if (e.key === "Escape" || e.key === "?") { e.preventDefault(); dlg.close(); } });
+    // hand focus back to the stage: otherwise it stays on the top-bar button and Space (temporary pan) would re-open the help
+    dlg.addEventListener("close", () => { const st = document.getElementById("an-stage"); if (st) st.focus({ preventScroll: true }); });
+    document.addEventListener("keydown", e => {
+      if (e.key === "?" && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLSelectElement)) { e.preventDefault(); dlg.open ? dlg.close() : open(); }
+    });
+  })();
+</script>
 <script src="/static/annotate.js?v=pairwise-regions-1" defer></script>
 {% endblock %}

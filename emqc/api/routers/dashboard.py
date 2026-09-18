@@ -46,6 +46,18 @@ def _bytes(n):
     return f"{n:.1f} PB"
 
 
+_STATIC = Path(__file__).resolve().parents[1] / "static"
+
+
+def _static_v(name: str) -> int:
+    """Cache-buster for /static links: the file's mtime, so browsers pick up a changed stylesheet/script after a deploy."""
+    try:
+        return int((_STATIC / name).stat().st_mtime)
+    except OSError:
+        return 0
+
+
+templates.env.globals["static_v"] = _static_v
 templates.env.filters["fmt"] = _fmt
 templates.env.filters["pct"] = _pct
 templates.env.filters["bytes"] = _bytes
@@ -53,6 +65,7 @@ templates.env.globals["settings"] = settings
 
 
 def _render(name: str, request: Request, **ctx):
+    ctx.setdefault("workspace", "qc")  # which side of the shell the page belongs to: "qc" (cleaning) or "annotate"
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -237,6 +250,28 @@ def crawl_page(request: Request, s: Session = Depends(get_session)):
     return _render("crawl.html", request, presets=PRESETS, active="crawl")
 
 
+# ----------------------------------------------------------------------------- annotation workspace
+# Separate shell: its own nav, top bar and accent colour. Shares the service and the stylesheet with the QC pages.
+
+
 @router.get("/annotate", response_class=HTMLResponse)
 def annotate_page(request: Request, block: str | None = None):
-    return _render("annotate.html", request, preselect=block, active="annotate")
+    return _render("annotate.html", request, preselect=block, active="workbench", workspace="annotate")
+
+
+@router.get("/annotate/blocks", response_class=HTMLResponse)
+def annotate_blocks_page(request: Request):
+    from emqc.api.routers.annotate import get_store
+
+    st = get_store()
+    blocks = st.refresh()
+    ok = [b for b in blocks if not b.get("error")]  # a half-copied block is listed with an error and must not take the page down
+    stats = {"n_seg": sum(1 for b in ok if b["has_seg"]), "n_working": sum(1 for b in ok if b["has_working_copy"]),
+             "n_edits": sum(b["n_edits"] for b in ok), "n_error": len(blocks) - len(ok)}
+    return _render("annotate_blocks.html", request, blocks=blocks, stats=stats, roots=[str(r) for r in st.roots], workdir=str(settings.annotate_workdir),
+                   sam_dir=str(settings.sam_blocks_dir), active="blocks", workspace="annotate")
+
+
+@router.get("/annotate/guide", response_class=HTMLResponse)
+def annotate_guide_page(request: Request):
+    return _render("annotate_guide.html", request, workdir=str(settings.annotate_workdir), sam_dir=str(settings.sam_blocks_dir), active="guide", workspace="annotate")
