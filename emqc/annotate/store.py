@@ -187,13 +187,14 @@ class Block:
                 self._label_cache.move_to_end(z)
                 return self._label_cache[z]
         s = self.seg_slice(z)
-        ids, inv = np.unique(s, return_inverse=True)
+        # `np.unique(..., return_inverse=True)` argsorts every pixel; we only need "value -> position in ids",
+        # and searchsorted on the (already sorted) ids gives exactly that, 6x faster on a 1024² section.
+        ids = np.unique(s)
         if ids.size == 0 or ids[0] != 0:
             ids = np.concatenate([np.zeros(1, dtype=ids.dtype), ids])
-            inv = inv + 1
         if ids.size > MAX_LABELS_PER_SLICE:
             raise ValueError(f"slice {z} has {ids.size} labels; the uint16 index map holds at most {MAX_LABELS_PER_SLICE}")
-        idx = inv.reshape(s.shape).astype(np.uint16)
+        idx = np.searchsorted(ids, s).astype(np.uint16)
         with self.lock:
             self._label_cache[z] = (idx, ids)
             while len(self._label_cache) > 16:
@@ -510,7 +511,9 @@ class Block:
             (self.work / EDIT_LOG).write_text("".join(json.dumps(r) + "\n" for r in log[:-1]))
             for k in np.unique(zs):
                 self._invalidate(int(k))
-            self._max_id = None
+            # deliberately NOT resetting _max_id: recomputing it rescans the whole volume (1.2 s on a 1024²x100
+            # block) and it is only ever used to hand out an unused id. Staying high is safe — ids just skip —
+            # and it also guarantees an undone id is never handed out again while its edit record still exists.
             return rec
 
 

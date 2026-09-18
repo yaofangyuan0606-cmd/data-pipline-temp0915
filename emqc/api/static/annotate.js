@@ -59,7 +59,8 @@
     const oc = document.createElement("canvas"); oc.width = img.width; oc.height = img.height;
     const g = oc.getContext("2d", { willReadFrequently: true }); g.drawImage(img, 0, 0);
     const d = g.getImageData(0, 0, oc.width, oc.height).data, n = oc.width * oc.height, idx = new Uint16Array(n);
-    for (let i = 0, j = 0; i < n; i++, j += 4) idx[i] = (d[j] << 8) | d[j + 1];
+    const u32 = new Uint32Array(d.buffer);                  // R = low byte, G = next: read both in one load
+    for (let i = 0; i < n; i++) { const p = u32[i]; idx[i] = ((p & 255) << 8) | ((p >>> 8) & 255); }
     return idx;
   }
 
@@ -93,7 +94,10 @@
     const pal = new Uint8Array(e.ids.length * 3);
     for (let k = 1; k < e.ids.length; k++) { const c = colorOf(e.ids[k]); pal[k * 3] = c[0]; pal[k * 3 + 1] = c[1]; pal[k * 3 + 2] = c[2]; }
     if (!outline) {
-      for (let i = 0, j = 0; i < idx.length; i++, j += 4) { const k = idx[i]; if (k) { d[j] = pal[k * 3]; d[j + 1] = pal[k * 3 + 1]; d[j + 2] = pal[k * 3 + 2]; d[j + 3] = 255; } }
+      // one 32-bit store per pixel instead of four 8-bit ones; the palette is pre-packed in the canvas byte order
+      const v = new Uint32Array(d.buffer), pal32 = new Uint32Array(e.ids.length);
+      for (let k = 1; k < e.ids.length; k++) pal32[k] = (255 << 24) | (pal[k * 3 + 2] << 16) | (pal[k * 3 + 1] << 8) | pal[k * 3];
+      for (let i = 0; i < idx.length; i++) { const k = idx[i]; if (k) v[i] = pal32[k]; }
     } else {
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
         const i = y * W + x, k = idx[i];
