@@ -565,11 +565,16 @@
       if (S.mergeBusy) return;
       if (ev.altKey || S.tool === "pick") { pick(x, y); return; }
       if (S.tool === "sam") {
+        if (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey) clearSAM();
+        if (ev.shiftKey && !S.samLabels.includes(1) && !S.samBox) { flash("请先点击或框选目标，再 Shift+点击排除"); return; }
         if (S.samPoints.length >= 64) { flash("最多 64 个提示点，请清除后重试"); return; }
         discardSAMPreview(); S.samPoints.push([x,y]); S.samLabels.push(ev.shiftKey ? 0 : 1);
         renderHi(); predictSAM(); return;
       }
-      if (S.tool === "sam-box") { discardSAMPreview(); S.samStart = [x,y]; S.samBox = [x,y,x,y]; return; }
+      if (S.tool === "sam-box") {
+        if (!ev.ctrlKey && !ev.metaKey) clearSAM();
+        discardSAMPreview(); S.samStart = [x,y]; S.samBox = [x,y,x,y]; return;
+      }
       if (S.tool === "fill") { fill(x, y, ev.shiftKey); return; }
       if (S.tool === "merge") { mergeInto(x, y); return; }
       if (S.tool === "smart") { previewSmart(x, y); return; }
