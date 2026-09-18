@@ -21,6 +21,7 @@
     cache: new Map(), loading: new Map(), cacheVersion: 0, hoverXY: null, hoverPane: 0, regionEntry: null, regions: [],
     playing: null, drag: null, stroke: null, mergeFirst: null, mergeBusy: false, spacePan: false, curtainDrag: false,
     samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null,
+    smart: null, smartMask: null, smartBusy: false, cutPts: null,
   };
   function mkPane(id) {
     const stage = $(id), cv = stage.querySelector(".vast-canvas"), [em, seg, hi] = cv.querySelectorAll("canvas");
@@ -134,6 +135,7 @@
     if (pin) drawRegion(pin, [255, 214, 10], 90);
     if (hover && (!pin || !pin.mask[S.hoverXY[1] * S.W + S.hoverXY[0]])) drawRegion(hover, [255, 255, 255], 60);
     drawSAM();
+    drawTools();
     if (S.view === "overlay" && S.curtain) {
       const g = P[0].gHi, cx = S.curtainX + 0.5, lw = 1 / S.zoom;
       g.lineWidth = 3 * lw; g.strokeStyle = "rgba(0,0,0,.55)"; g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, S.H); g.stroke();
@@ -252,7 +254,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) { mergeArm(null); clearSAM(); }
+    if (z !== S.z) { mergeArm(null); clearSAM(); clearSmart(); S.cutPts = null; }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     if (!keepHover) S.hoverXY = null;
@@ -273,8 +275,10 @@
   function setTool(t) {
     if (S.mergeBusy) return;
     if (!t.startsWith("sam")) clearSAM();
+    if (t !== "smart") clearSmart();
+    if (t !== "cut") S.cutPts = null;
     S.tool = t; mergeArm(null);
-    if ((t === "merge" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
+    if ((t === "merge" || t === "smart" || t === "cut" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     document.querySelectorAll(".tool").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
     for (const p of P) p.stage.classList.toggle("pan", t === "pan");
     renderHi();
@@ -367,13 +371,13 @@
     } catch (err) { flash("涂抹失败: " + err.message, true); invalidate(st.z); goZ(st.z, true); }
   }
   async function afterEdit(r, z) {
-    clearSAM();
+    clearSAM(); clearSmart(); S.cutPts = null;
     S.info.n_edits = r.n_edits; $("an-nedit").textContent = `${r.n_edits} 次改动`;
     invalidate(z); if (z === S.z) await goZ(z, true, true); editList();
   }
   async function undo() {
     if (S.mergeBusy) return;
-    clearSAM();
+    clearSAM(); clearSmart(); S.cutPts = null;
     mergeBusy(true);
     mergeArm(null);
     $("an-merge-hint").textContent = "正在撤销，请稍候…";
@@ -391,6 +395,94 @@
     try { const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/new-id`); setCur(r.id); if (S.tool === "pick") setTool("fill"); flash(`新标签 ${r.id}，已选为当前标签`); }
     catch (err) { flash("新建失败: " + err.message, true); }
   }
+
+  // ------------------------------------------------------------------ 智能填充 / 切割 / 分离 / 清除
+  // The boundary-aware fill and the cut are previewed client-side and only written when confirmed, like SAM.
+  function smartButtons() {
+    const off = S.mergeBusy || S.smartBusy || !S.smart?.n_px || !S.info?.has_seg;
+    $("an-smart-apply").disabled = off; $("an-smart-new").disabled = off;
+  }
+  function clearSmart() { S.smart = null; S.smartMask = null; smartButtons(); const el = $("an-smart-result"); if (el) el.textContent = "点细胞内部，沿膜边界圈出区域；确认后再填色。"; }
+  function drawTools() {
+    if (S.blink) return;
+    for (const p of panes()) {
+      const g = p.gHi;
+      if (S.smartMask) g.drawImage(S.smartMask, 0, 0);
+      if (S.cutPts && S.cutPts.length) {                    // the cut line, drawn as the user draws it
+        g.save(); g.lineWidth = Math.max(1, 2 / S.zoom); g.lineJoin = "round"; g.lineCap = "round";
+        g.beginPath(); g.moveTo(S.cutPts[0][0] + .5, S.cutPts[0][1] + .5);
+        for (const [x, y] of S.cutPts.slice(1)) g.lineTo(x + .5, y + .5);
+        g.strokeStyle = "rgba(0,0,0,.7)"; g.lineWidth = Math.max(2, 4 / S.zoom); g.stroke();
+        g.strokeStyle = "#ffd60a"; g.lineWidth = Math.max(1, 2 / S.zoom); g.stroke();
+        g.restore();
+      }
+    }
+  }
+  async function previewSmart(x, y) {
+    if (S.mergeBusy || S.smartBusy || !S.block) return;
+    S.smartBusy = true; smartButtons();
+    $("an-smart-result").textContent = "正在按膜边界圈选…";
+    try {
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/smart-fill/preview`, {
+        z: S.z, x, y,
+        sensitivity: +$("an-smart-sens").value / 100,
+        max_radius: +$("an-smart-radius").value || 0,
+        scope: $("an-smart-scope").value,
+      });
+      S.smartMask = await loadImg(r.mask_png); S.smart = r;
+      $("an-smart-result").textContent = r.n_px
+        ? `橙色区域 ${r.n_px} 像素（原 id ${r.seed_id}）。核对边界后填色；Enter 填为当前标签。`
+        : "没有圈到任何像素，请调整范围或灵敏度。";
+    } catch (err) { S.smart = null; S.smartMask = null; $("an-smart-result").textContent = "圈选失败：" + err.message; }
+    finally { S.smartBusy = false; smartButtons(); renderHi(); }
+  }
+  async function applySmart(makeNew) {
+    if (!S.smart?.n_px || S.mergeBusy) return;
+    const z = S.z, token = S.smart.token;
+    mergeBusy(true);
+    try {
+      const id = makeNew ? (await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/new-id`)).id : S.cur;
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/smart-fill/apply`, { token, new_id: id });
+      await afterEdit(r, z); setCur(id);
+      flash(r.edit ? `已填 ${r.edit.n_px} 像素，可 Ctrl+Z 撤销` : "该区域已经是这个颜色");
+    } catch (err) { clearSmart(); flash("填色失败：" + err.message, true); }
+    finally { mergeBusy(false); renderHi(); }
+  }
+  async function cutEnd() {
+    const pts = S.cutPts; S.cutPts = null;
+    if (!pts || pts.length < 2) { renderHi(); return; }
+    const z = S.z;
+    mergeBusy(true);
+    try {
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/cut`, { z, points: pts });
+      await afterEdit(r, z);
+      flash(`已切成 ${r.edit.pieces} 块，新颜色 ${r.edit.new_ids.join("、")}`);
+    } catch (err) { flash("切割失败：" + err.message, true); invalidate(z); await goZ(z, true, true); }
+    finally { mergeBusy(false); renderHi(); }
+  }
+  async function splitAt(x, y) {
+    if (S.mergeBusy) return;
+    const z = S.z;
+    mergeBusy(true);
+    try {
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/split`, { z, x, y });
+      await afterEdit(r, z); setCur(r.edit.new_id);
+      flash(`已分离为新颜色 ${r.edit.new_id}（本片共 ${r.edit.pieces} 块同色）`);
+    } catch (err) { flash("分离失败：" + err.message, true); }
+    finally { mergeBusy(false); }
+  }
+  async function clearAt(x, y, whole) {                     // 清除: set to background, then re-colour with any tool
+    const keep = S.cur;
+    S.cur = "0";
+    try { await fill(x, y, whole); } finally { setCur(keep); }
+  }
+  $("an-smart-apply").addEventListener("click", () => applySmart(false));
+  $("an-smart-new").addEventListener("click", () => applySmart(true));
+  $("an-smart-clear").addEventListener("click", () => { clearSmart(); renderHi(); });
+  $("an-smart-sens").addEventListener("input", ev => { $("an-smart-sens-v").textContent = ev.target.value + "%"; });
+  for (const id of ["an-smart-sens", "an-smart-radius", "an-smart-scope"]) $(id).addEventListener("change", () => {
+    if (S.smart) previewSmart(S.smart.x ?? S.smart.seed[0], S.smart.y ?? S.smart.seed[1]);
+  });
 
   // SAM previews never change labels until the user applies them.
   function samButtons() {
@@ -429,6 +521,8 @@
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/sam/predict`, {
         z: S.z, points: S.samPoints, labels: S.samLabels, box: S.samBox,
         only_background: $("an-sam-background").checked,
+        snap_boundary: $("an-sam-snap").checked,
+        boundary_sensitivity: +$("an-smart-sens").value / 100,
         candidate: $("an-sam-candidate").value === "" ? null : +$("an-sam-candidate").value,
       });
       S.samMask = await loadImg(r.mask_png); S.samPreview = r;
@@ -454,7 +548,7 @@
   $("an-sam-clear").addEventListener("click", clearSAM);
   $("an-sam-new").addEventListener("click", () => applySAM(true));
   $("an-sam-apply").addEventListener("click", () => applySAM(false));
-  for (const id of ["an-sam-background", "an-sam-candidate"]) $(id).addEventListener("change", () => {
+  for (const id of ["an-sam-background", "an-sam-candidate", "an-sam-snap"]) $(id).addEventListener("change", () => {
     discardSAMPreview(); renderHi(); if (S.samPoints.length || S.samBox) predictSAM();
   });
 
@@ -478,6 +572,10 @@
       if (S.tool === "sam-box") { discardSAMPreview(); S.samStart = [x,y]; S.samBox = [x,y,x,y]; return; }
       if (S.tool === "fill") { fill(x, y, ev.shiftKey); return; }
       if (S.tool === "merge") { mergeInto(x, y); return; }
+      if (S.tool === "smart") { previewSmart(x, y); return; }
+      if (S.tool === "split") { splitAt(x, y); return; }
+      if (S.tool === "clear") { clearAt(x, y, ev.shiftKey); return; }
+      if (S.tool === "cut") { S.cutPts = [[x, y]]; renderHi(); return; }
       if (S.tool === "brush" || S.tool === "erase") strokeStart(x, y);
     });
     let pending = false;
@@ -489,6 +587,7 @@
         S.samBox = [Math.min(sx,bx),Math.min(sy,by),Math.max(sx,bx)+1,Math.max(sy,by)+1];
         renderHi(); return;
       }
+      if (S.cutPts) { const [lx, ly] = S.cutPts[S.cutPts.length - 1]; if (lx !== x || ly !== y) { S.cutPts.push([x, y]); renderHi(); } return; }
       if (S.curtainDrag) { S.curtainX = Math.max(0, Math.min(S.W, x)); render(); return; }
       p.stage.style.cursor = nearCurtain(x) ? "col-resize" : "";
       if (S.stroke) { if (S.hoverXY) strokeMove(x, y); return; }
@@ -504,6 +603,7 @@
     if (S.samBox[2] <= S.samBox[0] || S.samBox[3] <= S.samBox[1]) { S.samBox = null; renderHi(); return; }
     predictSAM();
   });
+  window.addEventListener("mouseup", () => { if (S.cutPts) cutEnd(); });
   window.addEventListener("mouseup", () => { S.curtainDrag = false; if (S.drag) { S.drag = null; for (const q of P) q.stage.classList.remove("panning"); } if (S.stroke) strokeEnd(); });
 
   // ------------------------------------------------------------------ keyboard
@@ -517,8 +617,10 @@
     else if (k === "PageUp") { ev.preventDefault(); goZ(S.z - 10, true); }
     else if (k === "PageDown") { ev.preventDefault(); goZ(S.z + 10, true); }
     else if (k === "Home") goZ(0); else if (k === "End") goZ(S.info.shape_zyx[0] - 1);
-    else if (k === "Escape") { mergeArm(null); clearSAM(); }
+    else if (k === "Escape") { mergeArm(null); clearSAM(); clearSmart(); S.cutPts = null; renderHi(); }
     else if (k === "m") setTool("merge");
+    else if (k === "k") setTool("smart"); else if (k === "x") setTool("cut"); else if (k === "d") setTool("split");
+    else if (k === "Enter" && S.smart) applySmart(false);
     else if (k === "p") setTool("pick"); else if (k === "f") setTool("fill"); else if (k === "b") setTool("brush"); else if (k === "e") setTool("erase"); else if (k === "h") setTool("pan");
     else if (k === "[") setBrush(S.brush - 1); else if (k === "]") setBrush(S.brush + 1);
     else if (k === "o") { $("an-outline").checked = S.outline = !S.outline; render(); }
@@ -554,7 +656,7 @@
   async function editList() {
     try {
       const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/edits?limit=30`);
-      const label = e => e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
+      const label = e => e.kind === "smartfill" ? "智能填充" : e.kind === "split" ? (e.mode === "line" ? "切割" : "分离") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
       $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${e.new_id === "0" ? "transparent" : css(colorOf(e.new_id))}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${e.new_id}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">还没有改动</span></div>`;
     } catch (_) { /* panel is informational */ }
   }

@@ -70,6 +70,10 @@ POST /api/v1/annotate/blocks/{b}/merge                {from_id,to_id,scope:block
 POST /api/v1/annotate/blocks/{b}/undo
 POST /api/v1/annotate/blocks/{b}/new-id               最大 id + 1
 GET  /api/v1/annotate/blocks/{b}/edits
+POST /api/v1/annotate/blocks/{b}/smart-fill/preview  {z,x,y,sensitivity,max_radius,scope} → 掩膜 PNG + token
+POST /api/v1/annotate/blocks/{b}/smart-fill/apply    {token,new_id}
+POST /api/v1/annotate/blocks/{b}/split               {z,x,y}（把点到的连通块分出来给新 id）
+POST /api/v1/annotate/blocks/{b}/cut                 {z,points}（画线切开色块）
 ```
 
 ## 快捷键
@@ -80,7 +84,9 @@ O 只画边界 · V 并排/叠加 · C 对比滑块 · G 透明度渐变 · , . 
 ## 已知限制
 
 - 单片最多 65535 个 id（uint16 索引）；H01 一片几百到几千，够用。
-- 页面上的填充、涂抹、两块合并都是二维的，只改当前这一片。三维分裂（把一个错并的细胞拆开）还没做。
+- 页面上的填充、涂抹、合并、切割、分离、清除都是二维的，只改当前这一片。三维分裂（把错并的细胞在整个块里拆开）还没做。
+- 智能填充（`emqc/annotate/boundary.py`）靠电镜自身的膜边界圈选，不依赖已有标签，因此标签错了也不会跟着错；但膜有缺口、切片全黑或拼接处对比度骤变时会圈不准，所以做成了先预览再应用。
+- 切割要求线从色块外画到色块外；没穿透会报错而不是切出错误结果。切出的最大一块保留原 id。
 - 没有多人并发控制；同一个块同时开两个页面改，后写的覆盖先写的。
 
 ## 回归验证

@@ -269,8 +269,8 @@ class Block:
         self._max_id = None if self._max_id is None else max(self._max_id, int(new_id))
         return rec
 
-    def apply_mask(self, z: int, mask: np.ndarray, new_id: int, metadata: dict) -> dict | None:
-        """Apply a SAM preview in display (y, x) coordinates; preserve exact undo."""
+    def apply_mask(self, z: int, mask: np.ndarray, new_id: int, metadata: dict, kind: str = "sam") -> dict | None:
+        """Apply a previewed mask (SAM or boundary-aware fill) in display (y, x) coordinates; preserve exact undo."""
         self._check_z(z)
         if mask.shape != self.shape_zyx[1:] or mask.dtype != np.bool_:
             raise ValueError("mask shape or dtype does not match the slice")
@@ -286,11 +286,98 @@ class Block:
                 return None
             seg = self._seg_writable()
             old = seg[xs, ys, z].copy()
-            rec = self._record("sam", z, xs, ys, old, new_id, metadata)
+            rec = self._record(kind, z, xs, ys, old, new_id, metadata)
             seg[xs, ys, z] = new_id
             seg.flush()
             self._invalidate(z)
             return rec
+
+    def _fresh_ids(self, n: int) -> list[int]:
+        """n unused ids (max + 1 ..), reserved immediately. Called with the edit lock held."""
+        base = self.max_id()
+        ids = [base + k for k in range(1, n + 1)]
+        self._max_id = ids[-1]
+        return ids
+
+    def split_component(self, z: int, x: int, y: int) -> dict:
+        """分离: the clicked 4-connected piece of its label gets a fresh id. Only meaningful when the label has other,
+        disconnected pieces in this slice (two cells wrongly sharing one id that do not touch here)."""
+        self._check_z(z)
+        with self.lock:
+            plane = self._seg()[:, :, z]
+            old = int(plane[y, x])
+            if old == 0:
+                raise ValueError("背景不能分离，请点一个色块")
+            comps, n = ndimage.label(plane == old)
+            if n < 2:
+                raise ValueError("该颜色在本片只有一块；相连的色块请用切割线画开")
+            mask = comps == comps[y, x]
+            xs, ys = np.nonzero(mask)
+            (new_id,) = self._fresh_ids(1)
+            seg = self._seg_writable()
+            seg[xs, ys, z] = new_id
+            seg.flush()
+            self._invalidate(z)
+            return self._record("split", z, xs, ys, old, new_id, {"mode": "component", "x": int(x), "y": int(y), "pieces": int(n)})
+
+    @staticmethod
+    def _rasterize(points: list[tuple[int, int]], shape: tuple[int, int]) -> np.ndarray:
+        """8-connected 1-px path through the points (x = column, y = row), which is a wall for 4-connected labelling."""
+        path = np.zeros(shape, dtype=bool)
+        H, W = shape
+        pts = [points[0]]
+        for (x0, y0), (x1, y1) in zip(points, points[1:]):
+            n = int(max(abs(x1 - x0), abs(y1 - y0)))
+            pts.extend((int(round(x0 + (x1 - x0) * t / n)), int(round(y0 + (y1 - y0) * t / n))) for t in range(1, n + 1))
+        for x, y in pts:
+            if 0 <= x < W and 0 <= y < H:
+                path[y, x] = True
+        return path
+
+    def cut(self, z: int, points: list[tuple[int, int]]) -> dict:
+        """切割: draw a line through a label; the label's component(s) crossed by the line fall apart into pieces.
+        The largest piece keeps the id, every other piece gets a fresh id, and the pixels under the line itself go
+        to the nearest piece so no gap is left. The label to cut is the one the line runs over the most."""
+        self._check_z(z)
+        if len(points) < 2:
+            raise ValueError("切割线至少需要两个点")
+        with self.lock:
+            plane = self._seg()[:, :, z]
+            path = self._rasterize(points, plane.shape)
+            ids, counts = np.unique(plane[path], return_counts=True)
+            keep = ids != 0
+            if not keep.any():
+                raise ValueError("切割线没有经过任何色块")
+            cut_id = int(ids[keep][np.argmax(counts[keep])])
+            comps, _ = ndimage.label(plane == cut_id)
+            touched = np.unique(comps[path & (plane == cut_id)])
+            xs_all, ys_all, vals_all, new_ids = [], [], [], []
+            for c in touched[touched > 0]:
+                comp = comps == c
+                pieces, n = ndimage.label(comp & ~path)
+                if n < 2:
+                    continue
+                sizes = np.bincount(pieces.ravel())
+                sizes[0] = 0
+                largest = int(sizes.argmax())
+                _, (iy, ix) = ndimage.distance_transform_edt(pieces == 0, return_indices=True)
+                assigned = pieces.copy()
+                bar = comp & path
+                assigned[bar] = pieces[iy[bar], ix[bar]]  # line pixels join the nearest piece
+                fresh = self._fresh_ids(n - 1)
+                for k in [k for k in range(1, n + 1) if k != largest]:
+                    nid = fresh.pop(0)
+                    xs, ys = np.nonzero(assigned == k)
+                    xs_all.append(xs); ys_all.append(ys); vals_all.append(np.full(xs.shape, nid, dtype=np.uint64)); new_ids.append(nid)
+            if not new_ids:
+                raise ValueError("切割线没有把色块分开，请从色块外画到色块外、穿过整个色块")
+            xs, ys, vals = np.concatenate(xs_all), np.concatenate(ys_all), np.concatenate(vals_all)
+            seg = self._seg_writable()
+            seg[xs, ys, z] = vals.astype(seg.dtype)
+            seg.flush()
+            self._invalidate(z)
+            return self._record("split", z, xs, ys, cut_id, new_ids[0],
+                                {"mode": "line", "cut_id": str(cut_id), "pieces": len(new_ids) + 1, "new_ids": [str(i) for i in new_ids], "n_points": len(points)})
 
     def fill(self, z: int, x: int, y: int, new_id: int, whole_slice: bool = False) -> dict | None:
         """Bucket fill: relabel the connected component of the clicked pixel (4-connectivity within the slice) to

@@ -23,8 +23,12 @@
   <h3 style="margin-top:0">改标签</h3>
   <dl class="kv">
     <dt>拾取 <kbd>P</kbd></dt><dd>点一下，光标下的分段 id 成为「当前标签」。任何工具下 <kbd>Alt</kbd>+点击也是拾取。</dd>
-    <dt>填充 <kbd>F</kbd></dt><dd>点到的连通区域改成当前标签；<kbd>Shift</kbd>+点击改整片里所有同 id 的像素。</dd>
+    <dt>填充 <kbd>F</kbd></dt><dd>点到的连通区域改成当前标签；<kbd>Shift</kbd>+点击改整片里所有同 id 的像素。按已有标签走，标签缺失或穿帮时会漫出去。</dd>
+    <dt>智能填充 <kbd>K</kbd></dt><dd>不看标签，看电镜本身：从点的位置沿细胞膜圈出区域，橙色预览，核对边界后再<b>填为新标签</b>或<b>填为当前标签</b>（<kbd>Enter</kbd>）。左栏三个参数：<b>边界灵敏度</b>越高越早停在膜上；<b>可改范围</b>限定哪些标签允许被改写（默认只改点到的那个颜色，最安全）；<b>最大半径</b>给一个兜底范围，防止膜有缺口时漫出去。膜有缺口、切片全黑或对比度极差时它会不准，所以永远是先预览再落笔。</dd>
     <dt>合并 <kbd>M</kbd></dt><dd>两次点击：先点 A，再点 B，B 点到的那块变成 A 的颜色（id）。每一对独立，做完再点 C、D；只改当前切片点到的色块，不跨片。</dd>
+    <dt>切割 <kbd>X</kbd></dt><dd>两个细胞被错并成一个颜色、而且在图上连在一起时用它。按住左键画一条线穿过色块，松手即切；线要<b>从色块外画到色块外</b>，没穿透就切不开。切出的几块里最大的一块保留原 id，其余各得一个新 id，线本身的像素归给最近的一块，不留缝。一次撤销恢复全部。</dd>
+    <dt>分离 <kbd>D</kbd></dt><dd>同一个颜色在这一片有几块互不相连时，点其中一块，把它单独分出来给新 id。图上本来就断开的用这个，连在一起的用切割。</dd>
+    <dt>清除</dt><dd>把点到的色块清成背景 0，之后可以用任何工具重新上色；<kbd>Shift</kbd>+点击清掉整片同色。清除不改变你的当前标签，所以"清掉再用同一个颜色重画"是两步连贯操作。</dd>
     <dt>画笔 <kbd>B</kbd> / 橡皮 <kbd>E</kbd></dt><dd>按半径涂当前标签 / 涂成背景 0；<kbd>[</kbd> <kbd>]</kbd> 改半径。</dd>
     <dt>新建 ID <kbd>N</kbd></dt><dd>取块内最大 id + 1 作为当前标签，用来给漏标的细胞起新号。</dd>
     <dt>撤销 <kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>按次精确回退，每次改动都记录了每个像素的旧 id。</dd>
@@ -40,7 +44,8 @@
     <dt>工作目录</dt><dd><span class="mono">{{ workdir }}/&lt;block&gt;/</span>：第一次改动时把 <span class="mono">seg.npy</span> 复制成 <span class="mono">seg_edit.npy</span>（写时复制），之后每次改动写一个 <span class="mono">edits/&lt;n&gt;.npz</span>，<span class="mono">edits.jsonl</span> 是摘要。修好的标签就是 <span class="mono">seg_edit.npy</span>，形状与 dtype 同原始。</dd>
     <dt>显示方向</dt><dd>与交付目录 <span class="mono">visual/slices_em/</span> 的 PNG 一致（行 = 数组第 0 轴），有这套 PNG 时直接用它做 EM 底图。<span class="mono">visual/slices_seg_color/</span> 是掺了 EM 灰度的彩色图，不能当标签，标签只来自 <span class="mono">seg.npy</span>。</dd>
     <dt>颜色</dt><dd>页面上的颜色由 id 哈希生成，同一个 id 在任何片、任何块都是同一个颜色；合并后 B 变成 A 的颜色就是因为它拿到了 A 的 id。</dd>
-    <dt>SAM 预标注</dt><dd>没有分割的块可以先用 <span class="mono">scripts/sam_label.py</span> 在 GPU 上跑 Segment Anything，输出到 <span class="mono">{{ sam_dir }}/&lt;block&gt;_sam/</span>，自动出现在「数据块」列表，再来这里修。</dd>
+    <dt>SAM 预标注</dt><dd>没有分割的块可以先用 <span class="mono">scripts/sam_label.py</span> 在 GPU 上跑 Segment Anything，输出到 <span class="mono">{{ sam_dir }}/&lt;block&gt;_sam/</span>，自动出现在「数据块」列表，再来这里修。<b>已有可信标签的块不要这样做</b>：机器的划分会替掉人工结果，而且 id 是另一套编号，改完并不回去。页面左栏的 SAM 辅助不同，它只作用于当前这一片、默认只补未标注区域，任何块都能安全使用。</dd>
+    <dt>预览与落笔</dt><dd>智能填充和 SAM 辅助都是两步：先算出一个候选区域给你看（橙色 / 青色），确认后才写盘。预览只存在服务端内存里，15 分钟过期；这期间如果标签被别的操作改了，应用会被拒绝并要求重新点选，不会覆盖更新的结果。</dd>
   </dl>
 </div>
 

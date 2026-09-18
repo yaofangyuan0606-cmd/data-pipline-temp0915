@@ -14,5 +14,9 @@ var/
 # 数据目录：数据集本体不进仓库
 data_root/
 
+# 模型推理产物：SAM 掩膜等，属于数据不属于代码
+raw_masks/
+sam_uncolored_*/
+
 .DS_Store
 .idea/

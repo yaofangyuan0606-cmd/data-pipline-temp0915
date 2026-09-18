@@ -21,10 +21,25 @@
       <button class="tool" data-tool="brush" title="画笔 (B)：按半径涂当前标签"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔</button>
       <button class="tool" data-tool="erase" title="橡皮 (E)：按半径涂成背景 0"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮</button>
       <button class="tool" data-tool="merge" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并</button>
+      <button class="tool" data-tool="smart" title="智能填充 (K)：按电镜的膜边界圈出细胞，先预览再填色，不会漫过细胞膜"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0116 0"/><path d="M6 12c0 5 3 8 6 8s6-3 6-8"/><circle cx="12" cy="12" r="1.6"/></svg>智能填充</button>
+      <button class="tool" data-tool="cut" title="切割 (X)：按住左键画一条线穿过色块，把它切成两块，较大的一块保留原色"><svg viewBox="0 0 24 24"><path d="M5 4l9 12"/><path d="M19 4l-9 12"/><circle cx="7" cy="19" r="2.4"/><circle cx="17" cy="19" r="2.4"/></svg>切割</button>
+      <button class="tool" data-tool="split" title="分离 (D)：点一块，把它从同色但不相连的其他块中分出来，给新颜色"><svg viewBox="0 0 24 24"><path d="M12 3v6M12 15v6"/><path d="M8 7l4-4 4 4"/><path d="M8 17l4 4 4-4"/></svg>分离</button>
+      <button class="tool" data-tool="clear" title="清除 (C 长按无效，用按钮/点选)：把点到的色块清成背景，之后可重新上色；Shift+点击清整片同色"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M14 20h6"/></svg>清除</button>
       <button class="tool" data-tool="pan" title="平移 (H · 或右键拖动)"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>平移</button>
     </div>
     <div class="vast-mergehint muted" id="an-merge-hint" hidden></div>
     <div class="field" style="margin-top:8px"><label>画笔半径 <span class="mono" id="an-brush-v">4</span> px <span class="muted">[ ]</span></label><input id="an-brush" type="range" min="0" max="60" value="4"></div>
+
+    <div class="vast-sec">智能填充 <span class="muted">按膜边界</span></div>
+    <div class="field" style="margin-top:0"><label>边界灵敏度 <span class="mono" id="an-smart-sens-v">50%</span> <span class="muted">高 = 更早停在膜上</span></label><input id="an-smart-sens" type="range" min="0" max="100" value="50"></div>
+    <div class="field"><label>可改范围</label><select id="an-smart-scope" class="text">
+      <option value="same">仅点到的颜色</option>
+      <option value="same_bg">点到的颜色 + 未标注</option>
+      <option value="any">不限颜色</option>
+    </select></div>
+    <div class="field"><label>最大半径 px <span class="muted">0 = 不限</span></label><input id="an-smart-radius" type="number" class="text mono" value="0" min="0" max="8192"></div>
+    <div class="actions"><button id="an-smart-new" class="primary" disabled>填为新标签</button><button id="an-smart-apply" disabled>填为当前标签</button><button id="an-smart-clear">清除预览</button></div>
+    <div class="muted" id="an-smart-result" role="status" style="font-size:12px;margin-top:6px">点细胞内部，沿膜边界圈出区域；确认后再填色。</div>
 
     <div class="vast-sec">SAM 辅助分割</div>
     <div class="muted" id="an-sam-status" style="font-size:12px">检查模型…</div>
@@ -34,6 +49,7 @@
     </div>
     <p class="muted" style="font-size:12px">膜内点击加点，Shift+点击排除；可补多个点。青色为待填区域，核对边界后应用。</p>
     <label class="vast-layer"><input id="an-sam-background" type="checkbox" checked> 仅补未标注区域（标签 0）</label>
+    <label class="vast-layer"><input id="an-sam-snap" type="checkbox" checked> 贴合膜边界 <span class="muted">裁掉越过细胞膜的部分</span></label>
     <div class="field"><label>分割候选</label><select id="an-sam-candidate" class="text"><option value="">自动选择</option><option value="0">候选 1</option><option value="1">候选 2</option><option value="2">候选 3</option></select></div>
     <div class="actions"><button id="an-sam-predict">预览分割</button><button id="an-sam-clear">清除提示</button></div>
     <div class="actions" style="margin-top:6px"><button id="an-sam-new" class="primary" disabled>填为新标签</button><button id="an-sam-apply" disabled>填为当前标签</button></div>
@@ -110,6 +126,10 @@
     <section><h3>改标签</h3>
       <div class="kbd-row"><kbd>P</kbd> 拾取（任何工具下 <kbd>Alt</kbd>+点击）</div>
       <div class="kbd-row"><kbd>F</kbd> 填充连通区域 · <kbd>Shift</kbd>+点击改整片同 id</div>
+      <div class="kbd-row"><kbd>K</kbd> 智能填充：按电镜的膜边界圈出细胞，橙色预览，<kbd>Enter</kbd> 填为当前标签</div>
+      <div class="kbd-row"><kbd>X</kbd> 切割：画一条线穿过色块把它切开，较大的一块保留原色</div>
+      <div class="kbd-row"><kbd>D</kbd> 分离：把点到的块从同色不相连的块中分出来</div>
+      <div class="kbd-row">清除：把点到的色块清成背景，再重新上色；<kbd>Shift</kbd>+点击清整片同色</div>
       <div class="kbd-row"><kbd>M</kbd> 合并：先点 A 再点 B，B 变成 A 的颜色；每一对独立，只改当前片点到的色块</div>
       <div class="kbd-row"><kbd>B</kbd> 画笔 · <kbd>E</kbd> 橡皮 · <kbd>[</kbd> <kbd>]</kbd> 半径</div>
       <div class="kbd-row"><kbd>N</kbd> 新建 ID · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</div>
@@ -137,5 +157,5 @@
     });
   })();
 </script>
-<script src="/static/annotate.js?v=sam21-1" defer></script>
+<script src="/static/annotate.js?v=tools-1" defer></script>
 {% endblock %}

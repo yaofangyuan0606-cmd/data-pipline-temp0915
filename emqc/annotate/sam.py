@@ -62,7 +62,7 @@ class SAMService:
             self.error = str(exc)
             raise SAMUnavailable(f"SAM 加载失败: {exc}") from exc
 
-    def predict(self, block, z, points, labels, box, only_background=True, candidate=None):
+    def predict(self, block, z, points, labels, box, only_background=True, candidate=None, snap_boundary=False, boundary_sensitivity=0.5):
         # Same lock order in predict and apply. Each proposal is tied to a source and revision.
         with block.lock, self.lock:
             self._load()
@@ -93,6 +93,15 @@ class SAMService:
                 raise SAMUnavailable(f"SAM 推理失败: {exc}") from exc
             best = int(np.argmax(scores)) if candidate is None else candidate
             mask = np.asarray(masks[best], dtype=bool)
+            snapped = False
+            if snap_boundary:
+                # 贴合膜边界: cut off the part of the mask that leaked through a membrane, extend the rest to the membrane
+                from emqc.annotate.boundary import refine_mask
+                try:
+                    mask = refine_mask(mask, frame, points, labels, boundary_sensitivity)
+                    snapped = True
+                except Exception as exc:  # never lose the raw SAM result over a post-processing problem
+                    self.error = f"boundary snap skipped: {exc}"
             if only_background and block.has_seg:
                 mask = mask & (block.seg_slice(z) == 0)
             token = uuid.uuid4().hex
@@ -101,7 +110,8 @@ class SAMService:
             self.proposals[token] = {"path": str(block.path.resolve()), "work": str(block.work.resolve()), "z": z, "mask": mask,
                                      "revision": revision(block), "created": now,
                                      "score": float(scores[best]), "points": points, "labels": labels, "box": box,
-                                     "only_background": only_background, "candidate": best}
+                                     "only_background": only_background, "candidate": best,
+                                     "snap_boundary": snapped, "boundary_sensitivity": float(boundary_sensitivity)}
             while len(self.proposals) > 32:
                 self.proposals.popitem(last=False)
             overlay = np.zeros((*mask.shape, 4), dtype=np.uint8)
@@ -110,7 +120,7 @@ class SAMService:
             Image.fromarray(overlay).save(buf, format="PNG")
             self.error = None
             return {"token": token, "z": z, "score": float(scores[best]), "n_px": int(mask.sum()),
-                    "candidate": best, "scores": [float(s) for s in scores],
+                    "candidate": best, "scores": [float(s) for s in scores], "snap_boundary": snapped,
                     "seconds": round(time.perf_counter() - started, 3),
                     "mask_png": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}
 
@@ -128,7 +138,8 @@ class SAMService:
             rec = block.apply_mask(p["z"], p["mask"], new_id,
                                    {"model": "SAM 2.1", "config": settings.sam_config, "score": p["score"],
                                     "points": p["points"], "labels": p["labels"], "box": p["box"],
-                                    "only_background": p["only_background"], "candidate": p["candidate"]})
+                                    "only_background": p["only_background"], "candidate": p["candidate"],
+                                    "snap_boundary": p.get("snap_boundary", False)})
             self.proposals.pop(token)
             return rec
 
