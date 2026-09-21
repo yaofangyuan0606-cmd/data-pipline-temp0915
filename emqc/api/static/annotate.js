@@ -13,7 +13,7 @@
   const API = "/api/v1/annotate";
   const $ = id => document.getElementById(id);
   const S = {
-    block: null, info: null, W: 0, H: 0, z: 0,
+    block: null, info: null, W: 0, H: 0, z: Math.max(0, parseInt(new URLSearchParams(location.search).get("z"), 10) || 0),
     tool: "pick", brush: 4, cur: "0",
     view: "overlay", rightSegOnly: false, curtain: false, curtainX: 0, blink: false, fade: false, fadeMax: 0.45, fadeRaf: 0,
     opacity: 0.45, outline: false, showEm: true, showSeg: true, hover: true,
@@ -261,6 +261,7 @@
     if (z !== S.z) { mergeArm(null); clearSAM(); clearSmart(); clearRepair(); S.cutPts = null; }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
+    $("an-compare").href = `/annotate/compare?block=${encodeURIComponent(S.block)}&z=${z}`;
     if (!keepHover) S.hoverXY = null;
     let entry;
     try { entry = await fetchZ(z); } catch (e) { $("an-status").textContent = "加载失败: " + e.message; return; }

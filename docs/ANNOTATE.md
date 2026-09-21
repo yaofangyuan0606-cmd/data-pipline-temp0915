@@ -2,7 +2,7 @@
 
 需要用 SAM 圈选并补充标签时，请看 [SAM 切片补标使用指南](SAM_USER_GUIDE.md)。
 
-页面：独立的「切片标注」工作区（侧栏顶部与「数据清洗」切换），三页——`/annotate` 标注工作台（全宽，按 `?` 看快捷键）、`/annotate/blocks` 数据块列表（形状、分割、改动数、数据目录与工作目录）、`/annotate/guide` 使用说明。数据源由 `EMQC_ANNOTATE_ROOT` 指定（可用 `EMQC_ANNOTATE_EXTRA_ROOTS` 以分号追加更多根目录），
+页面：独立的「切片标注」工作区（侧栏顶部与「数据清洗」切换）——`/annotate` 标注工作台（全宽，按 `?` 看快捷键）、`/annotate/compare` 前后对比与溯源、`/annotate/blocks` 数据块列表（形状、分割、改动数、数据目录与工作目录）、`/annotate/guide` 使用说明。数据源由 `EMQC_ANNOTATE_ROOT` 指定（可用 `EMQC_ANNOTATE_EXTRA_ROOTS` 以分号追加更多根目录），
 该目录下每个含 `em.npy` 的子目录是一个数据块，H01 交付的 `blocks/h01/<block>/` 布局直接可用。
 
 **数据目录是只读的。** 页面写出的一切——`seg_edit.npy` 工作副本、`edits/` 逐次记录、`edits.jsonl` 摘要——都放在
@@ -16,7 +16,7 @@
 
 这条改的只是**看**的方向：`em.npy` / `seg.npy` 一个字节都没动，`edits/*.npz` 里记的始终是磁盘下标，
 用改之前的记录回放也照样还原。代价是 `visual/slices_em/*.png` 与屏幕差一个转置，不能再原样下发，
-EM 层一律由 `em.npy` 现渲染。
+EM 层一律由 `em.npy` 现渲染。对比页的 EM、原始标签、工作副本及来源图也使用同一显示方向。
 
 `visual/slices_seg_color/*.png` 不能当标签用：它是 EM 与哈希颜色的叠加图，同一个 id 的像素在图里有几千种颜色，
 和 EM 灰度的相关系数 0.79，id 无法从颜色反推。标签只来自 `seg.npy`；页面上的着色由 id 哈希生成，与那套 PNG 不同。
@@ -59,14 +59,50 @@ Alt+点击可重选第一块；Esc、切换工具、切片或数据块会取消�
 交付给下游时直接用工作目录里的 `seg_edit.npy`，它和 `seg.npy` 同形同类型；想回到原始状态删掉工作目录里的
 `seg_edit.npy`、`edits/`、`edits.jsonl` 三样即可，数据目录本来就没被碰过。
 
+## 前后对比与溯源
+
+从工作台右上角「前后对比」进入 `/annotate/compare?block=<block_id>&z=<切片号>`，保留当前数据块与切片。
+左图叠加原始 `seg.npy`，右图叠加当前 `seg_edit.npy`（尚未编辑时与原始相同）。两边共享标签配色、透明度、
+缩放、滚动位置和光标，支持修改区域高亮；右图还可按来源着色。页面只读取数据；点击「刷新当前结果」获取其他页面的新修改。
+
+报表按**当前像素的最后一次有效写入**汇总，再按标签 ID 统计。同一 ID 可以同时包含多种来源：
+
+| 来源键 | 含义 |
+| --- | --- |
+| `baseline` | 原始分割中未被有效编辑覆盖的部分，不推断为人工真值 |
+| `manual` | 画笔、橡皮、填充、清除、合并、切割、分离 |
+| `sam` | SAM 应用；基线 `meta.json` 含非空 `sam` 配置的非背景区域；或 `sam_merge.first_new_id/n_new_ids` 明确记录的预填 ID 范围 |
+| `interpolation` | 插值修补，操作记录保留 `source_sections` 参考层号 |
+| `assisted` | 基于膜边界的智能填充，与纯人工、SAM 分开 |
+| `unknown` | 工作副本中无对应记录的修改、未知工具、缺失/损坏记录或当前像素与记录不符 |
+
+人工点击「应用」SAM 或插值预览仍归相应算法来源；之后人工改写的像素归人工。来源不表示人工审核状态。
+撤销后按剩余有效记录重新计算；这里不是包含已撤销操作的永久审计日志。旧记录没有 `source` 字段时按 `kind`
+识别，新记录同时写 `source` 和 `provenance_version: 1`。新切割记录保存逐像素新标签，旧版多块切割若只记了一个新 ID，
+无法精确核实时显示来源不明。基线和历史编辑文件均无需迁移；对比专用的数据块列表和读取入口会在原位置读取旧工作文件，
+不会触发标注工作台的历史迁移逻辑。工作台与对比读取在同一进程内共享数据块锁。
+
+报表包含来源像素数、各标签前后像素数、混合来源标记，以及有效操作和缺失证据提示。`changed_px` 是与原始分割
+不同的像素数；逐标签行中的该字段只计**当前归属该 ID**的变化，旧 ID 的减少体现在 `before_px/current_px`。
+标签 0 表示背景，人工擦除也可追溯；顶部来源卡片只计非背景标签，JSON 另列 `background_pixels`。
+JSON 中所有标签 ID 均为字符串，CSV 保留完整十进制值；用电子表格打开 CSV 时应将 `label_id` 列按文本导入。
+
+页面可下载当前切片或整个块的 JSON / CSV。当前切片导出与屏幕快照一致；整块导出在请求时重新读取，
+逐切片处理以避免加载整块 uint64 数组。`compare` 返回的图片与报表在同一数据块锁下读取，并禁用 HTTP 缓存。
+该锁仅在当前服务进程内有效，沿用现有单进程标注工作流；不提供跨进程的并发编辑保护。
+
 ## 接口
 
 ```
 GET  /api/v1/annotate/blocks                          列出数据块
+GET  /api/v1/annotate/comparison-blocks               只读列出对比数据块，不迁移旧工作文件
 GET  /api/v1/annotate/blocks/{b}                      形状、体素尺寸、改动数
 GET  /api/v1/annotate/blocks/{b}/em/{z}.png           EM 切片
 GET  /api/v1/annotate/blocks/{b}/labels/{z}.png       标签索引图
 GET  /api/v1/annotate/blocks/{b}/labels/{z}.json      索引→id 表与像素数
+GET  /api/v1/annotate/blocks/{b}/compare/{z}          同一快照的原始/当前索引图、EM、差异图、来源图与报表
+GET  /api/v1/annotate/blocks/{b}/provenance?z=0       当前切片的 JSON 溯源报表（不传 z 则汇总整个块）
+GET  /api/v1/annotate/blocks/{b}/provenance?format=csv 逐标签 CSV 报表（可加 z 限定切片）
 GET  /api/v1/annotate/blocks/{b}/pick?z=&x=&y=        光标处 id
 POST /api/v1/annotate/blocks/{b}/fill                 {z,x,y,new_id,whole_slice}
 POST /api/v1/annotate/blocks/{b}/paint                {z,points,radius,new_id}

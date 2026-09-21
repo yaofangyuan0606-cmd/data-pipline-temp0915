@@ -12,6 +12,7 @@ from emqc.config import settings
 
 router = APIRouter(prefix="/api/v1/annotate", tags=["annotation"])
 _store: AnnotateStore | None = None
+_comparison_store: AnnotateStore | None = None
 
 
 def _roots() -> list:
@@ -21,23 +22,29 @@ def _roots() -> list:
     return extra
 
 
-def get_store() -> AnnotateStore:
-    global _store
+def get_store(*, read_only: bool = False) -> AnnotateStore:
+    global _store, _comparison_store
+    store = _comparison_store if read_only else _store
     root = settings.annotate_root.resolve() if settings.annotate_root else None
-    if (_store is None or _store.roots != [r for r in [root, *_roots()] if r]
-            or _store.workdir != settings.annotate_workdir):
-        _store = AnnotateStore(root, settings.annotate_workdir, _roots())
-    return _store
+    if (store is None or store.roots != [r for r in [root, *_roots()] if r]
+            or store.workdir != settings.annotate_workdir):
+        store = AnnotateStore(root, settings.annotate_workdir, _roots(), read_only=read_only)
+        if read_only:
+            _comparison_store = store
+        else:
+            _store = store
+    return store
 
 
 def reset_store() -> None:
-    global _store
+    global _store, _comparison_store
     _store = None
+    _comparison_store = None
 
 
-def _block(block_id: str):
+def _block(block_id: str, *, read_only: bool = False):
     try:
-        return get_store().get(block_id)
+        return (get_store(read_only=True) if read_only else get_store()).get(block_id)
     except KeyError:
         raise HTTPException(404, f"unknown block {block_id}")
     except ValueError as e:
@@ -54,6 +61,12 @@ def _int_id(v: str | int) -> int:
 @router.get("/blocks")
 def list_blocks():
     st = get_store()
+    return {"root": str(st.root) if st.root else None, "blocks": st.refresh()}
+
+
+@router.get("/comparison-blocks")
+def comparison_blocks():
+    st = get_store(read_only=True)
     return {"root": str(st.root) if st.root else None, "blocks": st.refresh()}
 
 
@@ -202,6 +215,37 @@ def cut(block_id: str, body: CutIn):
 @router.get("/blocks/{block_id}")
 def block_info(block_id: str):
     return _block(block_id).info()
+
+
+@router.get("/blocks/{block_id}/compare/{z}")
+def compare_slice(block_id: str, z: int):
+    from fastapi.responses import JSONResponse
+    from emqc.annotate.provenance import comparison
+
+    try:
+        return JSONResponse(comparison(_block(block_id, read_only=True), z), headers={"Cache-Control": "no-store"})
+    except IndexError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.get("/blocks/{block_id}/provenance")
+def provenance_report(block_id: str, z: int | None = None, format: Literal["json", "csv"] = "json"):
+    from fastapi.responses import JSONResponse
+    from emqc.annotate.provenance import csv_report, report
+
+    try:
+        data = report(_block(block_id, read_only=True), z)
+    except IndexError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    headers = {"Cache-Control": "no-store"}
+    if format == "csv":
+        headers["Content-Disposition"] = 'attachment; filename="annotation-provenance.csv"'
+        return Response(csv_report(data), media_type="text/csv; charset=utf-8", headers=headers)
+    return JSONResponse(data, headers=headers)
 
 
 @router.get("/blocks/{block_id}/em/{z}.png")

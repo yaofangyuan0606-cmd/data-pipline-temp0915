@@ -39,6 +39,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 import numpy as np
 from PIL import Image
@@ -48,6 +49,8 @@ SEG_EDIT = "seg_edit.npy"
 EDIT_DIR = "edits"
 EDIT_LOG = "edits.jsonl"
 MAX_LABELS_PER_SLICE = 65535
+_BLOCK_LOCKS = WeakValueDictionary()
+_BLOCK_LOCKS_GUARD = threading.Lock()
 
 
 def find_blocks(root: Path | None, max_depth: int = 4) -> list[Path]:
@@ -66,10 +69,15 @@ def _png(img: Image.Image) -> bytes:
 
 
 class Block:
-    def __init__(self, path: Path, workdir: Path | None = None):
+    def __init__(self, path: Path, workdir: Path | None = None, *, read_only: bool = False):
         self.path = Path(path)
         self.id = self.path.name
         self.work = Path(workdir) / self.id if workdir else self.path  # None only for legacy callers/tests
+        self.read_only = read_only
+        # Comparison and editing stores share a lock, even when they use separate read-only handles.
+        key = (self.path.resolve(), self.work.resolve())
+        with _BLOCK_LOCKS_GUARD:
+            self.lock = _BLOCK_LOCKS.setdefault(key, threading.RLock())
         self.em = np.load(self.path / "em.npy", mmap_mode="r")  # (rows, cols, z)
         if self.em.ndim != 3:
             raise ValueError(f"{self.path}/em.npy must be 3-D, got {self.em.shape}")
@@ -78,8 +86,9 @@ class Block:
         self._seg_rw = None
         self.meta = json.load(open(self.path / "meta.json")) if (self.path / "meta.json").exists() else {}
         self.visual_em = self._find_visual_em()
-        self._migrate_legacy()
-        self.lock = threading.RLock()
+        if not read_only:
+            with self.lock:
+                self._migrate_legacy()
         self._max_id: int | None = None
         self._png_cache: OrderedDict[tuple, bytes] = OrderedDict()
         self._label_cache: OrderedDict[int, tuple[np.ndarray, np.ndarray]] = OrderedDict()
@@ -134,14 +143,23 @@ class Block:
         }
 
     # ------------------------------------------------------------------ label volume access
+    def work_path(self, name: str | Path) -> Path:
+        """Comparison can read legacy work in place; it must never migrate or copy it."""
+        target = self.work / name
+        if self.read_only and not target.exists() and (self.path / name).exists():
+            return self.path / name
+        return target
+
     def _seg(self) -> np.ndarray:
         """Read view: the working copy when it exists, else the pristine seg.npy."""
-        if self._seg_rw is None and (self.work / SEG_EDIT).exists():
-            self._seg_rw = np.load(self.work / SEG_EDIT, mmap_mode="r+")
+        if self._seg_rw is None and self.work_path(SEG_EDIT).exists():
+            self._seg_rw = np.load(self.work_path(SEG_EDIT), mmap_mode="r" if self.read_only else "r+")
         return self._seg_rw if self._seg_rw is not None else self._seg_ro
 
     def _seg_writable(self) -> np.ndarray:
         """Copy-on-write: materialise seg_edit.npy from seg.npy on first edit; seg.npy is never modified."""
+        if self.read_only:
+            raise ValueError("当前数据块以只读方式打开")
         if not self.has_seg:
             raise ValueError("block has no seg.npy")
         p = self.work / SEG_EDIT
@@ -265,18 +283,28 @@ class Block:
 
     # ------------------------------------------------------------------ edits
     def _edit_dir(self) -> Path:
+        if self.read_only:
+            raise ValueError("当前数据块以只读方式打开")
         d = self.work / EDIT_DIR
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     def edits(self) -> list[dict]:
-        p = self.work / EDIT_LOG
+        p = self.work_path(EDIT_LOG)
         if not p.exists():
             return []
-        return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+        records = [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+        previous = 0
+        for rec in records:
+            if (not isinstance(rec, dict) or type(rec.get("n")) is not int or rec["n"] <= previous
+                    or ("kind" in rec and not isinstance(rec["kind"], str))
+                    or (rec.get("z") is not None and (type(rec["z"]) is not int or not 0 <= rec["z"] < self.nz))):
+                raise ValueError("编辑日志格式损坏，无法可靠读取操作顺序或切片坐标")
+            previous = rec["n"]
+        return records
 
     def _record(self, kind: str, z: int | None, xs: np.ndarray, ys: np.ndarray, old, new_id: int, extra: dict | None = None,
-                zs: np.ndarray | None = None) -> dict:
+                zs: np.ndarray | None = None, new_values: np.ndarray | None = None) -> dict:
         """Persist one edit: every changed voxel (x, y, z) and the id it had before. `z` is the section shown in the
         UI (None for a 3-D edit spanning several sections); `zs` defaults to a constant z."""
         log = self.edits()
@@ -284,12 +312,15 @@ class Block:
         if zs is None:
             zs = np.full(xs.shape, int(z), dtype=np.uint16)
         np.savez_compressed(self._edit_dir() / f"{n:06d}.npz", z=-1 if z is None else int(z), xs=xs.astype(np.uint16), ys=ys.astype(np.uint16),
-                            zs=zs.astype(np.uint16), old=np.asarray(old), new=np.asarray(new_id))
+                            zs=zs.astype(np.uint16), old=np.asarray(old), new=np.asarray(new_id if new_values is None else new_values))
         many = np.ndim(new_id) > 0                  # a repair writes a different id per pixel
         rec = {"n": n, "kind": kind, "z": (None if z is None else int(z)), "n_px": int(xs.size),
                "new_id": (f"{int(np.unique(new_id).size)} 个 id" if many else str(int(new_id))),
                "old_id": (str(int(old)) if np.ndim(old) == 0 else None), "n_slices": int(np.unique(zs).size),
                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **(extra or {})}
+        from emqc.annotate.provenance import source_for_edit
+        rec["source"] = source_for_edit(rec)
+        rec["provenance_version"] = 1
         self.work.mkdir(parents=True, exist_ok=True)
         with open(self.work / EDIT_LOG, "a") as f:
             f.write(json.dumps(rec) + "\n")
@@ -405,7 +436,8 @@ class Block:
             seg.flush()
             self._invalidate(z)
             return self._record("split", z, xs, ys, cut_id, new_ids[0],
-                                {"mode": "line", "cut_id": str(cut_id), "pieces": len(new_ids) + 1, "new_ids": [str(i) for i in new_ids], "n_points": len(points)})
+                                {"mode": "line", "cut_id": str(cut_id), "pieces": len(new_ids) + 1, "new_ids": [str(i) for i in new_ids], "n_points": len(points)},
+                                new_values=vals)
 
     def apply_labels(self, z: int, labels: np.ndarray, where: np.ndarray, metadata: dict) -> dict | None:
         """Write many different ids at once, inside `where` — what repairing a destroyed section needs.
@@ -579,10 +611,11 @@ class Block:
 
 
 class AnnotateStore:
-    def __init__(self, root: Path | None, workdir: Path | None = None, extra_roots: list[Path] | None = None):
+    def __init__(self, root: Path | None, workdir: Path | None = None, extra_roots: list[Path] | None = None, *, read_only: bool = False):
         self.root = Path(root) if root else None
         self.roots = [r for r in [self.root, *(Path(x) for x in (extra_roots or []))] if r]
         self.workdir = Path(workdir) if workdir else None
+        self.read_only = read_only
         self._blocks: dict[str, Block] = {}
         self._lock = threading.Lock()
 
@@ -592,7 +625,7 @@ class AnnotateStore:
             for p in found:
                 if p.name not in self._blocks:
                     try:
-                        self._blocks[p.name] = Block(p, self.workdir)
+                        self._blocks[p.name] = Block(p, self.workdir, read_only=self.read_only)
                     except Exception as e:  # a half-copied block must not take the page down
                         self._blocks[p.name] = e  # type: ignore[assignment]
             return [self._summary(k) for k in sorted(self._blocks)]
@@ -602,8 +635,12 @@ class AnnotateStore:
         if isinstance(b, Exception):
             return {"block_id": key, "error": str(b)}
         z, y, x = b.shape_zyx
+        try:
+            n_edits, history_error = len(b.edits()), None
+        except (OSError, ValueError) as e:
+            n_edits, history_error = None, str(e)
         return {"block_id": b.id, "has_seg": b.has_seg, "nz": z, "height": y, "width": x, "dataset": b.meta.get("dataset", {}).get("id"),
-                "n_edits": len(b.edits()), "has_working_copy": (b.work / SEG_EDIT).exists(), "path": str(b.path),
+                "n_edits": n_edits, "history_error": history_error, "has_working_copy": b.work_path(SEG_EDIT).exists(), "path": str(b.path),
                 # always em.npy: since sections are displayed transposed, the delivery's own PNGs can no longer be
                 # served verbatim, so visual/slices_em is not an EM source any more (see em_png)
                 "em_source": "em.npy", "voxel_size_nm": b.meta.get("geometry", {}).get("voxel_size_nm")}
