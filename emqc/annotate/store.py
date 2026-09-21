@@ -411,7 +411,11 @@ class Block:
         """Write many different ids at once, inside `where` — what repairing a destroyed section needs.
 
         Unlike every other operation this one has no single new id, so the record keeps the whole array of new ids
-        in the npz alongside the old ones. Undo only ever reads `old`, so older records replay unchanged."""
+        in the npz alongside the old ones. Undo only ever reads `old`, so older records replay unchanged.
+
+        A 0 in `labels` means "I do not know", never "this is background": pixels the interpolation did not claim
+        keep whatever they had. Without that rule a repair over a wrongly-detected hole would silently wipe the
+        delivered labels under it, which is the one thing this operation must never do."""
         self._check_z(z)
         labels = np.asarray(labels)
         where = np.asarray(where, bool)
@@ -424,7 +428,7 @@ class Block:
             if labels.size and (labels.min() < 0 or labels.max() > limits.max):
                 raise ValueError("label id is outside the segmentation dtype range")
             plane = self._plane_ro(z)
-            changed = where & (labels != plane)
+            changed = where & (labels != plane) & (labels != 0)      # 0 = unclaimed, so leave the pixel alone
             xs, ys = self._disk_idx(changed)
             if not xs.size:
                 return None
@@ -600,7 +604,9 @@ class AnnotateStore:
         z, y, x = b.shape_zyx
         return {"block_id": b.id, "has_seg": b.has_seg, "nz": z, "height": y, "width": x, "dataset": b.meta.get("dataset", {}).get("id"),
                 "n_edits": len(b.edits()), "has_working_copy": (b.work / SEG_EDIT).exists(), "path": str(b.path),
-                "em_source": "visual/slices_em" if b.visual_em else "em.npy", "voxel_size_nm": b.meta.get("geometry", {}).get("voxel_size_nm")}
+                # always em.npy: since sections are displayed transposed, the delivery's own PNGs can no longer be
+                # served verbatim, so visual/slices_em is not an EM source any more (see em_png)
+                "em_source": "em.npy", "voxel_size_nm": b.meta.get("geometry", {}).get("voxel_size_nm")}
 
     def get(self, block_id: str) -> Block:
         if block_id not in self._blocks:
