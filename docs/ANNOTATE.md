@@ -74,6 +74,7 @@ POST /api/v1/annotate/blocks/{b}/smart-fill/preview  {z,x,y,sensitivity,max_radi
 POST /api/v1/annotate/blocks/{b}/smart-fill/apply    {token,new_id}
 POST /api/v1/annotate/blocks/{b}/split               {z,x,y}（把点到的连通块分出来给新 id）
 POST /api/v1/annotate/blocks/{b}/cut                 {z,points}（画线切开色块）
+GET  /api/v1/annotate/blocks/{b}/neuroglancer?z=&x=&y=  该点在公开 H01 Neuroglancer 中的 3D 链接
 ```
 
 ## 快捷键
@@ -87,6 +88,7 @@ O 只画边界 · V 并排/叠加 · C 对比滑块 · G 透明度渐变 · , . 
 - 页面上的填充、涂抹、合并、切割、分离、清除都是二维的，只改当前这一片。三维分裂（把错并的细胞在整个块里拆开）还没做。
 - 智能填充（`emqc/annotate/boundary.py`）靠电镜自身的膜边界圈选，不依赖已有标签，因此标签错了也不会跟着错；但膜有缺口、切片全黑或拼接处对比度骤变时会圈不准，所以做成了先预览再应用。
 - 切割要求线从色块外画到色块外；没穿透会报错而不是切出错误结果。切出的最大一块保留原 id。
+- 3D 查看（快捷键 U）把光标处换算成数据集自身的体素坐标，交给公开的 H01 Neuroglancer。一张切片答不了「这团黑的是细胞器、独立细胞还是切片损伤」，3D 能。块的 `meta.json` 里 `geometry.origin` 是 mip1 体素单位，而查看器的默认坐标系正是 8/8/33 nm，所以直接相加即可，象限块再加上 `offset_in_parent`。只有本平台**没有改过号**的 id 才会传给查看器选中——SAM 预填和「新建 ID」造的号在公开的 c3 分割里不存在，传过去会选中无关的细胞，所以被挡掉并给出说明。非 H01 数据块不给链接，只说明原因。
 - 没有多人并发控制；同一个块同时开两个页面改，后写的覆盖先写的。
 
 ## 回归验证

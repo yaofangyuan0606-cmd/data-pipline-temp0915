@@ -197,3 +197,51 @@ def client_tools(block, tmp_path):
         yield c, block.id
     settings.annotate_root, settings.annotate_workdir, settings.annotate_extra_roots = old
     reset_store()
+
+
+# ----------------------------------------------------------------------------- Neuroglancer 跳转
+H01_META = {
+    "dataset": {"id": "h01-q", "em_source": "precomputed://https://storage.googleapis.com/h01-release/data/20210601/4nm_raw",
+                "seg_source": "precomputed://https://storage.googleapis.com/h01-release/data/20210601/c3"},
+    "geometry": {"origin": {"x": 355846, "y": 68275, "z": 1225, "unit": "mip1 voxel"},
+                 "voxel_size_nm": [8, 8, 33], "offset_in_parent": {"y0": 512, "x0": 512}},
+}
+
+
+def test_neuroglancer_position_adds_origin_and_quadrant_offset():
+    from emqc.annotate import neuroglancer as ng
+
+    assert ng.global_position(H01_META, x=60, y=470, z=0) == [355846 + 512 + 60, 68275 + 512 + 470, 1225]
+    no_origin = {"dataset": {"id": "mouse_30um"}, "geometry": {"voxel_size_nm": [30, 30, 30]}}
+    assert ng.global_position(no_origin, 1, 2, 3) is None
+    assert ng.link_for(no_origin, 1, 2, 3)["url"] is None, "a block we cannot locate gets no link, not a wrong one"
+    assert "origin" in ng.link_for(no_origin, 1, 2, 3)["reason"]
+
+
+def test_neuroglancer_only_passes_ids_the_public_viewer_knows():
+    """The viewer serves the original c3 segmentation. Ids this platform invented (SAM pre-fill, 新建 ID) would
+    select an unrelated cell there, so they must not be sent."""
+    from emqc.annotate import neuroglancer as ng
+
+    assert ng.segment_is_public(H01_META, 18861616579) is True
+    assert ng.segment_is_public(H01_META, None) is False
+    derived = {**H01_META, "sam_merge": {"first_new_id": 18876189027}}
+    assert ng.segment_is_public(derived, 18861616579) is True, "a delivered id still resolves"
+    assert ng.segment_is_public(derived, 18876189027) is False, "an id SAM invented does not"
+    link = ng.link_for(derived, 10, 10, 0, 18876189027)
+    assert link["segment"] is None and "公开的 c3 分割里没有它" in link["segment_note"]
+    assert '"segments":' not in link["url"] and "%22segments%22%3A" not in link["url"]
+    ok = ng.link_for(H01_META, 60, 470, 0, 18861616579)
+    assert ok["segment"] == "18861616579" and "%22segments%22%3A" in ok["url"]
+    assert ok["url"].startswith("https://h01-dot-neuroglancer-demo.appspot.com/#!")
+    assert ok["physical_um"] == [round((355846 + 512 + 60) * 8 / 1000, 3), round((68275 + 512 + 470) * 8 / 1000, 3),
+                                 round(1225 * 33 / 1000, 3)]
+
+
+def test_neuroglancer_endpoint(client_tools):
+    c, block_id = client_tools
+    r = c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer", params={"z": 0, "x": 10, "y": 10})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["url"] is None and "origin" in d["reason"], "the synthetic test block has no origin, so no link"
+    assert c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer", params={"z": 0, "x": 999, "y": 10}).status_code == 404

@@ -241,6 +241,24 @@ def labels_json(block_id: str, z: int):
         raise HTTPException(404, str(e))
 
 
+@router.get("/blocks/{block_id}/neuroglancer")
+def neuroglancer(block_id: str, z: int, x: int, y: int, zoom_nm: float = 4.0):
+    """A link that opens this pixel in the public 3D viewer, with the segment under it selected when there is one.
+
+    Used to answer "what is this dark blob" — a question one section usually cannot settle but 3D can."""
+    from emqc.annotate.neuroglancer import link_for
+
+    b = _block(block_id)
+    Z, H, W = b.shape_zyx
+    if not (0 <= z < Z and 0 <= x < W and 0 <= y < H):
+        raise HTTPException(404, "outside the block")
+    # the pristine label, not the working copy: the public viewer serves the original c3 segmentation and knows
+    # nothing about edits made here, so selecting the edited id would point at the wrong cell.
+    seg_id = int(b._seg_ro[y, x, z]) if b.has_seg else 0
+    return {**link_for(b.meta, x, y, z, seg_id or None, zoom_nm), "block_id": b.id, "clicked": {"x": x, "y": y, "z": z},
+            "edited_id": str(b.pick(z, x, y)) if b.has_seg else None}
+
+
 @router.get("/blocks/{block_id}/pick")
 def pick(block_id: str, z: int, x: int, y: int):
     b = _block(block_id)

@@ -400,6 +400,22 @@
     catch (err) { flash("新建失败: " + err.message, true); }
   }
 
+  // ------------------------------------------------------------------ 在 Neuroglancer 里看 3D
+  // 一张切片答不了「这团黑的到底是什么」，3D 能。把光标处的坐标换算成数据集自身的坐标交给公开查看器。
+  async function openNeuroglancer(x, y) {
+    if (!S.block) return;
+    const el = $("an-ng-info");
+    if (x == null || y == null) { if (el) el.textContent = "把鼠标放到要查看的位置，再按 U"; return; }
+    if (el) el.textContent = "正在生成链接…";
+    try {
+      const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/neuroglancer?z=${S.z}&x=${x}&y=${y}`);
+      if (!r.url) { if (el) el.textContent = "打不开：" + (r.reason || "未知原因"); flash("无法定位到公开数据集：" + (r.reason || ""), true); return; }
+      if (el) el.innerHTML = `坐标 <span class="mono">${r.position.join(", ")}</span><br>`
+        + (r.segment ? `已选中细胞 <span class="mono">${r.segment}</span>` : (r.segment_note || ""));
+      window.open(r.url, "_blank", "noopener");
+    } catch (err) { if (el) el.textContent = "失败：" + err.message; }
+  }
+
   // ------------------------------------------------------------------ 智能填充 / 切割 / 分离 / 清除
   // The boundary-aware fill and the cut are previewed client-side and only written when confirmed, like SAM.
   function smartButtons() {
@@ -480,6 +496,7 @@
     S.cur = "0";
     try { await fill(x, y, whole); } finally { setCur(keep); }
   }
+  $("an-ng").addEventListener("click", () => { const p = S.hoverXY; openNeuroglancer(p ? p[0] : null, p ? p[1] : null); });
   $("an-smart-apply").addEventListener("click", () => applySmart(false));
   $("an-smart-new").addEventListener("click", () => applySmart(true));
   $("an-smart-clear").addEventListener("click", () => { clearSmart(); renderHi(); });
@@ -629,6 +646,7 @@
     else if (k === "Escape") { mergeArm(null); clearSAM(); clearSmart(); S.cutPts = null; renderHi(); }
     else if (k === "m") setTool("merge");
     else if (k === "k") setTool("smart"); else if (k === "x") setTool("cut"); else if (k === "d") setTool("split");
+    else if (k === "u") { const p = S.hoverXY; openNeuroglancer(p ? p[0] : null, p ? p[1] : null); }
     else if (k === "Enter" && S.smart) applySmart(false);
     else if (k === "p") setTool("pick"); else if (k === "f") setTool("fill"); else if (k === "b") setTool("brush"); else if (k === "e") setTool("erase"); else if (k === "h") setTool("pan");
     else if (k === "[") setBrush(S.brush - 1); else if (k === "]") setBrush(S.brush + 1);

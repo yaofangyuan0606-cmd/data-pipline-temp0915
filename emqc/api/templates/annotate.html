@@ -55,6 +55,10 @@
     <div class="actions" style="margin-top:6px"><button id="an-sam-new" class="primary" disabled>填为新标签</button><button id="an-sam-apply" disabled>填为当前标签</button></div>
     <div class="muted" id="an-sam-result" role="status" style="font-size:12px;margin-top:6px">仅处理当前切片；应用后可 Ctrl+Z 撤销。</div>
 
+    <div class="vast-sec">3D 查看 <span class="muted">判断黑团是什么</span></div>
+    <div class="actions"><button id="an-ng" title="把光标所在位置在公开的 H01 Neuroglancer 里打开，用 3D 视角判断这团暗色到底是细胞器、独立细胞还是切片损伤">在 Neuroglancer 打开 <kbd>U</kbd></button></div>
+    <div class="muted" id="an-ng-info" style="font-size:12px;margin-top:6px">把鼠标放到要查看的位置，按 <kbd>U</kbd> 或点上面的按钮。有标签时会在 3D 里直接选中那个细胞。</div>
+
     <div class="vast-sec">当前标签</div>
     <div class="vast-cur"><span class="sw" id="an-cur-sw"></span><span class="mono" id="an-cur-id">0</span></div>
     <div class="actions" style="margin-top:6px"><button id="an-newid" class="primary" title="N">新建 ID</button><button id="an-bg" title="设为背景 0">背景</button></div>
@@ -122,6 +126,7 @@
       <div class="kbd-row"><kbd>V</kbd> 叠加 ⇄ 并排 · <kbd>C</kbd> 对比滑块</div>
       <div class="kbd-row"><kbd>Tab</kbd> 按住隐藏分割 · <kbd>G</kbd> 透明度渐变 · <kbd>,</kbd> <kbd>.</kbd> 步进</div>
       <div class="kbd-row"><kbd>O</kbd> 只画边界</div>
+      <div class="kbd-row"><kbd>U</kbd> 把光标处在公开的 H01 Neuroglancer 里打开，用 3D 判断黑团是什么</div>
     </section>
     <section><h3>改标签</h3>
       <div class="kbd-row"><kbd>P</kbd> 拾取（任何工具下 <kbd>Alt</kbd>+点击）</div>
@@ -157,5 +162,5 @@
     });
   })();
 </script>
-<script src="/static/annotate.js?v=sam21-tools-perf-1" defer></script>
+<script src="/static/annotate.js?v=ng-1" defer></script>
 {% endblock %}
