@@ -95,7 +95,6 @@ def block(tmp_path):
     # A displayed section is the transpose of what is stored, so store the transpose: the block then *shows*
     # exactly the picture two_cells() drew, and the screen coordinates below keep their meaning.
     vol = np.repeat(em.T[:, :, None], Z, axis=2)
-    seg = np.zeros((em.shape[1], em.shape[0], Z), dtype=np.uint64)
     # indices below are (displayed row, displayed column) transposed onto the stored array
     disp = np.zeros((em.shape[0], em.shape[1], Z), dtype=np.uint64)
     disp[2:-2, 2:-2, :] = 7   # both cells, wall included, wrongly share id 7 → one connected blob
@@ -239,7 +238,7 @@ def test_neuroglancer_only_passes_ids_the_public_viewer_knows():
     ok = ng.link_for(H01_META, 60, 470, 0, 18861616579)
     assert ok["segment"] == "18861616579" and "%22segments%22%3A" in ok["url"]
     assert ok["url"].startswith("https://h01-dot-neuroglancer-demo.appspot.com/#!")
-    assert ok["physical_um"] == [round((355846 + 512 + 60) * 8 / 1000, 3), round((68275 + 512 + 470) * 8 / 1000, 3),
+    assert ok["position_um"] == [round((355846 + 512 + 60) * 8 / 1000, 3), round((68275 + 512 + 470) * 8 / 1000, 3),
                                  round(1225 * 33 / 1000, 3)]
 
 
@@ -302,6 +301,9 @@ def test_interpolation_steps_over_a_second_destroyed_section():
     empty[:, :, 1] = 0
     r2 = ip.interpolate_section(empty, 1, np.ones((H, W), bool))
     assert r2.n_px == 0 and "无法修补" in r2.note, "no good neighbour at all: refuse, do not invent"
+    # stats has to be complete even on that refusal: the preview reads it unconditionally, and an empty dict here
+    # turned "no usable neighbour" into a KeyError and a 500 instead of a message the annotator can read
+    assert r2.stats["hole_px"] == H * W and r2.stats["unfilled_px"] == H * W and r2.stats["kept_px"] == 0
 
 
 def test_repair_api_preview_apply_and_undo(client_tools):
@@ -311,6 +313,39 @@ def test_repair_api_preview_apply_and_undo(client_tools):
     assert scan["n"] == 0
     assert c.post(f"/api/v1/annotate/blocks/{block_id}/repair/apply", json={"token": "0" * 32}).status_code == 409
     assert c.post(f"/api/v1/annotate/blocks/{block_id}/repair/preview", json={"z": 99}).status_code == 404
+
+
+def test_detect_damage_ignores_dark_tissue_however_big(block):
+    """The size rule this replaced flagged 46 healthy sections out of 400 real ones — blood vessel lumens and myelin
+    are near-black and can run to thousands of pixels. Damage is told apart by shape: it spans the section."""
+    from emqc.annotate import interpolate as ip
+
+    em, _, _ = two_cells()
+    blob = em.copy()
+    blob[20:40, 20:40] = 0                        # 400 px of near-black, compact — a vessel, not a cut
+    assert not ip.detect_damage(blob).any(), "a compact dark blob is tissue, whatever its area"
+    crack = em.copy()
+    crack[:, 40:43] = 0                           # 3 px wide, but it runs the whole height
+    assert ip.detect_damage(crack)[:, 41].all(), "a thin crack that spans the section is damage"
+    assert not ip.detect_damage(crack)[:, :20].any(), "and only the crack is"
+
+
+def test_repair_never_clears_an_existing_label(block):
+    """A 0 in the proposal means "nobody claimed this pixel", never "this pixel is background". Writing those zeros
+    would wipe delivered labels wherever the hole was detected too eagerly, which is the one thing repair must not do."""
+    before = block.seg_slice(0).copy()
+    ry, rx = (int(v) for v in np.argwhere(before != 0)[0])     # a pixel that already carries a delivered id
+    labels = np.zeros(block.shape_zyx[1:], np.uint64)
+    where = np.ones(labels.shape, bool)                        # "the whole section is damaged", nothing claimed
+    assert block.apply_labels(0, labels, where, {"interpolated": True}) is None, "nothing to write, nothing written"
+    assert np.array_equal(block.seg_slice(0), before)
+    labels[1, 1] = 99                                          # (1, 1) is outside both cells, so it really is background
+    rec = block.apply_labels(0, labels, where, {"interpolated": True})
+    assert rec["n_px"] == 1, "only the claimed pixel"
+    assert int(block.seg_slice(0)[ry, rx]) == int(before[ry, rx]), "the labelled pixel keeps its id"
+    assert int(block.seg_slice(0)[1, 1]) == 99
+    block.undo()
+    assert np.array_equal(block.seg_slice(0), before)
 
 
 def test_apply_labels_writes_many_ids_and_undoes_exactly(block):

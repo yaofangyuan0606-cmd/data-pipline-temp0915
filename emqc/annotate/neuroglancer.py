@@ -154,10 +154,8 @@ def block_state(meta: dict, shape_zyx, z: int, screen_px: int = 700) -> dict | N
     o = g.get("origin")
     if not isinstance(o, dict) or not _dataset_is_h01(meta):
         return None
-    off = g.get("offset_in_parent") or {}
-    x0, y0 = int(o["x"]) + int(off.get("x0", 0)), int(o["y"]) + int(off.get("y0", 0))
-    z0 = int(o["z"])
-    vx, vy, vz = g.get("voxel_size_nm") or H01_VOXEL_NM
+    # The block's own corner is computed once, in _block_box, which state_for calls; recomputing it here only
+    # created a second copy of the x0/y0 pairing to get wrong.
     state = state_for(meta, W // 2, H // 2, int(z), None, shape_zyx=shape_zyx)
     if state is None:
         return None
@@ -169,7 +167,10 @@ def block_state(meta: dict, shape_zyx, z: int, screen_px: int = 700) -> dict | N
 
 def link_for(meta: dict, x: int, y: int, z: int, segment: int | None = None, zoom_nm: float = 4.0,
              shape_zyx=None, neighbours: list | None = None) -> dict:
-    """{'url', 'position', 'segment', 'physical_um'} for the viewer, or {'url': None, 'reason': ...}."""
+    """{'url', 'position', 'segment', 'position_um'} for the viewer, or {'url': None, 'reason': ...}.
+
+    `position_um` is where the pixel is, in micrometres from the volume's origin — not to be confused with
+    `link_for_block`'s `size_um`, which is how big the block is."""
     state = state_for(meta, x, y, z, segment, zoom_nm, shape_zyx, neighbours)
     if state is None:
         pos = global_position(meta, x, y, z)
@@ -189,13 +190,15 @@ def link_for(meta: dict, x: int, y: int, z: int, segment: int | None = None, zoo
                          ((f"这一点没有标签（黑团多在细胞之间），已改为选中周围 {len(shown)} 个细胞，"
                            "在 3D 里黑团就是它们之间的空隙" if shown else "这一点没有标签，查看器只定位") if not segment else
                           f"标签 {segment} 是本平台新建的 id，公开的 c3 分割里没有它，查看器只定位不选中细胞")),
-        "physical_um": [round(pos[0] * vx / 1000, 3), round(pos[1] * vy / 1000, 3), round(pos[2] * vz / 1000, 3)],
+        "position_um": [round(pos[0] * vx / 1000, 3), round(pos[1] * vy / 1000, 3), round(pos[2] * vz / 1000, 3)],
         "voxel_size_nm": [vx, vy, vz],
     }
 
 
 def link_for_block(meta: dict, shape_zyx, z: int) -> dict:
-    """{'url', 'bounds', ...} framing the whole block, or {'url': None, 'reason': ...}."""
+    """{'url', 'bounds', 'size_um', ...} framing the whole block, or {'url': None, 'reason': ...}.
+
+    `size_um` is the block's extent in micrometres — `link_for` reports a position under its own name."""
     state = block_state(meta, shape_zyx, z)
     if state is None:
         return {"url": None, "reason": "这个数据块没有 geometry.origin 或不是 H01 数据，无法在公开查看器里定位"}
@@ -206,7 +209,7 @@ def link_for_block(meta: dict, shape_zyx, z: int) -> dict:
         "url": VIEWER + "#!" + urllib.parse.quote(json.dumps(state, separators=(",", ":")), safe=""),
         "bounds": {"from": box["pointA"], "to": box["pointB"]},
         "center": [int(p - 0.5) for p in state["position"]],
-        "physical_um": [round(shape_zyx[2] * vx / 1000, 2), round(shape_zyx[1] * vy / 1000, 2),
-                        round(shape_zyx[0] * vz / 1000, 2)],
+        "size_um": [round(shape_zyx[2] * vx / 1000, 2), round(shape_zyx[1] * vy / 1000, 2),
+                    round(shape_zyx[0] * vz / 1000, 2)],
         "voxel_size_nm": [vx, vy, vz],
     }

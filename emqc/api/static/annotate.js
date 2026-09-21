@@ -258,7 +258,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) { mergeArm(null); clearSAM(); clearSmart(); S.cutPts = null; S.repair = null; S.repairMask = null; }
+    if (z !== S.z) { mergeArm(null); clearSAM(); clearSmart(); clearRepair(); S.cutPts = null; }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     $("an-compare").href = `/annotate/compare?block=${encodeURIComponent(S.block)}&z=${z}`;
@@ -281,6 +281,7 @@
     if (S.mergeBusy) return;
     if (!t.startsWith("sam")) clearSAM();
     if (t !== "smart") clearSmart();
+    clearRepair();                       // 修补是整片操作，切到任何画笔工具都说明注意力已经离开它
     if (t !== "cut") S.cutPts = null;
     S.tool = t; mergeArm(null);
     if ((t === "merge" || t === "smart" || t === "cut" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
@@ -425,9 +426,13 @@
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/repair/preview`, { z: S.z });
       S.repairMask = await loadImg(r.mask_png); S.repair = r;
       $("an-rp-apply").disabled = !r.n_px;
+      // Every number below is an absolute pixel count with its own base spelled out. The earlier wording put three
+      // percentages of *different* things behind one "其中", so they read as parts of one whole and summed past 100%.
       const pct = n => `${(100 * n / Math.max(1, r.hole_px)).toFixed(0)}%`;
-      el.innerHTML = `损坏 ${r.hole_px} px，补了 ${r.n_px}（${r.n_ids} 个细胞），`
-        + `其中 ${pct(r.uncertain_px)} 上下不一致（斜纹），${pct(r.unfilled_px)} 没人认领。`
+      const kept = r.kept_px || 0, bg = Math.max(0, r.unfilled_px - kept);
+      el.innerHTML = `损坏 ${r.hole_px} px，补上 ${r.n_px} px（占 ${pct(r.n_px)}，${r.n_ids} 个细胞）；`
+        + `补上的这些里有 ${r.uncertain_px} px 上下两片对不上（斜纹，最不可信）。`
+        + `<br>剩下 ${r.unfilled_px} px 没人认领：${kept} px 保留原有标签不动，${bg} px 本来就是背景。`
         + `<br>用切片 z${r.source_sections[0]} 和 z${r.source_sections[1]} 插值，${r.seconds}s。`
         + (r.note ? `<br><b>${r.note}</b>` : "");
     } catch (err) { S.repair = null; S.repairMask = null; el.textContent = "预览失败：" + err.message; }
@@ -457,7 +462,7 @@
     try {
       const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/neuroglancer/block?z=${S.z}`);
       if (!r.url) { if (el) el.textContent = "打不开：" + (r.reason || "未知原因"); return; }
-      if (el) el.innerHTML = `整块 <span class="mono">${r.physical_um.join(" × ")}</span> µm，黄框是本数据块的范围`;
+      if (el) el.innerHTML = `整块 <span class="mono">${r.size_um.join(" × ")}</span> µm，黄框是本数据块的范围`;
       window.open(r.url, "_blank", "noopener");
     } catch (err) { if (el) el.textContent = "失败：" + err.message; }
   }
@@ -481,6 +486,15 @@
   function smartButtons() {
     const off = S.mergeBusy || S.smartBusy || !S.smart?.n_px || !S.info?.has_seg;
     $("an-smart-apply").disabled = off; $("an-smart-new").disabled = off;
+  }
+  // The repair proposal is pinned to one section and one revision of the labels; leaving that context must take the
+  // green overlay and the 应用 button with it, or a stale proposal stays on screen looking applicable.
+  const RP_HINT = `图像毁了就找不回来，能补的是标签。绿色是补出来的，<b>斜纹处上下两片不一致、把握较低</b>，红色是谁都没认领的——<b>那些像素原样不动</b>，已有的标签不会被抹掉。改动记为「修补」并标明是插值。`;
+  function clearRepair() {
+    if (!S.repair && !S.repairMask) return;
+    S.repair = null; S.repairMask = null;
+    const a = $("an-rp-apply"); if (a) a.disabled = true;
+    const el = $("an-rp-info"); if (el) el.innerHTML = RP_HINT;
   }
   function clearSmart() { S.smart = null; S.smartMask = null; smartButtons(); const el = $("an-smart-result"); if (el) el.textContent = "点细胞内部，沿膜边界圈出区域；确认后再填色。"; }
   function drawTools() {
@@ -705,7 +719,7 @@
     else if (k === "PageUp") { ev.preventDefault(); goZ(S.z - 10, true); }
     else if (k === "PageDown") { ev.preventDefault(); goZ(S.z + 10, true); }
     else if (k === "Home") goZ(0); else if (k === "End") goZ(S.info.shape_zyx[0] - 1);
-    else if (k === "Escape") { mergeArm(null); clearSAM(); clearSmart(); S.cutPts = null; renderHi(); }
+    else if (k === "Escape") { mergeArm(null); clearSAM(); clearSmart(); clearRepair(); S.cutPts = null; renderHi(); }
     else if (k === "m") setTool("merge");
     else if (k === "k") setTool("smart"); else if (k === "x") setTool("cut"); else if (k === "d") setTool("split");
     else if (k === "u") { const p = S.hoverXY; openNeuroglancer(p ? p[0] : null, p ? p[1] : null); }
@@ -745,8 +759,10 @@
   async function editList() {
     try {
       const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/edits?limit=30`);
-      const label = e => e.kind === "smartfill" ? "智能填充" : e.kind === "split" ? (e.mode === "line" ? "切割" : "分离") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
-      $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${e.new_id === "0" ? "transparent" : css(colorOf(e.new_id))}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${e.new_id}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">还没有改动</span></div>`;
+      const label = e => e.kind === "smartfill" ? "智能填充" : e.kind === "repair" ? "修补·插值" : e.kind === "split" ? (e.mode === "line" ? "切割" : "分离") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
+      // A repair writes a different id per pixel, so its new_id is the text "N 个 id" — there is no one colour for it.
+      const swatch = e => /^\d+$/.test(String(e.new_id)) && e.new_id !== "0" ? css(colorOf(e.new_id)) : "transparent";
+      $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${swatch(e)}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${e.new_id}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">还没有改动</span></div>`;
     } catch (_) { /* panel is informational */ }
   }
 

@@ -82,6 +82,31 @@ def test_mixed_labels_last_writer_undo_and_interpolation(block):
     assert report(block, 0)["changed_px"] == 0
 
 
+def test_repair_preserves_unchanged_provenance_and_undo(block):
+    block.paint(0, [(2, 1)], 0, 7)
+    block.apply_mask(0, mask(block, (3, 1)), 8, {"model": "SAM 2.1"})
+    before = comparison(block, 0)
+    proposal = np.zeros(block.shape_zyx[1:], np.uint64)
+    proposal[1, 2] = 7  # Already matches a manual edit: it remains manual.
+    proposal[1, 4] = 99
+    rec = block.apply_labels(0, proposal, np.ones(proposal.shape, bool),
+                             {"interpolated": True, "source_sections": [1, 2]})
+    assert rec["n_px"] == 1
+    after = comparison(block, 0)
+    current, sources = labels(after["after"]), png(after["sources_png"])
+    # Zero proposals leave both baseline and SAM labels, and their origins, intact.
+    for x, value, source in ((0, BIG, "baseline"), (2, 7, "manual"),
+                             (3, 8, "sam"), (4, 99, "interpolation")):
+        assert current[1, x] == value
+        assert sources[1, x] == SOURCES.index(source)
+    assert after["report"]["sources"]["interpolation"]["pixels"] == 1
+    assert after["report"]["removed_px"] == 0
+    assert block.apply_labels(0, proposal, np.ones(proposal.shape, bool), {}) is None
+    assert comparison(block, 0) == after
+    block.undo()
+    assert comparison(block, 0) == before
+
+
 def test_erase_and_whole_block_export_conserve_counts(block):
     block.merge(BIG, 44)
     block.paint(1, [(0, 0)], 0, 0)

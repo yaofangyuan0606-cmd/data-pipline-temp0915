@@ -244,12 +244,22 @@ def _rim_snap(fill, seg_z, hole, reach: int = 2):
     return fill
 
 
-def detect_damage(em_plane, dark: int = 12, min_frac: float = 0.002):
-    """哪些像素是坏的：近乎全黑，且成片出现。
+def detect_damage(em_plane, dark: int = 12, min_area: int = 64, span: float = 0.6, min_frac: float = 0.10):
+    """哪些像素是坏的：近乎全黑，成片，而且形状像事故而不像组织。
 
-    单个暗像素是细胞器，整条黑带才是损坏。所以先取近黑像素，再只保留足够大的连通块（默认占全片 0.2% 以上），
-    最后做一次闭运算把带里零星的亮点补上。返回布尔掩膜；没有损坏就返回全 False。"""
+    「黑」本身说明不了什么。血管腔、髓鞘、包埋树脂里的气泡在 EM 里都是黑的，而且可以连成几千个像素——早先只按
+    面积判定（全片 0.2% 以上）时，一个健康象限被报出 19 处「损坏」，用户那一块报出 6 处，全是血管和髓鞘。真正的
+    损坏是成像/切片事故：一条横贯整片的黑带，或者整页空白。所以一个近黑连通块要算损坏，必须满足下面之一：
+
+      * 横向或纵向跨过全片的 `span`（默认 60%）——裂缝和黑带会跨过去，血管腔不会；
+      * 自己就占了全片 `min_frac`（默认 10%）以上——整页空白走这条。
+
+    跨度判据和图像尺寸无关，换一个分辨率或更大的数据块，判定不会跟着变松。`min_area` 只是噪点下限，不参与判定。
+    实测：这四个 512x512 数据块共 400 片完好切片，旧判据报出 46 处，新判据 0 处；人造的横带、纵向裂缝、
+    350x350 大块、整页全黑仍然一个不漏（`min_area` 从 64 扫到 1024、`span` 从 0.5 扫到 0.8 结果都一样）。
+    返回布尔掩膜；没有损坏就返回全 False。"""
     em_plane = np.asarray(em_plane)
+    H, W = em_plane.shape
     m = em_plane <= dark
     if not m.any():
         return np.zeros(em_plane.shape, bool)
@@ -258,8 +268,15 @@ def detect_damage(em_plane, dark: int = 12, min_frac: float = 0.002):
         return np.zeros(em_plane.shape, bool)
     sizes = np.bincount(lab.ravel())
     sizes[0] = 0
-    keep = np.flatnonzero(sizes >= max(64, int(min_frac * em_plane.size)))
-    out = np.isin(lab, keep) if keep.size else np.zeros(em_plane.shape, bool)
+    big = np.flatnonzero(sizes >= max(64, int(min_area)))
+    boxes = ndimage.find_objects(lab)          # every component's bbox in one pass, not one pass per component
+    keep = []
+    for k in big.tolist():
+        sl = boxes[k - 1]
+        spans = (sl[0].stop - sl[0].start) >= span * H or (sl[1].stop - sl[1].start) >= span * W
+        if spans or sizes[k] >= min_frac * em_plane.size:
+            keep.append(k)
+    out = np.isin(lab, keep) if keep else np.zeros(em_plane.shape, bool)
     # pad before closing: without it the erosion step eats two pixels off every border, so a black cut that runs to
     # the edge of the section would lose its outermost columns and leave an unrepaired strip
     out = ndimage.binary_closing(np.pad(out, 2, mode="edge"), structure=np.ones((5, 5), bool))
@@ -282,8 +299,12 @@ def interpolate_section(seg, z: int, hole, em=None) -> InterpolationResult:
     hole = np.asarray(hole, bool)
     ia, ib = _neighbours(seg, z)
     if ia is None and ib is None:
+        # stats must still be filled in: the caller reads it unconditionally, and an empty dict here used to turn
+        # "no usable neighbour" into a KeyError and a 500.
         return InterpolationResult(np.zeros(seg.shape[:2], seg.dtype), np.zeros(seg.shape[:2], bool),
-                                   (), 0, note="上下都没有完好的切片，无法修补")
+                                   (), 0, note="上下都没有完好的切片，无法修补",
+                                   stats={"hole_px": int(hole.sum()), "uncertain_px": 0,
+                                          "unfilled_px": int(hole.sum()), "kept_px": 0})
     fill = repair(seg, z, hole, em)
     fill = _rim_snap(fill, seg[:, :, z], hole)
     a = ia if ia is not None else ib
@@ -294,9 +315,14 @@ def interpolate_section(seg, z: int, hole, em=None) -> InterpolationResult:
         note = f"相邻切片也是坏的，改用 z{a} 和 z{b} 插值，置信度更低"
     elif hole.all():
         note = "整片损坏，没有幸存像素可以锚定，置信度低于只坏一条带的情况"
+    unclaimed = hole & (fill == 0)
     return InterpolationResult(fill, uncertain, (int(a), int(b)), int((fill[hole] != 0).sum()), note=note,
                                stats={"hole_px": int(hole.sum()), "uncertain_px": int(uncertain.sum()),
-                                      "unfilled_px": int((fill[hole] == 0).sum())})
+                                      "unfilled_px": int(unclaimed.sum()),
+                                      # unclaimed pixels that already carry a label: apply_labels keeps them,
+                                      # so the annotator is told they are kept rather than wondering why the
+                                      # "unfilled" count did not turn into background
+                                      "kept_px": int((unclaimed & (seg[:, :, z] != 0)).sum())})
 
 
 def overlay_png(labels, hole, uncertain) -> str:
@@ -304,7 +330,7 @@ def overlay_png(labels, hole, uncertain) -> str:
     over = np.zeros((*hole.shape, 4), np.uint8)
     filled = hole & (labels != 0)
     over[filled] = [80, 220, 120, 130]
-    over[hole & (labels == 0)] = [255, 80, 80, 110]          # nobody claimed it — left as background
+    over[hole & (labels == 0)] = [255, 80, 80, 110]          # nobody claimed it — apply_labels leaves it untouched
     h = uncertain & filled
     if h.any():
         yy, xx = np.nonzero(h)
@@ -339,6 +365,8 @@ class RepairService:
                 raise ValueError("这一片没有检测到损坏区域（近乎全黑且成片的像素）")
             seg = np.stack([block.seg_slice(k) for k in range(lo, hi)], axis=2)
             res = interpolate_section(seg, z - lo, hole, None)
+            if not res.source_sections:
+                raise ValueError(res.note or "上下都没有完好的切片，无法修补")
             rev = revision(block)
         token = uuid.uuid4().hex
         now = time.monotonic()
@@ -352,7 +380,8 @@ class RepairService:
         ids = np.unique(res.labels[hole])
         return {"token": token, "z": int(z), "n_px": res.n_px, "interpolated": True,
                 "hole_px": res.stats["hole_px"], "uncertain_px": res.stats["uncertain_px"],
-                "unfilled_px": res.stats["unfilled_px"], "n_ids": int((ids != 0).sum()),
+                "unfilled_px": res.stats["unfilled_px"], "kept_px": res.stats.get("kept_px", 0),
+                "n_ids": int((ids != 0).sum()),
                 "source_sections": [int(s + lo) for s in res.source_sections], "note": res.note,
                 "seconds": round(time.perf_counter() - started, 3),
                 "mask_png": overlay_png(res.labels, hole, res.uncertain)}

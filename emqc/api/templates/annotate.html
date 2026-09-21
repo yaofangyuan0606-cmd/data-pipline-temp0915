@@ -59,7 +59,7 @@
     <div class="vast-sec">修补损坏切片 <span class="muted">黑带 / 白页</span></div>
     <div class="actions"><button id="an-rp-scan" title="扫描整块，列出图像被毁的切片">扫描损坏</button><button id="an-rp-prev" title="用上下相邻切片的细胞形状插值，补回这一片丢失的标签">检测并预览</button></div>
     <div class="actions" style="margin-top:6px"><button id="an-rp-apply" class="primary" disabled>应用修补</button></div>
-    <div class="muted" id="an-rp-info" style="font-size:12px;margin-top:6px">图像毁了就找不回来，能补的是标签。绿色是补出来的，<b>斜纹处上下两片不一致、把握较低</b>，红色是谁都没认领。改动记为「修补」并标明是插值。</div>
+    <div class="muted" id="an-rp-info" style="font-size:12px;margin-top:6px">图像毁了就找不回来，能补的是标签。绿色是补出来的，<b>斜纹处上下两片不一致、把握较低</b>，红色是谁都没认领的——<b>那些像素原样不动</b>，已有的标签不会被抹掉。改动记为「修补」并标明是插值。</div>
 
     <div class="vast-sec">3D 查看 <span class="muted">判断黑团是什么</span></div>
     <div class="actions"><button id="an-ng" title="把光标所在位置在公开的 H01 Neuroglancer 里打开，位置会用黄点标出">看这一点 <kbd>U</kbd></button><button id="an-ng-block" title="把整个数据块在公开的 H01 Neuroglancer 里打开，范围用黄框标出，方便自己在 3D 里找">看整块</button></div>

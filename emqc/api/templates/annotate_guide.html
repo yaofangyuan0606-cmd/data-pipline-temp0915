@@ -42,7 +42,7 @@
   <dl class="kv">
     <dt>数据目录</dt><dd><b>只读。</b>由 <span class="mono">EMQC_ANNOTATE_ROOT</span> 指定，<span class="mono">EMQC_ANNOTATE_EXTRA_ROOTS</span> 可用分号追加更多根目录；每个含 <span class="mono">em.npy</span> 的子目录是一个块。交付目录里不会多出一个字节。</dd>
     <dt>工作目录</dt><dd><span class="mono">{{ workdir }}/&lt;block&gt;/</span>：第一次改动时把 <span class="mono">seg.npy</span> 复制成 <span class="mono">seg_edit.npy</span>（写时复制），之后每次改动写一个 <span class="mono">edits/&lt;n&gt;.npz</span>，<span class="mono">edits.jsonl</span> 是摘要。修好的标签就是 <span class="mono">seg_edit.npy</span>，形状与 dtype 同原始。</dd>
-    <dt>显示方向</dt><dd>与交付目录 <span class="mono">visual/slices_em/</span> 的 PNG 一致（行 = 数组第 0 轴），有这套 PNG 时直接用它做 EM 底图。<span class="mono">visual/slices_seg_color/</span> 是掺了 EM 灰度的彩色图，不能当标签，标签只来自 <span class="mono">seg.npy</span>。</dd>
+    <dt>显示方向</dt><dd>与源数据集一致：屏幕横轴是体数据的 X、纵轴是 Y，和 Neuroglancer 里的同一块画面完全重合，所以「看这一点」跳过去不会错位。磁盘上的数组是 (X, Y, z)，页面显示的是它的转置，<b>原始 <span class="mono">em.npy</span> / <span class="mono">seg.npy</span> 没有改动</b>，改的只是怎么画。因此交付目录的 <span class="mono">visual/slices_em/</span> 与屏幕差一个转置，EM 底图一律现渲染。<span class="mono">visual/slices_seg_color/</span> 是掺了 EM 灰度的彩色图，不能当标签，标签只来自 <span class="mono">seg.npy</span>。</dd>
     <dt>颜色</dt><dd>页面上的颜色由 id 哈希生成，同一个 id 在任何片、任何块都是同一个颜色；合并后 B 变成 A 的颜色就是因为它拿到了 A 的 id。</dd>
     <dt>SAM 预标注</dt><dd>没有分割的块可以先用 <span class="mono">scripts/sam_label.py</span> 在 GPU 上跑 Segment Anything，输出到 <span class="mono">{{ sam_dir }}/&lt;block&gt;_sam/</span>，自动出现在「数据块」列表，再来这里修。<b>已有可信标签的块不要这样做</b>：机器的划分会替掉人工结果，而且 id 是另一套编号，改完并不回去。页面左栏的 SAM 辅助不同，它只作用于当前这一片、默认只补未标注区域，任何块都能安全使用。</dd>
     <dt>预览与落笔</dt><dd>智能填充和 SAM 辅助都是两步：先算出一个候选区域给你看（橙色 / 青色），确认后才写盘。预览只存在服务端内存里，15 分钟过期；这期间如果标签被别的操作改了，应用会被拒绝并要求重新点选，不会覆盖更新的结果。</dd>
