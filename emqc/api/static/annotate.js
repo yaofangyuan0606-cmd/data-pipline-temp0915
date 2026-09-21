@@ -21,7 +21,7 @@
     cache: new Map(), loading: new Map(), cacheVersion: 0, hoverXY: null, hoverPane: 0, regionEntry: null, regions: [],
     playing: null, drag: null, stroke: null, mergeFirst: null, mergeBusy: false, spacePan: false, curtainDrag: false,
     samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null,
-    smart: null, smartMask: null, smartBusy: false, cutPts: null,
+    smart: null, smartMask: null, smartBusy: false, cutPts: null, repair: null, repairMask: null,
   };
   function mkPane(id) {
     const stage = $(id), cv = stage.querySelector(".vast-canvas"), [em, seg, hi] = cv.querySelectorAll("canvas");
@@ -258,7 +258,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) { mergeArm(null); clearSAM(); clearSmart(); S.cutPts = null; }
+    if (z !== S.z) { mergeArm(null); clearSAM(); clearSmart(); S.cutPts = null; S.repair = null; S.repairMask = null; }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     if (!keepHover) S.hoverXY = null;
@@ -400,8 +400,66 @@
     catch (err) { flash("新建失败: " + err.message, true); }
   }
 
+  // ------------------------------------------------------------------ 修补损坏切片
+  // The image inside a black cut is gone for good and is never fabricated; what gets filled back are the labels,
+  // interpolated from the cells' shapes on the nearest good sections either side. Preview first, then apply.
+  async function repairScan() {
+    if (!S.block) return;
+    const el = $("an-rp-info");
+    el.textContent = "正在扫描整块…";
+    try {
+      const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/repair/scan`);
+      if (!r.n) { el.textContent = "整块没有检测到损坏切片。"; return; }
+      const list = r.sections.slice(0, 12).map(s => `<a href="#" data-z="${s.z}">z${s.z}</a> ${(s.fraction * 100).toFixed(0)}%${s.whole ? "(整片)" : ""}`).join("、");
+      el.innerHTML = `${r.n} 片有损坏：${list}${r.n > 12 ? " …" : ""}`;
+      el.querySelectorAll("a[data-z]").forEach(a => a.addEventListener("click", ev => { ev.preventDefault(); goZ(+a.dataset.z); }));
+    } catch (err) { el.textContent = "扫描失败：" + err.message; }
+  }
+  async function repairPreview() {
+    if (!S.block || S.mergeBusy) return;
+    const el = $("an-rp-info");
+    el.textContent = "正在按上下切片插值…";
+    $("an-rp-apply").disabled = true; S.repair = null;
+    try {
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/repair/preview`, { z: S.z });
+      S.repairMask = await loadImg(r.mask_png); S.repair = r;
+      $("an-rp-apply").disabled = !r.n_px;
+      const pct = n => `${(100 * n / Math.max(1, r.hole_px)).toFixed(0)}%`;
+      el.innerHTML = `损坏 ${r.hole_px} px，补了 ${r.n_px}（${r.n_ids} 个细胞），`
+        + `其中 ${pct(r.uncertain_px)} 上下不一致（斜纹），${pct(r.unfilled_px)} 没人认领。`
+        + `<br>用切片 z${r.source_sections[0]} 和 z${r.source_sections[1]} 插值，${r.seconds}s。`
+        + (r.note ? `<br><b>${r.note}</b>` : "");
+    } catch (err) { S.repair = null; S.repairMask = null; el.textContent = "预览失败：" + err.message; }
+    finally { renderHi(); }
+  }
+  async function repairApply() {
+    if (!S.repair || S.mergeBusy) return;
+    const z = S.z, token = S.repair.token;
+    mergeBusy(true);
+    try {
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/repair/apply`, { token });
+      await afterEdit(r, z);
+      flash(r.edit ? `已补 ${r.edit.n_px} 像素的标签（插值，可 Ctrl+Z 撤销）` : "没有需要改动的像素");
+    } catch (err) { flash("修补失败：" + err.message, true); }
+    finally { S.repair = null; S.repairMask = null; $("an-rp-apply").disabled = true; mergeBusy(false); renderHi(); }
+  }
+  $("an-rp-scan").addEventListener("click", repairScan);
+  $("an-rp-prev").addEventListener("click", repairPreview);
+  $("an-rp-apply").addEventListener("click", repairApply);
+
   // ------------------------------------------------------------------ 在 Neuroglancer 里看 3D
   // 一张切片答不了「这团黑的到底是什么」，3D 能。把光标处的坐标换算成数据集自身的坐标交给公开查看器。
+  async function openNeuroglancerBlock() {
+    if (!S.block) return;
+    const el = $("an-ng-info");
+    if (el) el.textContent = "正在生成链接…";
+    try {
+      const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/neuroglancer/block?z=${S.z}`);
+      if (!r.url) { if (el) el.textContent = "打不开：" + (r.reason || "未知原因"); return; }
+      if (el) el.innerHTML = `整块 <span class="mono">${r.physical_um.join(" × ")}</span> µm，黄框是本数据块的范围`;
+      window.open(r.url, "_blank", "noopener");
+    } catch (err) { if (el) el.textContent = "失败：" + err.message; }
+  }
   async function openNeuroglancer(x, y) {
     if (!S.block) return;
     const el = $("an-ng-info");
@@ -411,7 +469,8 @@
       const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/neuroglancer?z=${S.z}&x=${x}&y=${y}`);
       if (!r.url) { if (el) el.textContent = "打不开：" + (r.reason || "未知原因"); flash("无法定位到公开数据集：" + (r.reason || ""), true); return; }
       if (el) el.innerHTML = `坐标 <span class="mono">${r.position.join(", ")}</span><br>`
-        + (r.segment ? `已选中细胞 <span class="mono">${r.segment}</span>` : (r.segment_note || ""));
+        + (r.segment ? `已选中细胞 <span class="mono">${r.segment}</span>` : (r.segment_note || ""))
+        + `<br>查看器里黄色圆点就是这个位置，黄框是本数据块的范围`;
       window.open(r.url, "_blank", "noopener");
     } catch (err) { if (el) el.textContent = "失败：" + err.message; }
   }
@@ -428,6 +487,7 @@
     for (const p of panes()) {
       const g = p.gHi;
       if (S.smartMask) g.drawImage(S.smartMask, 0, 0);
+      if (S.repairMask) g.drawImage(S.repairMask, 0, 0);
       if (S.cutPts && S.cutPts.length) {                    // the cut line, drawn as the user draws it
         g.save(); g.lineWidth = Math.max(1, 2 / S.zoom); g.lineJoin = "round"; g.lineCap = "round";
         g.beginPath(); g.moveTo(S.cutPts[0][0] + .5, S.cutPts[0][1] + .5);
@@ -497,6 +557,7 @@
     try { await fill(x, y, whole); } finally { setCur(keep); }
   }
   $("an-ng").addEventListener("click", () => { const p = S.hoverXY; openNeuroglancer(p ? p[0] : null, p ? p[1] : null); });
+  $("an-ng-block").addEventListener("click", openNeuroglancerBlock);
   $("an-smart-apply").addEventListener("click", () => applySmart(false));
   $("an-smart-new").addEventListener("click", () => applySmart(true));
   $("an-smart-clear").addEventListener("click", () => { clearSmart(); renderHi(); });

@@ -1,16 +1,29 @@
 """On-disk annotation store.
 
-A *block* is a directory with `em.npy` and optionally `seg.npy` (both (axis0, axis1, z); a section is
-`arr[:, :, z]` and is displayed as-is, axis0 = image rows, axis1 = image columns — the same orientation as the
-delivery's `visual/slices_em/*.png`, which are served verbatim as the EM layer when present), plus `meta.json`.
+A *block* is a directory with `em.npy` and optionally `seg.npy`, plus `meta.json`.
+
+**Orientation.** The arrays are stored the way `fetch_train.py` received them from CloudVolume, i.e. axis 0 runs
+along the source volume's X and axis 1 along its Y. The viewer draws a section with X horizontal and Y vertical,
+the same way Neuroglancer and the rest of the connectomics world draw it, so a displayed section is the TRANSPOSE
+of the stored one: `arr[:, :, z].T`. Screen (x = column, y = row) therefore reaches `arr[x, y, z]`.
+
+Getting this backwards was a real bug: the page used to draw `arr[:, :, z]` directly, which showed every section
+mirrored across its diagonal relative to the source dataset, and a jump to Neuroglancer landed on the transposed
+pixel. The mapping was pinned down by downloading the volume with CloudVolume and cross-correlating: all four
+quadrant blocks match at exactly 1.000 with zero displacement under the convention above.
+
+`em_slice` / `seg_slice` hand out the displayed (transposed) orientation, so everything that thinks in screen
+coordinates — the tools, the boundary fill, SAM — is automatically right. Only the edit records go the other way:
+they store indices into the array as it sits on disk, so that records written before this change still replay.
 
 The data directory is treated as read-only. Everything the viewer writes lives in a separate *work directory*
 (`<workdir>/<block_id>/`): the first edit copies `seg.npy` there as `seg_edit.npy` (copy-on-write) and every
 change goes to that copy; each edit is logged as `edits/<n>.npz` (the voxels it changed and their previous ids)
 so it can be undone exactly, and summarised in `edits.jsonl` for the UI.
 
-Screen coordinates are (x = column, y = row); array access is `plane[y, x]`. Edit records store array indices:
-`xs` = axis-0 (row) indices, `ys` = axis-1 (column) indices — the historical names, kept so older records replay.
+Screen coordinates are (x = column, y = row); on a displayed plane that is `plane[y, x]`. Edit records store
+indices into the on-disk array: `xs` = axis-0, `ys` = axis-1 — the historical names, kept so older records replay.
+`_disk_idx` converts a displayed-frame mask into that pair.
 
 Per slice the viewer gets a *label index map*: ids are renumbered 0..k (0 stays background) into a uint16
 image, shipped as a lossless RGB PNG (R = hi byte, G = lo byte) together with the index -> id table. The
@@ -105,8 +118,8 @@ class Block:
 
     @property
     def shape_zyx(self) -> tuple[int, int, int]:
-        rows, cols, z = self.em.shape
-        return (int(z), int(rows), int(cols))
+        a0, a1, z = self.em.shape          # on disk: (volume X, volume Y, z)
+        return (int(z), int(a1), int(a0))  # displayed: (z, rows = Y, cols = X)
 
     def info(self) -> dict:
         g = self.meta.get("geometry", {})
@@ -116,8 +129,8 @@ class Block:
             "dtype_seg": str(self._seg_ro.dtype) if self.has_seg else None,
             "voxel_size_nm": g.get("voxel_size_nm"), "origin": g.get("origin"), "dataset": self.meta.get("dataset", {}).get("id"),
             "n_edits": len(self.edits()), "has_working_copy": (self.work / SEG_EDIT).exists(),
-            "working_copy": str(self.work / SEG_EDIT), "workdir": str(self.work), "em_source": "visual/slices_em" if self.visual_em else "em.npy",
-            "em_version": "2-" + ("visual" if self.visual_em else "npy"),  # bump when the EM rendering changes; the viewer keys its image URLs on it
+            "working_copy": str(self.work / SEG_EDIT), "workdir": str(self.work), "em_source": "em.npy",
+            "em_version": "3-transposed",  # bump when the EM rendering changes; the viewer keys its image URLs on it
         }
 
     # ------------------------------------------------------------------ label volume access
@@ -148,11 +161,24 @@ class Block:
         return self._seg_rw
 
     def em_slice(self, z: int) -> np.ndarray:
-        """(rows, cols) section z for display — same orientation as visual/slices_em."""
-        return np.ascontiguousarray(self.em[:, :, z])
+        """Section z as displayed: (rows = volume Y, cols = volume X). See the orientation note at the top."""
+        return np.ascontiguousarray(self.em[:, :, z].T)
 
     def seg_slice(self, z: int) -> np.ndarray:
-        return np.ascontiguousarray(self._seg()[:, :, z])
+        return np.ascontiguousarray(self._seg()[:, :, z].T)
+
+    def _plane(self, z: int) -> np.ndarray:
+        """A writable, displayed-orientation view of section z. Writes go through to the memmap."""
+        return self._seg_writable()[:, :, z].T
+
+    def _plane_ro(self, z: int) -> np.ndarray:
+        return self._seg()[:, :, z].T
+
+    @staticmethod
+    def _disk_idx(mask_display: np.ndarray):
+        """A displayed-frame boolean mask -> (xs, ys), indices into the on-disk array, for the edit record."""
+        rows, cols = np.nonzero(mask_display)
+        return cols, rows        # displayed row = on-disk axis 1, displayed column = on-disk axis 0
 
     def _check_z(self, z: int) -> None:
         if not 0 <= z < self.nz:
@@ -173,10 +199,8 @@ class Block:
 
     def em_png(self, z: int) -> bytes:
         self._check_z(z)
-        if self.visual_em is not None:
-            f = self.visual_em / f"z{z:04d}.png"
-            if f.exists():
-                return self._cached(("em", z), f.read_bytes)  # the delivery's own PNG, byte for byte
+        # The delivery's own PNGs are in the on-disk orientation; since sections are now displayed transposed they
+        # can no longer be served verbatim, so the EM layer is always rendered from em.npy.
         return self._cached(("em", z), lambda: _png(Image.fromarray(self.em_slice(z), mode="L")))
 
     def labels(self, z: int) -> tuple[np.ndarray, np.ndarray]:
@@ -217,7 +241,7 @@ class Block:
 
     def pick(self, z: int, x: int, y: int) -> int:
         self._check_z(z)
-        return int(self._seg()[y, x, z])
+        return int(self._seg()[x, y, z])        # screen x -> axis 0, screen y -> axis 1
 
     def _invalidate(self, z: int) -> None:
         with self.lock:
@@ -261,13 +285,16 @@ class Block:
             zs = np.full(xs.shape, int(z), dtype=np.uint16)
         np.savez_compressed(self._edit_dir() / f"{n:06d}.npz", z=-1 if z is None else int(z), xs=xs.astype(np.uint16), ys=ys.astype(np.uint16),
                             zs=zs.astype(np.uint16), old=np.asarray(old), new=np.asarray(new_id))
-        rec = {"n": n, "kind": kind, "z": (None if z is None else int(z)), "n_px": int(xs.size), "new_id": str(int(new_id)),
+        many = np.ndim(new_id) > 0                  # a repair writes a different id per pixel
+        rec = {"n": n, "kind": kind, "z": (None if z is None else int(z)), "n_px": int(xs.size),
+               "new_id": (f"{int(np.unique(new_id).size)} 个 id" if many else str(int(new_id))),
                "old_id": (str(int(old)) if np.ndim(old) == 0 else None), "n_slices": int(np.unique(zs).size),
                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **(extra or {})}
         self.work.mkdir(parents=True, exist_ok=True)
         with open(self.work / EDIT_LOG, "a") as f:
             f.write(json.dumps(rec) + "\n")
-        self._max_id = None if self._max_id is None else max(self._max_id, int(new_id))
+        if self._max_id is not None:
+            self._max_id = max(self._max_id, int(np.max(new_id)) if many else int(new_id))
         return rec
 
     def apply_mask(self, z: int, mask: np.ndarray, new_id: int, metadata: dict, kind: str = "sam") -> dict | None:
@@ -281,8 +308,8 @@ class Block:
             limits = np.iinfo(self._seg_ro.dtype)
             if not 0 <= new_id <= limits.max:
                 raise ValueError("label id is outside the segmentation dtype range")
-            changed = mask & (self._seg()[:, :, z] != new_id)
-            xs, ys = np.nonzero(changed)
+            changed = mask & (self._plane_ro(z) != new_id)
+            xs, ys = self._disk_idx(changed)
             if not xs.size:
                 return None
             seg = self._seg_writable()
@@ -305,7 +332,7 @@ class Block:
         disconnected pieces in this slice (two cells wrongly sharing one id that do not touch here)."""
         self._check_z(z)
         with self.lock:
-            plane = self._seg()[:, :, z]
+            plane = self._plane_ro(z)
             old = int(plane[y, x])
             if old == 0:
                 raise ValueError("背景不能分离，请点一个色块")
@@ -313,7 +340,7 @@ class Block:
             if n < 2:
                 raise ValueError("该颜色在本片只有一块；相连的色块请用切割线画开")
             mask = comps == comps[y, x]
-            xs, ys = np.nonzero(mask)
+            xs, ys = self._disk_idx(mask)
             (new_id,) = self._fresh_ids(1)
             seg = self._seg_writable()
             seg[xs, ys, z] = new_id
@@ -343,7 +370,7 @@ class Block:
         if len(points) < 2:
             raise ValueError("切割线至少需要两个点")
         with self.lock:
-            plane = self._seg()[:, :, z]
+            plane = self._plane_ro(z)
             path = self._rasterize(points, plane.shape)
             ids, counts = np.unique(plane[path], return_counts=True)
             keep = ids != 0
@@ -368,7 +395,7 @@ class Block:
                 fresh = self._fresh_ids(n - 1)
                 for k in [k for k in range(1, n + 1) if k != largest]:
                     nid = fresh.pop(0)
-                    xs, ys = np.nonzero(assigned == k)
+                    xs, ys = self._disk_idx(assigned == k)
                     xs_all.append(xs); ys_all.append(ys); vals_all.append(np.full(xs.shape, nid, dtype=np.uint64)); new_ids.append(nid)
             if not new_ids:
                 raise ValueError("切割线没有把色块分开，请从色块外画到色块外、穿过整个色块")
@@ -380,6 +407,36 @@ class Block:
             return self._record("split", z, xs, ys, cut_id, new_ids[0],
                                 {"mode": "line", "cut_id": str(cut_id), "pieces": len(new_ids) + 1, "new_ids": [str(i) for i in new_ids], "n_points": len(points)})
 
+    def apply_labels(self, z: int, labels: np.ndarray, where: np.ndarray, metadata: dict) -> dict | None:
+        """Write many different ids at once, inside `where` — what repairing a destroyed section needs.
+
+        Unlike every other operation this one has no single new id, so the record keeps the whole array of new ids
+        in the npz alongside the old ones. Undo only ever reads `old`, so older records replay unchanged."""
+        self._check_z(z)
+        labels = np.asarray(labels)
+        where = np.asarray(where, bool)
+        if labels.shape != self.shape_zyx[1:] or where.shape != labels.shape:
+            raise ValueError("labels/where shape does not match the displayed slice")
+        with self.lock:
+            if not self.has_seg:
+                raise ValueError("block has no seg.npy")
+            limits = np.iinfo(self._seg_ro.dtype)
+            if labels.size and (labels.min() < 0 or labels.max() > limits.max):
+                raise ValueError("label id is outside the segmentation dtype range")
+            plane = self._plane_ro(z)
+            changed = where & (labels != plane)
+            xs, ys = self._disk_idx(changed)
+            if not xs.size:
+                return None
+            seg = self._seg_writable()
+            old = seg[xs, ys, z].copy()
+            new = labels.T[xs, ys].astype(seg.dtype)      # labels are in the displayed frame
+            rec = self._record("repair", z, xs, ys, old, new, metadata)
+            seg[xs, ys, z] = new
+            seg.flush()
+            self._invalidate(z)
+            return rec
+
     def fill(self, z: int, x: int, y: int, new_id: int, whole_slice: bool = False) -> dict | None:
         """Bucket fill: relabel the connected component of the clicked pixel (4-connectivity within the slice) to
         `new_id`; with whole_slice, every pixel of that id in the slice. Returns the edit record, or None if the
@@ -387,7 +444,7 @@ class Block:
         self._check_z(z)
         with self.lock:
             seg = self._seg_writable()
-            plane = seg[:, :, z]  # (rows, cols) view on the memmap: writes go straight to disk
+            plane = self._plane(z)  # displayed-orientation view on the memmap: writes go straight to disk
             old = int(plane[y, x])
             if old == new_id:
                 return None
@@ -395,7 +452,7 @@ class Block:
             if not whole_slice:
                 lab, _ = ndimage.label(mask)
                 mask = lab == lab[y, x]
-            xs, ys = np.nonzero(mask)
+            xs, ys = self._disk_idx(mask)
             plane[mask] = new_id
             seg.flush()
             self._invalidate(z)
@@ -410,7 +467,7 @@ class Block:
         radius = max(0, int(radius))
         with self.lock:
             seg = self._seg_writable()
-            plane = seg[:, :, z]
+            plane = self._plane(z)
             H, W = plane.shape
             mask = np.zeros(plane.shape, dtype=bool)
             yy, xx = np.ogrid[-radius:radius + 1, -radius:radius + 1]
@@ -426,11 +483,11 @@ class Block:
                     continue
                 mask[r0:r1, c0:c1] |= disc[r0 - (y - radius):r1 - (y - radius), c0 - (x - radius):c1 - (x - radius)]
             mask &= plane != new_id
-            xs, ys = np.nonzero(mask)
+            xs, ys = self._disk_idx(mask)
             if xs.size == 0:
                 return None
-            old = plane[xs, ys].copy()
-            plane[xs, ys] = new_id
+            old = seg[xs, ys, z].copy()
+            plane[mask] = new_id
             seg.flush()
             self._invalidate(z)
             return self._record("paint", z, xs, ys, old, new_id, {"radius": radius, "n_points": len(points)})
@@ -442,13 +499,13 @@ class Block:
         cannot choose the wrong keeper. Other islands and slices stay unchanged.
         """
         self._check_z(z)
-        H, W = self.em.shape[:2]
+        _, H, W = self.shape_zyx
         if any(not (0 <= x < W and 0 <= y < H) for x, y in (first, second)):
             raise ValueError("outside the block")
         if not self.has_seg:
             raise ValueError("block has no segmentation")
         with self.lock:
-            plane = self._seg()[:, :, z]
+            plane = self._plane_ro(z)
             (fx, fy), (sx, sy) = first, second
             to_id, from_id = int(plane[fy, fx]), int(plane[sy, sx])
             if not to_id or not from_id:
@@ -456,7 +513,7 @@ class Block:
             if from_id == to_id:
                 return None
             components, _ = ndimage.label(plane == from_id)
-            xs, ys = np.nonzero(components == components[sy, sx])
+            xs, ys = self._disk_idx(components == components[sy, sx])
             seg = self._seg_writable()
             seg[xs, ys, z] = to_id
             seg.flush()

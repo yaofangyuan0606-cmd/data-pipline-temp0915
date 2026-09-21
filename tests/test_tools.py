@@ -92,11 +92,16 @@ def test_refine_mask_cuts_leaks_and_extends_to_the_membrane():
 def block(tmp_path):
     em, left, right = two_cells()
     Z = 3
-    vol = np.repeat(em[:, :, None], Z, axis=2)
-    seg = np.zeros((*em.shape, Z), dtype=np.uint64)
-    seg[2:-2, 2:-2, :] = 7  # both cells, wall included, wrongly share id 7 on every slice → one connected blob
-    seg[2:-2, 52:-2, 1] = 0  # z1: the right cell is unlabelled ...
-    seg[40:50, 60:70, 1] = 7  # ... except an island of 7 → id 7 has two disconnected pieces on z1
+    # A displayed section is the transpose of what is stored, so store the transpose: the block then *shows*
+    # exactly the picture two_cells() drew, and the screen coordinates below keep their meaning.
+    vol = np.repeat(em.T[:, :, None], Z, axis=2)
+    seg = np.zeros((em.shape[1], em.shape[0], Z), dtype=np.uint64)
+    # indices below are (displayed row, displayed column) transposed onto the stored array
+    disp = np.zeros((em.shape[0], em.shape[1], Z), dtype=np.uint64)
+    disp[2:-2, 2:-2, :] = 7   # both cells, wall included, wrongly share id 7 → one connected blob
+    disp[2:-2, 52:-2, 1] = 0  # z1: the right cell is unlabelled ...
+    disp[40:50, 60:70, 1] = 7  # ... except an island of 7 → id 7 has two disconnected pieces on z1
+    seg = np.ascontiguousarray(disp.transpose(1, 0, 2))
     d = tmp_path / "blocks" / "demo" / "b1"
     d.mkdir(parents=True)
     np.save(d / "em.npy", vol)
@@ -245,3 +250,82 @@ def test_neuroglancer_endpoint(client_tools):
     d = r.json()
     assert d["url"] is None and "origin" in d["reason"], "the synthetic test block has no origin, so no link"
     assert c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer", params={"z": 0, "x": 999, "y": 10}).status_code == 404
+
+
+# ----------------------------------------------------------------------------- 修补损坏切片
+def test_detect_damage_finds_bands_not_organelles():
+    from emqc.annotate import interpolate as ip
+
+    em, _, _ = two_cells()
+    assert not ip.detect_damage(em).any(), "dark organelles and membranes are not damage"
+    cut = em.copy()
+    cut[20:40, :] = 0
+    m = ip.detect_damage(cut)
+    assert m[20:40, :].all() and not m[:18, :].any(), "a black band across the section is"
+    assert ip.detect_damage(np.zeros_like(em)).all(), "a blank page is damage everywhere"
+
+
+def test_interpolation_recovers_cells_and_flags_its_own_uncertainty():
+    """A destroyed section is repaired from the cells' shapes above and below; the pixels where those two
+    disagree are reported so the annotator can see where the fill is a guess."""
+    from emqc.annotate import interpolate as ip
+
+    H, W, K = 48, 48, 5
+    seg = np.zeros((H, W, K), np.uint64)
+    for k in range(K):                       # one cell drifting two pixels per section
+        seg[10 + 2 * k:30 + 2 * k, 10:30, k] = 7
+    truth = seg[:, :, 2].copy()
+    hole = np.ones((H, W), bool)
+    seg[:, :, 2] = 0                         # section 2 destroyed: labels gone too
+    r = ip.interpolate_section(seg, 2, hole)
+    assert r.interpolated is True and r.source_sections == (1, 3)
+    inter = float(((r.labels == 7) & (truth == 7)).sum() / max(1, ((r.labels == 7) | (truth == 7)).sum()))
+    assert inter > 0.75, f"the drifting cell is recovered (IoU {inter:.2f})"
+    assert r.uncertain.any() and not r.uncertain[19, 19], "disagreement is flagged, the cell's core is not"
+    assert r.stats["hole_px"] == H * W and r.n_px > 0
+
+
+def test_interpolation_steps_over_a_second_destroyed_section():
+    """Real black cuts come in runs. A neighbour that is itself blank must not be treated as data."""
+    from emqc.annotate import interpolate as ip
+
+    H, W, K = 40, 40, 6
+    seg = np.zeros((H, W, K), np.uint64)
+    seg[10:30, 10:30, :] = 5
+    seg[:, :, 2] = 0
+    seg[:, :, 3] = 0                          # two consecutive destroyed sections
+    r = ip.interpolate_section(seg, 2, np.ones((H, W), bool))
+    assert r.source_sections == (1, 4), "it reaches past the blank neighbour"
+    assert "相邻切片也是坏的" in r.note
+    assert float(((r.labels == 5) & (seg[:, :, 1] == 5)).sum() / 400) > 0.9
+    empty = np.zeros((H, W, 3), np.uint64)
+    empty[:, :, 1] = 0
+    r2 = ip.interpolate_section(empty, 1, np.ones((H, W), bool))
+    assert r2.n_px == 0 and "无法修补" in r2.note, "no good neighbour at all: refuse, do not invent"
+
+
+def test_repair_api_preview_apply_and_undo(client_tools):
+    c, block_id = client_tools
+    assert c.post(f"/api/v1/annotate/blocks/{block_id}/repair/preview", json={"z": 0}).status_code == 422, "no damage here"
+    scan = c.get(f"/api/v1/annotate/blocks/{block_id}/repair/scan").json()
+    assert scan["n"] == 0
+    assert c.post(f"/api/v1/annotate/blocks/{block_id}/repair/apply", json={"token": "0" * 32}).status_code == 409
+    assert c.post(f"/api/v1/annotate/blocks/{block_id}/repair/preview", json={"z": 99}).status_code == 404
+
+
+def test_apply_labels_writes_many_ids_and_undoes_exactly(block):
+    """The repair writes a different id per pixel, which no other operation does."""
+    original = np.load(block.path / "seg.npy").copy()
+    labels = np.zeros(block.shape_zyx[1:], np.uint64)
+    where = np.zeros(labels.shape, bool)
+    labels[5:9, 5:9] = 111
+    labels[5:9, 9:13] = 222
+    where[5:9, 5:13] = True
+    rec = block.apply_labels(0, labels, where, {"interpolated": True, "source_sections": [0, 2]})
+    assert rec["kind"] == "repair" and rec["interpolated"] is True and rec["n_px"] == 32
+    assert "2 个 id" in rec["new_id"]
+    plane = block.seg_slice(0)
+    assert int(plane[6, 6]) == 111 and int(plane[6, 10]) == 222
+    assert np.array_equal(np.load(block.path / "seg.npy"), original), "the delivered array is never written"
+    block.undo()
+    assert np.array_equal(np.load(block.work / "seg_edit.npy"), original)

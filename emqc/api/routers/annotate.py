@@ -241,6 +241,70 @@ def labels_json(block_id: str, z: int):
         raise HTTPException(404, str(e))
 
 
+class RepairPreviewIn(BaseModel):
+    z: int = Field(ge=0)
+    dark: int = Field(default=12, ge=0, le=255)     # "destroyed" means at or below this grey level
+
+
+class TokenOnlyIn(BaseModel):
+    token: str = Field(min_length=32, max_length=32)
+
+
+@router.get("/blocks/{block_id}/repair/scan")
+def repair_scan(block_id: str, dark: int = 12):
+    """Which sections look destroyed, so the annotator does not have to hunt for them."""
+    from emqc.annotate.interpolate import detect_damage
+
+    b = _block(block_id)
+    out = []
+    for z in range(b.shape_zyx[0]):
+        m = detect_damage(b.em_slice(z), dark)
+        f = float(m.mean())
+        if f > 0:
+            out.append({"z": z, "fraction": round(f, 4), "whole": bool(f > 0.97)})
+    return {"block_id": b.id, "dark": dark, "n": len(out), "sections": out}
+
+
+@router.post("/blocks/{block_id}/repair/preview")
+def repair_preview(block_id: str, body: RepairPreviewIn):
+    """修补损坏切片: the labels the cells would have carried across the destroyed area, as a preview."""
+    from emqc.annotate.interpolate import service as repair_service
+
+    b = _block(block_id)
+    if not 0 <= body.z < b.shape_zyx[0]:
+        raise HTTPException(404, "z outside the block")
+    try:
+        return repair_service.preview(b, body.z, body.dark)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.post("/blocks/{block_id}/repair/apply")
+def repair_apply(block_id: str, body: TokenOnlyIn):
+    from emqc.annotate.interpolate import service as repair_service
+
+    b = _block(block_id)
+    try:
+        rec = repair_service.apply(b, body.token)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return _edit_response(b, rec)
+
+
+@router.get("/blocks/{block_id}/neuroglancer/block")
+def neuroglancer_block(block_id: str, z: int = 0):
+    """A link that opens the WHOLE block in the 3D viewer, with its outline drawn.
+
+    For the dark blobs that carry no label there is nothing to select, so the annotator has to arrive with the block
+    framed and look around at full resolution themselves."""
+    from emqc.annotate.neuroglancer import link_for_block
+
+    b = _block(block_id)
+    if not 0 <= z < b.shape_zyx[0]:
+        raise HTTPException(404, "z outside the block")
+    return {**link_for_block(b.meta, b.shape_zyx, z), "block_id": b.id, "shape_zyx": list(b.shape_zyx)}
+
+
 @router.get("/blocks/{block_id}/neuroglancer")
 def neuroglancer(block_id: str, z: int, x: int, y: int, zoom_nm: float = 4.0):
     """A link that opens this pixel in the public 3D viewer, with the segment under it selected when there is one.
@@ -254,8 +318,19 @@ def neuroglancer(block_id: str, z: int, x: int, y: int, zoom_nm: float = 4.0):
         raise HTTPException(404, "outside the block")
     # the pristine label, not the working copy: the public viewer serves the original c3 segmentation and knows
     # nothing about edits made here, so selecting the edited id would point at the wrong cell.
-    seg_id = int(b._seg_ro[y, x, z]) if b.has_seg else 0
-    return {**link_for(b.meta, x, y, z, seg_id or None, zoom_nm), "block_id": b.id, "clicked": {"x": x, "y": y, "z": z},
+    seg_id = int(b._seg_ro[x, y, z]) if b.has_seg else 0   # screen x -> axis 0
+    neighbours = None
+    if b.has_seg and not seg_id:
+        # a dark blob with no label of its own: collect the cells around it so the viewer has something to render
+        import numpy as np
+
+        r = 24
+        H2, W2 = H, W
+        win = np.asarray(b._seg_ro[max(0, x - r):min(W2, x + r + 1), max(0, y - r):min(H2, y + r + 1), z])
+        ids, counts = np.unique(win[win > 0], return_counts=True)
+        neighbours = [int(i) for i in ids[np.argsort(-counts)][:8]]
+    return {**link_for(b.meta, x, y, z, seg_id or None, zoom_nm, b.shape_zyx, neighbours),
+            "block_id": b.id, "clicked": {"x": x, "y": y, "z": z},
             "edited_id": str(b.pick(z, x, y)) if b.has_seg else None}
 
 

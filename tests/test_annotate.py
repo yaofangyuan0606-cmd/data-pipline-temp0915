@@ -15,7 +15,9 @@ def ann_root(tmp_path_factory):
     b = root / "b0"
     b.mkdir(parents=True)
     rng = np.random.default_rng(0)
-    em = rng.integers(0, 255, (32, 24, 5), dtype=np.uint8)  # (x, y, z)
+    # On disk the arrays are (volume X, volume Y, z); a displayed section is the transpose, so this volume shows
+    # as 24 rows x 32 columns, with label 5 in columns 0..15, BIG in columns 16..31, and a hole at rows/cols 4..7.
+    em = rng.integers(0, 255, (32, 24, 5), dtype=np.uint8)
     seg = np.zeros((32, 24, 5), np.uint64)
     seg[:16] = 5
     seg[16:] = BIG
@@ -55,16 +57,17 @@ def _idx_map(png_bytes):
 
 def test_blocks_and_slices(client, ann_root):
     r = client.get("/api/v1/annotate/blocks").json()
-    assert r["blocks"][0]["block_id"] == "b0" and r["blocks"][0]["nz"] == 5 and r["blocks"][0]["width"] == 24 and r["blocks"][0]["height"] == 32
+    assert r["blocks"][0]["block_id"] == "b0" and r["blocks"][0]["nz"] == 5 and r["blocks"][0]["width"] == 32 and r["blocks"][0]["height"] == 24
     info = client.get("/api/v1/annotate/blocks/b0").json()
-    assert info["shape_zyx"] == [5, 32, 24] and info["has_seg"] and info["voxel_size_nm"] == [8, 8, 33]
+    assert info["shape_zyx"] == [5, 24, 32], "displayed shape: rows = volume Y, columns = volume X"
+    assert info["has_seg"] and info["voxel_size_nm"] == [8, 8, 33]
     assert info["em_source"] == "em.npy" and info["workdir"].endswith("b0")
 
     em = np.load(ann_root / "demo" / "b0" / "em.npy")
     png = client.get("/api/v1/annotate/blocks/b0/em/2.png")
     assert png.status_code == 200
     got = np.asarray(Image.open(io.BytesIO(png.content)))
-    assert got.shape == (32, 24) and np.array_equal(got, em[:, :, 2])  # rows = axis 0, same orientation as visual/slices_em
+    assert got.shape == (24, 32) and np.array_equal(got, em[:, :, 2].T), "the EM is served transposed, X horizontal"
     assert client.get("/api/v1/annotate/blocks/b0/em/9.png").status_code == 404
 
 
@@ -73,12 +76,13 @@ def test_label_index_map_and_exact_ids(client):
     assert tab["ids"][0] == "0" and set(tab["ids"]) == {"0", "5", str(BIG)}
     assert sum(tab["counts"]) == 32 * 24
     idx = _idx_map(client.get("/api/v1/annotate/blocks/b0/labels/0.png").content)
-    assert idx.shape == (32, 24)                       # (rows, cols)
-    assert tab["ids"][idx[20, 10]] == str(BIG) and tab["ids"][idx[10, 2]] == "5" and tab["ids"][idx[5, 5]] == "0"
-    # screen (x = column, y = row) -> plane[y, x]
-    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 10, "y": 20}).json()["id"] == str(BIG)
-    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 10, "y": 5}).json()["id"] == "5"
-    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 30, "y": 0}).status_code == 404
+    assert idx.shape == (24, 32)                       # (rows, cols) as displayed
+    # columns 0..15 carry 5, columns 16..31 carry BIG, rows/cols 4..7 are the hole
+    assert tab["ids"][idx[10, 20]] == str(BIG) and tab["ids"][idx[2, 10]] == "5" and tab["ids"][idx[5, 5]] == "0"
+    # screen (x = column, y = row); x now indexes the volume's X, i.e. the array's axis 0
+    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 20, "y": 10}).json()["id"] == str(BIG)
+    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 10, "y": 2}).json()["id"] == "5"
+    assert client.get("/api/v1/annotate/blocks/b0/pick", params={"z": 0, "x": 0, "y": 30}).status_code == 404
 
 
 def test_fill_is_copy_on_write_and_undoable(client, ann_root, workdir):
@@ -107,13 +111,13 @@ def test_fill_is_copy_on_write_and_undoable(client, ann_root, workdir):
     r = client.post("/api/v1/annotate/blocks/b0/paint", json={"z": 1, "points": [[1, 1], [3, 1]], "radius": 0, "new_id": "42"}).json()
     assert r["edit"]["kind"] == "paint" and r["edit"]["n_px"] == 3 and r["edit"]["old_id"] is None
     seg = np.load(w / "seg_edit.npy", mmap_mode="r")
-    assert [int(seg[1, x, 1]) for x in (1, 2, 3)] == [42, 42, 42] and int(seg[1, 4, 1]) == 5
+    assert [int(seg[x, 1, 1]) for x in (1, 2, 3)] == [42, 42, 42] and int(seg[4, 1, 1]) == 5
     assert client.post("/api/v1/annotate/blocks/b0/new-id").json()["id"] == str(BIG + 1)
 
     # undo restores exactly, most recent first
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["kind"] == "paint"
     seg = np.load(w / "seg_edit.npy", mmap_mode="r")
-    assert [int(seg[1, x, 1]) for x in (1, 2, 3)] == [5, 5, 5]
+    assert [int(seg[x, 1, 1]) for x in (1, 2, 3)] == [5, 5, 5]
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["n"] == 2
     assert int(np.load(w / "seg_edit.npy", mmap_mode="r")[1, 1, 0]) == 5
     assert client.get("/api/v1/annotate/blocks/b0/edits").json()["n"] == 1
@@ -140,7 +144,7 @@ def test_annotation_is_its_own_workspace(client, workdir):
     assert 'href="/annotate/blocks"' not in qc and 'href="/annotate/guide"' not in qc and "an-stage" not in qc
 
     blocks = client.get("/annotate/blocks")
-    assert blocks.status_code == 200 and "b0" in blocks.text and "5 · 32 · 24" in blocks.text and str(workdir) in blocks.text
+    assert blocks.status_code == 200 and "b0" in blocks.text and "5 · 24 · 32" in blocks.text and str(workdir) in blocks.text
     guide = client.get("/annotate/guide")
     assert guide.status_code == 200 and "merge-pair" in guide.text and str(workdir) in guide.text
     summary = client.get("/api/v1/annotate/blocks").json()["blocks"][0]
@@ -155,7 +159,7 @@ def test_merge_block_scope_and_legacy_undo(client, ann_root, workdir):
     assert r["edit"]["kind"] == "merge" and r["edit"]["scope"] == "block" and r["edit"]["z"] is None
     assert r["edit"]["n_px"] == 16 * 24 * 5 and r["edit"]["n_slices"] == 5 and r["edit"]["old_id"] == str(BIG)
     seg = np.load(w / "seg_edit.npy", mmap_mode="r")
-    assert not (np.asarray(seg) == BIG).any() and int(seg[20, 10, 4]) == 5
+    assert not (np.asarray(seg) == BIG).any() and int(seg[20, 10, 4]) == 5   # axis 0 = 20 was BIG
     for z in range(5):
         assert client.get(f"/api/v1/annotate/blocks/b0/labels/{z}.json").json()["ids"] == ["0", "5"]
     # merging an id that is not there is a no-op; from == to too

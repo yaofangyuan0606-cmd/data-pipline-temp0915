@@ -29,8 +29,9 @@ def proposal(service, block, mask, token="a" * 32):
 
 def test_mask_axis_exact_uint64_and_undo(block):
     original = np.load(block.path / "seg.npy").copy()
-    mask = np.zeros((12, 8), dtype=bool)
-    mask[6:9, 2:5] = True  # non-square, crosses a uint64 label boundary
+    # a mask is in the DISPLAYED frame, which is the transpose of the (12, 8, 2) array on disk
+    mask = np.zeros((8, 12), dtype=bool)
+    mask[2:5, 6:9] = True  # non-square, crosses a uint64 label boundary; on disk that is [6:9, 2:5]
     s = SAMService()
     token = proposal(s, block, mask)
     new_id = 9007199254741017
@@ -50,7 +51,7 @@ def test_mask_axis_exact_uint64_and_undo(block):
 
 def test_stale_expired_wrong_block_and_invalid_id(block):
     s = SAMService()
-    mask = np.ones((12, 8), dtype=bool)
+    mask = np.ones((8, 12), dtype=bool)
     token = proposal(s, block, mask)
     with pytest.raises(ValueError, match="dtype range"):
         s.apply(block, token, 2**64)

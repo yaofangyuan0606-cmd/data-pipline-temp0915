@@ -162,7 +162,7 @@ def browser(tmp_path):
             page.call("Network.enable")
             page.call("Fetch.enable", patterns=[{"urlPattern": "*", "requestStage": "Request"}])
             page.call("Page.navigate", url=f"http://127.0.0.1:{port}/annotate?block=pairs")
-            page.wait("document.querySelector('#an-meta')?.textContent.startsWith('32×64×2') && document.querySelectorAll('#an-segs .row').length >= 4")
+            page.wait("document.querySelector('#an-meta')?.textContent.startsWith('64×32×2') && document.querySelectorAll('#an-segs .row').length >= 4")
             page.evaluate("document.getElementById('an-stage').scrollIntoView({block:'center'})")
             yield page, data, original
             assert not page.errors, page.errors
@@ -189,17 +189,17 @@ def test_hover_and_independent_merge_pairs_in_browser(browser):
     a, b, c, d = POINTS
     page.move(a)
     page.wait(page.alpha(a) + ' > 0')
-    assert page.evaluate(page.alpha((20, 4))) == 0
+    assert page.evaluate(page.alpha((4, 20))) == 0
     assert page.evaluate(page.alpha((10, 10))) == 0
     # Move directly to a disconnected island of the same id: highlight must move.
-    page.move((20, 4))
-    page.wait(page.alpha((20, 4)) + ' > 0')
+    page.move((4, 20))
+    page.wait(page.alpha((4, 20)) + ' > 0')
     assert page.evaluate(page.alpha(a)) == 0
     page.evaluate("document.querySelector('[data-tool=merge]').click()")
     page.move(a, click=True)
     page.move(b)
     page.wait(page.alpha(a) + ' > 0 && ' + page.alpha(b) + ' > 0')
-    assert page.evaluate(page.alpha((20, 4))) == 0
+    assert page.evaluate(page.alpha((4, 20))) == 0
     # Simulate B, C, D in the same event turn: only B may complete the pending pair.
     coords = [page.position(p) for p in (b, c, d)]
     page.evaluate(f"""{json.dumps(coords)}.forEach(([x,y]) => document.getElementById('an-stage').dispatchEvent(

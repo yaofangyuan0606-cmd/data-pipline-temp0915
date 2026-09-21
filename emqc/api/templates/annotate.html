@@ -55,9 +55,14 @@
     <div class="actions" style="margin-top:6px"><button id="an-sam-new" class="primary" disabled>填为新标签</button><button id="an-sam-apply" disabled>填为当前标签</button></div>
     <div class="muted" id="an-sam-result" role="status" style="font-size:12px;margin-top:6px">仅处理当前切片；应用后可 Ctrl+Z 撤销。</div>
 
+    <div class="vast-sec">修补损坏切片 <span class="muted">黑带 / 白页</span></div>
+    <div class="actions"><button id="an-rp-scan" title="扫描整块，列出图像被毁的切片">扫描损坏</button><button id="an-rp-prev" title="用上下相邻切片的细胞形状插值，补回这一片丢失的标签">检测并预览</button></div>
+    <div class="actions" style="margin-top:6px"><button id="an-rp-apply" class="primary" disabled>应用修补</button></div>
+    <div class="muted" id="an-rp-info" style="font-size:12px;margin-top:6px">图像毁了就找不回来，能补的是标签。绿色是补出来的，<b>斜纹处上下两片不一致、把握较低</b>，红色是谁都没认领。改动记为「修补」并标明是插值。</div>
+
     <div class="vast-sec">3D 查看 <span class="muted">判断黑团是什么</span></div>
-    <div class="actions"><button id="an-ng" title="把光标所在位置在公开的 H01 Neuroglancer 里打开，用 3D 视角判断这团暗色到底是细胞器、独立细胞还是切片损伤">在 Neuroglancer 打开 <kbd>U</kbd></button></div>
-    <div class="muted" id="an-ng-info" style="font-size:12px;margin-top:6px">把鼠标放到要查看的位置，按 <kbd>U</kbd> 或点上面的按钮。有标签时会在 3D 里直接选中那个细胞。</div>
+    <div class="actions"><button id="an-ng" title="把光标所在位置在公开的 H01 Neuroglancer 里打开，位置会用黄点标出">看这一点 <kbd>U</kbd></button><button id="an-ng-block" title="把整个数据块在公开的 H01 Neuroglancer 里打开，范围用黄框标出，方便自己在 3D 里找">看整块</button></div>
+    <div class="muted" id="an-ng-info" style="font-size:12px;margin-top:6px">点有颜色的细胞会在 3D 里渲染它的网格；点没标签的黑团会改为渲染<b>周围的细胞</b>，黑团就是它们之间的空隙。</div>
 
     <div class="vast-sec">当前标签</div>
     <div class="vast-cur"><span class="sw" id="an-cur-sw"></span><span class="mono" id="an-cur-id">0</span></div>
@@ -135,6 +140,7 @@
       <div class="kbd-row"><kbd>X</kbd> 切割：画一条线穿过色块把它切开，较大的一块保留原色</div>
       <div class="kbd-row"><kbd>D</kbd> 分离：把点到的块从同色不相连的块中分出来</div>
       <div class="kbd-row">清除：把点到的色块清成背景，再重新上色；<kbd>Shift</kbd>+点击清整片同色</div>
+      <div class="kbd-row">修补损坏切片：黑带或白页上，用上下相邻切片的细胞形状插值补回标签，先预览再应用</div>
       <div class="kbd-row"><kbd>M</kbd> 合并：先点 A 再点 B，B 变成 A 的颜色；每一对独立，只改当前片点到的色块</div>
       <div class="kbd-row"><kbd>B</kbd> 画笔 · <kbd>E</kbd> 橡皮 · <kbd>[</kbd> <kbd>]</kbd> 半径</div>
       <div class="kbd-row"><kbd>N</kbd> 新建 ID · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</div>
@@ -162,5 +168,5 @@
     });
   })();
 </script>
-<script src="/static/annotate.js?v=ng-1" defer></script>
+<script src="/static/annotate.js?v=repair-1" defer></script>
 {% endblock %}
