@@ -1,0 +1,52 @@
+.cmp-page { max-width: 1600px; margin: auto; }
+.cmp-page h1 { margin: 0; font-size: 24px; letter-spacing: -.025em; }
+.cmp-page h2 { margin: 0; font-size: 18px; }
+.cmp-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.cmp-heading p { margin: 7px 0 0; font-size: 13px; }
+.cmp-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 14px 20px; padding: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); }
+.cmp-controls label, .cmp-controls > div > label, .cmp-filters label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-2); }
+.cmp-controls label { position: relative; }
+.cmp-controls output { position: absolute; right: 0; top: 0; font: 12px var(--mono); color: var(--muted); }
+.cmp-controls input[type=range] { width: 150px; height: 32px; margin: 0; }
+.cmp-block { flex: 1; min-width: 180px; max-width: 430px; }
+.cmp-block select { width: 100%; }
+.cmp-z, .cmp-download, .cmp-pagination { display: flex; align-items: center; gap: 8px; }
+.cmp-download button { white-space: nowrap; }
+.cmp-download select { width: auto; }
+.cmp-z input { width: 70px; }
+.cmp-controls .cmp-check { flex-direction: row; align-items: center; min-height: 32px; }
+.cmp-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+.cmp-metrics > div { padding: 14px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); }
+.cmp-metrics small { color: var(--muted); display: block; margin-bottom: 5px; }
+.cmp-metrics strong { font: 600 23px var(--mono); }
+.cmp-metrics .cmp-total { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); }
+.cmp-images { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.cmp-images figure { min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r); }
+.cmp-images figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; background: var(--surface); font-size: 13px; }
+.cmp-images figcaption span { color: var(--muted); font-size: 12px; }
+.cmp-viewport { height: clamp(270px, 42vw, 570px); background: #0b0d10; overflow: auto; }
+.cmp-canvas-wrap { position: relative; width: 100%; }
+.cmp-canvas-wrap canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; cursor: crosshair; }
+.cmp-cursor { position: absolute; width: 15px; height: 15px; border: 1px solid #fff; box-shadow: 0 0 0 1px #000; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+.cmp-pixel { min-height: 20px; font-size: 12px; padding: 2px 0; }
+.cmp-report { padding: 22px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r); margin-top: 22px; }
+.cmp-report p { font-size: 12px; line-height: 1.7; }
+.cmp-legend { display: flex; flex-wrap: wrap; gap: 10px; }
+.cmp-legend > span { padding: 7px 11px; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--r-s); font-size: 12px; display: inline-flex; align-items: center; gap: 7px; }
+.cmp-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+.cmp-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin: 20px 0 12px; }
+.cmp-filters > span { margin-left: auto; font-size: 12px; }
+.cmp-table-wrap { overflow: auto; }
+.cmp-table-wrap table { width: 100%; white-space: nowrap; font-size: 12px; }
+.cmp-table-wrap th, .cmp-table-wrap td { text-align: right; padding: 10px; }
+.cmp-table-wrap th:first-child, .cmp-table-wrap td:first-child { text-align: left; }
+.cmp-table-wrap td { font-family: var(--mono); }
+.cmp-mixed { margin-left: 8px; color: var(--accent-ink); font: 11px sans-serif; }
+.cmp-pagination { justify-content: flex-end; margin-top: 12px; font-size: 12px; }
+.cmp-report details { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 15px; }
+.cmp-report summary { cursor: pointer; font-size: 13px; }
+#cmp-warnings { background: var(--surface-2); border-left: 3px solid #ed647a; padding: 8px 12px; }
+.cmp-page [hidden] { display: none !important; }
+.cmp-page [aria-busy=true] { opacity: .65; }
+@media (max-width: 1000px) { .cmp-heading { flex-wrap: wrap; } .cmp-report { padding: 16px; } }
+@media (max-width: 700px) { .cmp-images { grid-template-columns: 1fr; } .cmp-metrics { grid-template-columns: 1fr 1fr; } .cmp-download { flex-wrap: wrap; } }

@@ -267,9 +267,15 @@ def annotate_blocks_page(request: Request):
     blocks = st.refresh()
     ok = [b for b in blocks if not b.get("error")]  # a half-copied block is listed with an error and must not take the page down
     stats = {"n_seg": sum(1 for b in ok if b["has_seg"]), "n_working": sum(1 for b in ok if b["has_working_copy"]),
-             "n_edits": sum(b["n_edits"] for b in ok), "n_error": len(blocks) - len(ok)}
+             "n_edits": sum(b["n_edits"] or 0 for b in ok), "n_error": len(blocks) - len(ok),
+             "n_history_error": sum(bool(b.get("history_error")) for b in ok)}
     return _render("annotate_blocks.html", request, blocks=blocks, stats=stats, roots=[str(r) for r in st.roots], workdir=str(settings.annotate_workdir),
                    sam_dir=str(settings.sam_blocks_dir), active="blocks", workspace="annotate")
+
+
+@router.get("/annotate/compare", response_class=HTMLResponse)
+def annotate_compare_page(request: Request):
+    return _render("annotate_compare.html", request, active="compare", workspace="annotate")
 
 
 @router.get("/annotate/guide", response_class=HTMLResponse)

@@ -83,12 +83,12 @@ def test_prediction_clips_existing_labels_and_preserves_em_axes(block, monkeypat
         def set_image(self, image):
             self.image = image
         def predict(self, **kwargs):
-            return np.ones((3, 12, 8), bool), np.array([.8, .9, .7]), None
+            return np.ones((3, *self.image.shape[:2]), bool), np.array([.8, .9, .7]), None
     s = SAMService()
     s.predictor = Predictor()
     r = s.predict(block, 0, [(3, 2)], [1], None)
     assert r["n_px"] == 7 * 8 and r["candidate"] == 1
-    assert np.array_equal(s.predictor.image[:, :, 0], block.em[:, :, 0])
+    assert np.array_equal(s.predictor.image[:, :, 0], block.em[:, :, 0].T)
     assert not (block.work / "seg_edit.npy").exists(), "preview must not write labels"
     s.apply(block, r["token"], 55)
     labels = np.load(block.work / "seg_edit.npy")
