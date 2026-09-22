@@ -335,7 +335,19 @@ class Block:
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    def edits(self) -> list[dict]:
+    def _edit_in_slice(self, rec: dict, z: int) -> dict | None:
+        if rec.get("z") is not None:
+            return rec if rec["z"] == z else None
+        with np.load(self.work_path(f"{EDIT_DIR}/{rec['n']:06d}.npz"), allow_pickle=False) as data:
+            zs = data["zs"] if "zs" in data.files else np.full(data["xs"].shape, int(data["z"]))
+            n_px = int(np.count_nonzero(zs == z))
+        return {**rec, "z": z, "n_px": n_px, "n_slices": 1} if n_px else None
+
+    def edits(self, z: int | None = None) -> list[dict]:
+        if z is not None:
+            self._check_z(z)
+            with self.lock:
+                return [entry for rec in self.edits() if (entry := self._edit_in_slice(rec, z)) is not None]
         p = self.work_path(EDIT_LOG)
         if not p.exists():
             return []
@@ -577,30 +589,59 @@ class Block:
                 self._invalidate(int(k))
             return self._record("merge", (int(z) if scope == "slice" else None), xs, ys, from_id, to_id, {"scope": scope}, zs=zs)
 
-    def undo(self) -> dict | None:
-        """Revert the most recent edit exactly (per-pixel previous ids) and drop it from the log."""
+    def undo(self, z: int | None = None) -> dict | None:
+        """Undo the latest edit in one slice, or the latest whole operation when z is omitted.
+
+        A block-wide record is trimmed when only one of its slices is undone; its remaining
+        voxels stay available for undo and provenance. Later edits on other slices are untouched.
+        """
+        if z is not None:
+            self._check_z(z)
         with self.lock:
             log = self.edits()
-            if not log:
+            selected = None
+            for i in range(len(log) - 1, -1, -1):
+                entry = log[i] if z is None else self._edit_in_slice(log[i], z)
+                if entry is not None:
+                    selected = i, log[i], entry
+                    break
+            if selected is None:
                 return None
-            rec = log[-1]
+            index, rec, undone = selected
             f = self._edit_dir() / f"{rec['n']:06d}.npz"
-            d = np.load(f)
-            seg = self._seg_writable()
+            with np.load(f, allow_pickle=False) as data:
+                d = {key: data[key] for key in data.files}
             xs, ys = d["xs"].astype(np.intp), d["ys"].astype(np.intp)
-            zs = d["zs"].astype(np.intp) if "zs" in d.files else np.full(xs.shape, int(d["z"]), dtype=np.intp)
-            for k in np.unique(zs):  # one section at a time keeps the memmap writes sequential
-                m = zs == k
+            zs = d["zs"].astype(np.intp) if "zs" in d else np.full(xs.shape, int(d["z"]), dtype=np.intp)
+            chosen = np.ones(xs.shape, dtype=bool) if z is None else zs == z
+            remaining = ~chosen
+            if remaining.any():
+                rest = {key: (value[remaining] if key in {"xs", "ys", "zs", "old", "new"} and value.ndim else value)
+                        for key, value in d.items()}
+                partial = f.with_suffix(".npz.part")
+                with partial.open("wb") as out:
+                    np.savez_compressed(out, **rest)
+                log[index] = {**rec, "n_px": int(remaining.sum()), "n_slices": int(np.unique(zs[remaining]).size)}
+            else:
+                log.pop(index)
+            seg = self._seg_writable()
+            for k in np.unique(zs[chosen]):
+                m = chosen & (zs == k)
                 seg[xs[m], ys[m], int(k)] = d["old"][m] if np.ndim(d["old"]) else d["old"]
             seg.flush()
-            f.unlink()
-            (self.work / EDIT_LOG).write_text("".join(json.dumps(r) + "\n" for r in log[:-1]))
-            for k in np.unique(zs):
+            if remaining.any():
+                partial.replace(f)
+            else:
+                f.unlink()
+            log_path = self.work / (EDIT_LOG + ".part")
+            log_path.write_text("".join(json.dumps(r) + "\n" for r in log))
+            log_path.replace(self.work / EDIT_LOG)
+            for k in np.unique(zs[chosen]):
                 self._invalidate(int(k))
             # deliberately NOT resetting _max_id: recomputing it rescans the whole volume (1.2 s on a 1024²x100
             # block) and it is only ever used to hand out an unused id. Staying high is safe — ids just skip —
             # and it also guarantees an undone id is never handed out again while its edit record still exists.
-            return rec
+            return undone
 
 
 class AnnotateStore:

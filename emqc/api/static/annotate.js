@@ -22,13 +22,17 @@
     playing: null, drag: null, stroke: null, mergeFirst: null, mergeBusy: false, spacePan: false, curtainDrag: false,
     samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null, samRequest: null, samSequence: 0,
     samNeighbour: null, repair: null, repairMask: null,
-    ngMode: null, ngRequest: null, ngSequence: 0, ngWindow: null, ngTimer: null,
+    historySequence: 0, ngMode: null, ngRequest: null, ngSequence: 0, ngWindow: null, ngTimer: null,
   };
   function mkPane(id) {
     const stage = $(id), cv = stage.querySelector(".vast-canvas"), [em, seg, hi] = cv.querySelectorAll("canvas");
     return { stage, cv, em, seg, hi, gEm: em.getContext("2d"), gSeg: seg.getContext("2d"), gHi: hi.getContext("2d") };
   }
   const P = [mkPane("an-stage"), mkPane("an-stage2")];
+  // Put shared notifications in the sidebar, outside both image panes.
+  $("an-notices").prepend($("flash"));
+  $("flash").setAttribute("role", "status");
+  $("an-notice-close").addEventListener("click", () => { $("flash").style.display = "none"; });
   const panes = () => (S.view === "side" ? P : [P[0]]);
   const segPanes = () => (S.view === "side" ? [P[1]] : (S.showSeg ? [P[0]] : []));   // where the segmentation is drawn
   const nearCurtain = x => S.view === "overlay" && S.curtain && Math.abs(x - S.curtainX) <= 6 / S.zoom;
@@ -283,10 +287,11 @@
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     $("an-compare").href = `/annotate/compare?block=${encodeURIComponent(S.block)}&z=${z}`;
     if (!keepHover) S.hoverXY = null;
+    const history = editList();
     let entry;
     try { entry = await fetchZ(z); } catch (e) { $("an-status").textContent = "加载失败: " + e.message; return; }
     if (S.z !== z || S.block !== block || S.cache.get(z) !== entry) return;
-    render(); status(); segList(); prefetch();
+    render(); status(); segList(); prefetch(); await history;
   }
   let wheelAcc = 0;
   function onWheel(ev, p) {
@@ -400,22 +405,22 @@
   }
   async function afterEdit(r, z) {
     clearSAM();
-    S.info.n_edits = r.n_edits; $("an-nedit").textContent = `${r.n_edits} 次改动`;
-    invalidate(z); if (z === S.z) await goZ(z, true, true); editList();
+    S.info.n_edits = r.n_edits;
+    invalidate(z); if (z === S.z) await goZ(z, true, true);
   }
   async function undo() {
     if (S.mergeBusy) return;
+    const z = S.z;
     clearSAM();
     mergeBusy(true);
     mergeArm(null);
     $("an-merge-hint").textContent = "正在撤销，请稍候…";
     try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/undo`);
-      if (!r.undone) { flash("没有可撤销的改动"); return; }
-      S.info.n_edits = r.n_edits; $("an-nedit").textContent = `${r.n_edits} 次改动`;
-      if (r.undone.z == null || r.undone.kind === "merge") dropAll();       // 3-D edit: every slice may differ
-      else { invalidate(r.undone.z); if (r.undone.z !== S.z) invalidate(S.z); }
-      await goZ(S.z, true, true); editList();
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/undo?z=${z}`);
+      if (!r.undone) { flash("本片没有可撤销的改动"); await editList(); return; }
+      S.info.n_edits = r.n_edits;
+      invalidate(z);
+      await goZ(z, true, true);
     } catch (err) { flash("撤销失败: " + err.message, true); }
     finally { mergeBusy(false); mergeArm(null); }
   }
@@ -790,13 +795,21 @@
   $("an-search").addEventListener("input", segList);
 
   async function editList() {
+    const block = S.block, z = S.z, sequence = ++S.historySequence;
+    $("an-nedit").textContent = "…";
+    $("an-edits").textContent = "加载中…";
     try {
-      const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/edits?limit=30`);
+      const r = await getJSON(`${API}/blocks/${encodeURIComponent(block)}/edits?z=${z}&limit=30`);
+      if (block !== S.block || z !== S.z || sequence !== S.historySequence) return;
+      $("an-nedit").textContent = `${r.n} 次改动`;
       const label = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "修补·插值" : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
       // A repair writes a different id per pixel, so its new_id is the text "N 个 id" — there is no one colour for it.
       const swatch = e => /^\d+$/.test(String(e.new_id)) && e.new_id !== "0" ? css(colorOf(e.new_id)) : "transparent";
-      $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${swatch(e)}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${e.new_id}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">还没有改动</span></div>`;
-    } catch (_) { /* panel is informational */ }
+      $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${swatch(e)}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${e.new_id}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">本片还没有改动</span></div>`;
+    } catch (_) {
+      if (block !== S.block || z !== S.z || sequence !== S.historySequence) return;
+      $("an-nedit").textContent = "—"; $("an-edits").textContent = "历史加载失败，请重试";
+    }
   }
 
   // ------------------------------------------------------------------ controls
@@ -873,11 +886,10 @@
     // 框里是切片序号 z，从 0 起算，所以这里是"最大序号"而不是总数。只写 "/ 99" 会被读成"共 99 页"，
     // 实际有 100 片，所以把总数一并写出来。
     $("an-nz").textContent = `/ ${nz - 1}　共 ${nz} 片`;
-    $("an-nedit").textContent = `${S.info.n_edits} 次改动`;
     const g = S.info.voxel_size_nm ? ` · ${S.info.voxel_size_nm.join("×")} nm` : "";
     $("an-meta").textContent = `${W}×${H}×${nz}${g}${S.info.has_seg ? "" : " · 无分割"}`;
     history.replaceState(null, "", `/annotate?block=${encodeURIComponent(id)}`);
-    setCur("0"); fit(); await goZ(Math.min(S.z, nz - 1)); editList();
+    setCur("0"); fit(); await goZ(Math.min(S.z, nz - 1));
   }
   async function init() {
     setView(S.view);

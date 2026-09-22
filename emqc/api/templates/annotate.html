@@ -70,8 +70,8 @@
     <input id="an-zr" type="range" min="0" max="0" value="0" style="width:100%">
     <div class="actions" style="margin-top:6px"><button id="an-play">▶ 连播</button><label class="muted" style="font-size:12px">速度 <input id="an-fps" type="number" class="text mono" value="8" min="1" max="60" style="width:54px"> 张/秒</label></div>
 
-    <div class="vast-sec">历史</div>
-    <div class="actions"><button id="an-undo" title="Ctrl+Z">撤销</button><span class="muted mono" id="an-nedit">0 次改动</span></div>
+    <div class="vast-sec">本片历史</div>
+    <div class="actions"><button id="an-undo" title="撤销本片最近一次改动 (Ctrl/⌘+Z)">撤销</button><span class="muted mono" id="an-nedit">0 次改动</span></div>
   </aside>
 
   <div class="vast-stages" id="an-stages">
@@ -88,6 +88,7 @@
   </div>
 
   <aside class="vast-panel vast-side">
+    <div id="an-notices"><button id="an-notice-close" title="关闭提示" aria-label="关闭提示">×</button></div>
     <div class="vast-sec" style="margin-top:0">视图</div>
     <div class="vast-scope">
       <label><input type="radio" name="an-view" value="overlay" checked> 叠加</label>
@@ -108,7 +109,7 @@
     <input id="an-search" class="text mono" placeholder="搜索标签…" style="width:100%">
     <div class="vast-list" id="an-segs"></div>
 
-    <div class="vast-sec">最近改动</div>
+    <div class="vast-sec">本片改动</div>
     <div class="vast-list vast-edits" id="an-edits"></div>
   </aside>
 </div>

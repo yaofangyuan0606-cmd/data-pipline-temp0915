@@ -183,7 +183,7 @@ def test_merge_block_scope_and_legacy_undo(client, ann_root, workdir):
     d = dict(np.load(f))
     d.pop("zs")
     np.savez_compressed(f, **d)
-    assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["n"] == r["edit"]["n"]
+    assert client.post("/api/v1/annotate/blocks/b0/undo?z=3").json()["undone"]["n"] == r["edit"]["n"]
     assert np.array_equal(np.load(w / "seg_edit.npy"), np.load(b / "seg.npy"))
 
 
@@ -290,3 +290,75 @@ def test_created_labels_persist_without_editing_pixels(tmp_path, monkeypatch):
 def test_new_label_rejects_invalid_slice(client):
     assert client.post('/api/v1/annotate/blocks/b0/new-id?z=-1').status_code == 422
     assert client.post('/api/v1/annotate/blocks/b0/new-id?z=999').status_code == 422
+
+
+def test_slice_history_and_undo_leave_other_slices_untouched(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from emqc.api.app import app
+    from emqc.api.routers import annotate
+    from emqc.annotate.store import Block
+    from annotation_data import write_pairs
+    data = tmp_path / 'blocks' / 'slice-history'
+    original = write_pairs(data)
+    b = Block(data, tmp_path / 'work')
+    monkeypatch.setattr(annotate, '_block', lambda _: b)
+    with TestClient(app) as c:
+        url = '/api/v1/annotate/blocks/slice-history'
+        for z, label in [(0, '101'), (1, '202'), (0, '303')]:
+            assert c.post(url + '/paint', json={'z': z, 'points': [[5, 5]], 'radius': 0, 'new_id': label}).status_code == 200
+        history = c.get(url + '/edits?z=0&limit=1').json()
+        assert history['n'] == 2 and [r['n'] for r in history['edits']] == [3]
+        assert c.get(url + '/edits?z=1').json()['n'] == 1
+        assert c.post(url + '/undo?z=0').json()['undone']['n'] == 3
+        assert b.pick(0, 5, 5) == 101 and b.pick(1, 5, 5) == 202
+        # The latest block edit is now on slice 1; undo on slice 0 must skip it.
+        assert c.post(url + '/undo?z=0').json()['undone']['n'] == 1
+        assert b.pick(0, 5, 5) == int(original[5, 5, 0]) and b.pick(1, 5, 5) == 202
+        assert c.post(url + '/undo?z=0').json()['undone'] is None
+        assert c.get(url + '/edits?z=0').json() == {'n': 0, 'edits': []}
+        assert [r['n'] for r in b.edits()] == [2]
+        b = Block(data, tmp_path / 'work')
+        rec = b.paint(0, [(5, 5)], 0, 404)
+        assert rec['n'] == 3  # remaining history is never overwritten
+        for endpoint in ['/edits?z=99', '/edits?z=-1']:
+            assert c.get(url + endpoint).status_code == 422
+        assert c.post(url + '/undo?z=99').status_code == 422
+        b.undo(0)
+        b.undo(1)
+        assert np.array_equal(b._seg(), original)
+        assert np.array_equal(np.load(data / 'seg.npy'), original)
+
+
+def test_partial_block_undo_preserves_history_and_provenance(tmp_path):
+    from emqc.annotate.store import Block
+    from emqc.annotate.provenance import report
+    path = tmp_path / 'block'
+    path.mkdir()
+    original = np.zeros((4, 3, 3), dtype=np.uint64)
+    original[1:3, :, 0] = BIG
+    original[1:3, :, 2] = BIG
+    np.save(path / 'em.npy', np.zeros(original.shape, dtype=np.uint8))
+    np.save(path / 'seg.npy', original)
+    b = Block(path, tmp_path / 'work')
+    rec = b.merge(BIG, 55, 'block')
+    assert b.edits(1) == []  # a block operation need not affect every slice
+    assert b.edits(0)[0]['n_px'] == 6
+    b.paint(1, [(1, 1)], 0, 77)
+    undone = b.undo(0)
+    assert undone['n'] == rec['n'] and undone['n_px'] == 6 and undone['z'] == 0
+    assert np.array_equal(b._seg()[:, :, 0], original[:, :, 0])
+    assert b.pick(1, 1, 1) == 77 and b.pick(2, 1, 1) == 55
+    assert b.edits(0) == [] and b.edits(2)[0]['n_px'] == 6
+    remaining = b.edits()[0]
+    assert remaining['n_px'] == 6 and remaining['n_slices'] == 1
+    with np.load(b.work / 'edits' / '000001.npz') as saved:
+        assert np.all(saved['zs'] == 2)
+    b = Block(path, tmp_path / 'work')
+    assert report(b, 0)['changed_px'] == 0
+    assert report(b, 2)['sources']['manual']['pixels'] == 6
+    assert report(b, 2)['sources']['unknown']['pixels'] == 0
+    # Legacy callers can still undo whole remaining operations without a z argument.
+    assert b.undo()['n'] == 2
+    assert b.undo()['n'] == 1
+    assert np.array_equal(b._seg(), original)
+    assert np.array_equal(np.load(path / 'seg.npy'), original)

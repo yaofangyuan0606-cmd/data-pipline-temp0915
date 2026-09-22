@@ -347,3 +347,25 @@ def test_block_list_page_handles_unreadable_history(block, monkeypatch):
         assert "1 个块的记录异常，未计入" in response.text
         assert "查看对比" in response.text and "记录异常" in response.text
         assert (block.work / "edits.jsonl").read_text() == '{"n":1,'
+
+
+def test_slice_undo_trims_per_voxel_labels_in_legacy_block_record(block):
+    # Historical multi-label operations have vector old/new arrays, unlike merge's scalar labels.
+    xs = np.array([0, 2, 1, 3], dtype=np.intp)
+    ys = np.array([0, 1, 2, 3], dtype=np.intp)
+    zs = np.array([0, 0, 2, 2], dtype=np.intp)
+    new = np.array([41, 42, 43, 44], dtype=np.uint64)
+    seg = block._seg_writable()
+    old = seg[xs, ys, zs].copy()
+    seg[xs, ys, zs] = new
+    seg.flush()
+    block._record('split', None, xs, ys, old, new, {'mode': 'line'}, zs=zs)
+    block.undo(0)
+    with np.load(block.work / 'edits' / '000001.npz') as saved:
+        assert np.array_equal(saved['old'], old[2:])
+        assert np.array_equal(saved['new'], new[2:])
+    assert report(block, 0)['changed_px'] == 0
+    assert report(block, 2)['sources']['manual']['pixels'] == 2
+    block.undo(2)
+    assert np.array_equal(block._seg(), block._seg_ro)
+    assert block.edits() == []

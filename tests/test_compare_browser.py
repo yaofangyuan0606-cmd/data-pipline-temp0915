@@ -26,7 +26,13 @@ def test_comparison_in_browser(tmp_path):
         assert page.locator("#cmp-status").inner_text().endswith("3 像素与原始分割不同")
         assert page.locator("#cmp-before").evaluate("c => [c.width,c.height]") == [64, 32]
         assert page.locator("#cmp-after").evaluate("c => [c.width,c.height]") == [64, 32]
-        assert page.locator("#cmp-before").evaluate("c => c.toDataURL()") != page.locator("#cmp-after").evaluate("c => c.toDataURL()")
+        # Both canvases now paint changed pixels with the same fixed pink highlight.
+        # Check the underlying before/after labels via the linked pixel readout.
+        page.locator("#cmp-before").evaluate('''c => {
+            const r = c.getBoundingClientRect();
+            c.dispatchEvent(new MouseEvent('mousemove', {clientX: r.left + 4.5*r.width/c.width, clientY: r.top + 4.5*r.height/c.height}));
+        }''')
+        assert "原始 9007199254740993 → 当前 77" in page.locator("#cmp-pixel").inner_text()
         # 页面默认只给两样东西：改了哪些地方，标签增减了什么
         assert page.locator("#cmp-regions tr[data-region]").count() == 3, "三处改动各自成一块"
         assert "3 处" in page.locator("#cmp-regions-count").inner_text()
@@ -91,6 +97,7 @@ def test_comparison_recovers_from_discovery_failure_and_keeps_export_status_sepa
         page.wait_for_function("!document.querySelector('#cmp-report').hidden")
         assert page.locator("#cmp-before").is_visible()
         # A slow export of Z 0 must not clobber the status of a newer slice.
+        page.locator("#cmp-report > summary").click()
         pending = []
         page.route("**/provenance?format=json", lambda route: pending.append(route))
         page.locator("#cmp-scope").select_option("block")

@@ -404,3 +404,78 @@ def test_3d_cancel_pending_and_failed_links(tmp_path):
         page.locator('#an-ng-block').click()
         assert page.locator('#an-ng-info').inner_text() == '请允许弹出 3D 窗口后重试'
         assert page.locator('#an-ng-block').get_attribute('aria-pressed') == 'false'
+
+
+def test_notices_do_not_cover_image_and_history_follows_slice(tmp_path):
+    data = tmp_path / 'blocks' / 'slice-history'
+    original = write_pairs(data)
+    with browser_for(tmp_path, data) as (adapter, page):
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '0 次改动'")
+        before = page.locator('#an-stage').bounding_box()
+        page.locator('#an-gap').click()
+        assert page.locator('#an-notices #flash').is_visible()
+        assert '细胞间隙' in page.locator('#flash').inner_text()
+        assert page.locator('#an-stage').bounding_box() == before
+        note = page.locator('#flash').bounding_box()
+        assert note['x'] >= before['x'] + before['width']
+        page.locator('#an-notice-close').click()
+        assert not page.locator('#flash').is_visible()
+        # Also check the stacked, narrow layout: the note is after the image.
+        page.set_viewport_size({'width': 900, 'height': 1000})
+        page.locator('#an-gap').click()
+        note, stage = page.locator('#flash').bounding_box(), page.locator('#an-stage').bounding_box()
+        assert note['y'] >= stage['y'] + stage['height']
+        page.locator('#an-notice-close').click()
+        page.set_viewport_size({'width': 1600, 'height': 1200})
+        page.locator('#an-segs [data-id="22"]').click()
+        page.locator('[data-tool="brush"]').click()
+        page.locator('#an-brush').fill('0')
+        adapter.move((5, 5), click=True)
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动'")
+        assert '#1 ' in page.locator('#an-edits').inner_text()
+        page.locator('#an-next').click()
+        page.wait_for_function("document.getElementById('an-z').value === '1' && document.getElementById('an-nedit').textContent === '0 次改动'")
+        assert '本片还没有改动' in page.locator('#an-edits').inner_text()
+        adapter.move((5, 5), click=True)
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动'")
+        assert '#2 ' in page.locator('#an-edits').inner_text()
+        assert '#1 ' not in page.locator('#an-edits').inner_text()
+        page.locator('#an-prev').click()
+        page.wait_for_function("document.getElementById('an-z').value === '0' && document.getElementById('an-edits').textContent.includes('#1 ')")
+        page.locator('#an-undo').click()
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '0 次改动' && !document.getElementById('an-undo').disabled")
+        work = tmp_path / 'work' / 'slice-history' / 'seg_edit.npy'
+        assert np.array_equal(np.load(work)[:, :, 0], original[:, :, 0])
+        assert int(np.load(work)[5, 5, 1]) == 22
+        page.locator('#an-next').click()
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动'")
+        page.locator('#an-stage').focus()
+        page.keyboard.press('Control+z')
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '0 次改动' && !document.getElementById('an-undo').disabled")
+        assert np.array_equal(np.load(work), original)
+        assert np.array_equal(np.load(data / 'seg.npy'), original)
+
+
+def test_late_history_response_cannot_replace_current_slice(tmp_path):
+    data = tmp_path / 'blocks' / 'history-race'
+    write_pairs(data)
+    with browser_for(tmp_path, data) as (adapter, page):
+        page.wait_for_function("document.getElementById('an-nedit').textContent === '0 次改动'")
+        page.evaluate('''() => {
+            const realFetch = window.fetch;
+            window.fetch = (url, options) => {
+                if (String(url).includes('/edits?z=1')) return new Promise(resolve => {
+                    window.finishOldHistory = () => resolve(new Response(JSON.stringify({n: 99, edits: []}),
+                        {status: 200, headers: {'Content-Type': 'application/json'}}));
+                });
+                return realFetch(url, options);
+            };
+        }''')
+        page.locator('#an-next').click()
+        page.wait_for_function('!!window.finishOldHistory')
+        page.locator('#an-prev').click()
+        page.wait_for_function("document.getElementById('an-z').value === '0' && document.getElementById('an-nedit').textContent === '0 次改动'")
+        page.evaluate('window.finishOldHistory()')
+        page.wait_for_timeout(100)
+        assert page.locator('#an-nedit').inner_text() == '0 次改动'
+        assert '本片还没有改动' in page.locator('#an-edits').inner_text()

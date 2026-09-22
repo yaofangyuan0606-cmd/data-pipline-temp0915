@@ -321,3 +321,9 @@ kbd { display: inline-block; font: 500 11px var(--mono); padding: 1px 5px; borde
 .kbd-row { font-size: 13px; color: var(--text-2); padding: 3px 0; border-bottom: 1px dashed var(--border); }
 .kbd-row:last-child { border-bottom: 0; }
 @media (max-width: 700px) { .an-help-grid { grid-template-columns: 1fr; } }
+
+/* Annotation notices live in the sidebar, never above the image. */
+main.full .vast-side .flash { position: static; transform: none; max-width: none; box-shadow: none; margin: 0 0 8px; padding: 9px 28px 9px 10px; font-size: 12px; overflow-wrap: anywhere; max-height: 140px; overflow-y: auto; }
+#an-notices { position: relative; }
+#an-notice-close { position: absolute; right: 4px; top: 4px; padding: 0 4px; background: transparent; border: 0; }
+#an-notices:not(:has(.flash[style*="display: block"])) { display: none; }
