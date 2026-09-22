@@ -124,6 +124,18 @@ class SAMService:
                     "seconds": round(time.perf_counter() - started, 3),
                     "mask_png": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}
 
+    def proposal(self, block, token):
+        """The pending proposal for this token, checked to belong to this block. Read-only — it is NOT consumed,
+        so the caller can ask questions about the mask (e.g. which label the neighbouring sections carry there)
+        and still apply it afterwards."""
+        with self.lock:
+            p = self.proposals.get(token)
+            if p is None or time.monotonic() - p["created"] >= 900:
+                raise ValueError("预览已过期，请重新预测")
+            if p["path"] != str(block.path.resolve()) or p["work"] != str(block.work.resolve()):
+                raise ValueError("预览不属于当前数据块")
+            return p
+
     def apply(self, block, token, new_id):
         with block.lock, self.lock:
             p = self.proposals.get(token)

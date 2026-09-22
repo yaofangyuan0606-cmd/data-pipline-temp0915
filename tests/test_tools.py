@@ -251,6 +251,85 @@ def test_neuroglancer_endpoint(client_tools):
     assert c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer", params={"z": 0, "x": 999, "y": 10}).status_code == 404
 
 
+# ----------------------------------------------------------------------------- 跨片取色
+def test_neighbour_lookup_finds_the_colour_the_current_slice_is_missing(block):
+    """漏标的那一片没有颜色可吸——取色要去最近一张有标签的邻片上拿，并且说清楚是从哪一片拿的。
+
+    fixture 里 z1 的右半边是空的（模拟分割漏标），z0 和 z2 上那里是 id 7。"""
+    from emqc.annotate import neighbour
+
+    assert int(block.seg_slice(1)[30, 60]) == 0, "这一点在本片确实没有标签"
+    r = neighbour.lookup(block, 1, x=60, y=30)
+    assert r["found"] and r["id"] == "7"
+    assert r["distance"] == 1 and r["z_src"] in (0, 2), "取最近的那一片"
+    assert r["searched"] == [0, 2]
+
+
+def test_neighbour_lookup_votes_over_a_mask_and_reports_the_runner_up(tmp_path):
+    """SAM 给出一块区域时按多数投票定色，但少数派也要报出来——一块区域可能横跨两个细胞。"""
+    from emqc.annotate import neighbour
+
+    d = tmp_path / "b"
+    d.mkdir()
+    np.save(d / "em.npy", np.zeros((20, 20, 3), np.uint8))
+    seg = np.zeros((20, 20, 3), np.uint64)
+    seg[:12, :, 0] = 11          # 邻片 z0：上面一大块是 11
+    seg[12:, :, 0] = 22          # 下面一小块是 22
+    np.save(d / "seg.npy", seg)
+    json.dump({"dataset": {"id": "demo"}}, open(d / "meta.json", "w"))
+    b = Block(d, tmp_path / "work")
+
+    mask = np.zeros(b.shape_zyx[1:], bool)
+    mask[:, 5:17] = True         # 显示方向上横跨 11 和 22，11 占多数
+    r = neighbour.lookup(b, 1, mask=mask)
+    assert r["found"] and r["id"] == "11" and r["z_src"] == 0
+    assert 0 < r["share"] < 1 and r["others"] and r["others"][0]["id"] == "22"
+
+
+def test_neighbour_lookup_refuses_to_guess_and_writes_nothing(block):
+    """前后都没有标签时如实说没有，不猜；而且整个过程一个像素都不写。"""
+    from emqc.annotate import neighbour
+
+    before_delivery = np.load(block.path / "seg.npy").copy()
+    r = neighbour.lookup(block, 1, x=0, y=0, radius=2)      # 角上是背景，上下片也都是背景
+    assert r["found"] is False and "没有标签" in r["reason"]
+    assert np.array_equal(np.load(block.path / "seg.npy"), before_delivery), "交付目录只读"
+    assert not (block.work / "seg_edit.npy").exists(), "取色不该把工作副本也建出来"
+    with pytest.raises(IndexError):
+        neighbour.lookup(block, 99, x=1, y=1)
+
+
+def test_neighbour_label_api_by_point_and_by_sam_mask(client_tools):
+    """接口两种用法：手工填充用「一个点」，SAM 点填充用「一块掩膜」。"""
+    import time
+
+    from emqc.annotate.sam import revision, service as sam_service
+
+    c, block_id = client_tools
+    url = f"/api/v1/annotate/blocks/{block_id}/neighbour-label"
+    r = c.post(url, json={"z": 1, "x": 60, "y": 30})
+    assert r.status_code == 200 and r.json()["found"] and r.json()["id"] == "7"
+    assert c.post(url, json={"z": 99, "x": 1, "y": 1}).status_code == 404
+    assert c.post(url, json={"z": 1, "token": "0" * 32}).status_code == 409, "过期或不属于本块的预览"
+
+    from emqc.api.routers.annotate import _block as get_block
+
+    b = get_block(block_id)
+    mask = np.zeros(b.shape_zyx[1:], bool)
+    mask[20:40, 55:70] = True                     # z1 上空着的那一块
+    token = "c" * 32
+    sam_service.proposals[token] = {"path": str(b.path.resolve()), "work": str(b.work.resolve()), "z": 1,
+                                    "mask": mask, "revision": revision(b), "created": time.monotonic(),
+                                    "score": .9, "points": [(60, 30)], "labels": [1], "box": None,
+                                    "only_background": True, "candidate": 0}
+    try:
+        got = c.post(url, json={"z": 1, "token": token}).json()
+        assert got["found"] and got["id"] == "7" and got["share"] > 0.9
+        assert token in sam_service.proposals, "取色不能把预览消费掉，后面还要用它来填"
+    finally:
+        sam_service.proposals.pop(token, None)
+
+
 # ----------------------------------------------------------------------------- 修补损坏切片
 def test_detect_damage_finds_bands_not_organelles():
     from emqc.annotate import interpolate as ip

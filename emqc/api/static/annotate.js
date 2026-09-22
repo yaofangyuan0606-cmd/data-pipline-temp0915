@@ -20,7 +20,7 @@
     zoom: 1, tx: 0, ty: 0,
     cache: new Map(), loading: new Map(), cacheVersion: 0, hoverXY: null, hoverPane: 0, regionEntry: null, regions: [],
     playing: null, drag: null, stroke: null, mergeFirst: null, mergeBusy: false, spacePan: false, curtainDrag: false,
-    samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null,
+    samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null, samNeighbour: null,
     smart: null, smartMask: null, smartBusy: false, cutPts: null, repair: null, repairMask: null,
   };
   function mkPane(id) {
@@ -586,8 +586,10 @@
     const disabled = S.mergeBusy || !S.samPreview?.n_px || !S.info?.has_seg;
     $("an-sam-apply").disabled = disabled;
     $("an-sam-new").disabled = disabled;
+    $("an-sam-neighbour").disabled = disabled || !S.samNeighbour?.found;
   }
-  function discardSAMPreview() { S.samPreview = null; S.samMask = null; samButtons(); }
+  function discardSAMPreview() { S.samPreview = null; S.samMask = null; S.samNeighbour = null; neighbourInfo(""); samButtons(); }
+  function neighbourInfo(text) { const el = $("an-sam-neighbour-info"); if (el) el.textContent = text; }
   function clearSAM() {
     S.samPoints = []; S.samLabels = []; S.samBox = null; S.samStart = null;
     discardSAMPreview();
@@ -622,29 +624,60 @@
         boundary_sensitivity: +$("an-smart-sens").value / 100,
         candidate: $("an-sam-candidate").value === "" ? null : +$("an-sam-candidate").value,
       });
-      S.samMask = await loadImg(r.mask_png); S.samPreview = r;
+      S.samMask = await loadImg(r.mask_png); S.samPreview = r; S.samNeighbour = null; samNeighbourLookup(r.token);
       $("an-sam-result").textContent = `候选 ${r.candidate+1} · ${r.n_px} 像素 · ${r.seconds}s。` + (r.n_px ? "请核对青色边界，再填为新标签或当前标签。" : "没有可填区域，请调整提示或取消仅补未标注区域。");
       $("an-sam-status").textContent = "SAM 2.1 · 模型已加载";
     } catch (err) { $("an-sam-result").textContent = "分割失败：" + err.message; }
     finally { mergeBusy(false); renderHi(); }
   }
-  async function applySAM(makeNew) {
+  // ---------------------------------------------------------------- 跨片取色
+  // 分割漏标时，本片那块是空的，没有颜色可吸；颜色在隔壁片上。这里只把 id 取回来，画在哪、写哪一片仍然由人决定。
+  async function samNeighbourLookup(token) {
+    neighbourInfo("正在看邻片这块区域是谁…");
+    try {
+      const n = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/neighbour-label`, { z: S.z, token });
+      if (S.samPreview?.token !== token) return;          // 期间又预览了一次，这份结果已经过期
+      S.samNeighbour = n;
+      neighbourInfo(n.found
+        ? `邻片 z${n.z_src} 在这块区域是 ${n.id}（占 ${Math.round(n.share * 100)}%${n.others?.length ? `，另有 ${n.others.length} 个 id` : ""}）`
+        : `前后 ${n.radius} 片在这块区域都没有标签`);
+    } catch (err) { S.samNeighbour = null; neighbourInfo("邻片取色失败：" + err.message); }
+    finally { samButtons(); }
+  }
+  async function neighbourPick() {
+    const p = S.hoverXY;
+    if (!S.block || !p) { flash("把鼠标放到要取色的位置上再按 L", true); return; }
+    try {
+      const n = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/neighbour-label`, { z: S.z, x: p[0], y: p[1] });
+      if (!n.found) { flash(`前后 ${n.radius} 片在这一点都没有标签`, true); return; }
+      setCur(n.id);
+      flash(`已取 z${n.z_src} 的颜色 ${n.id}（相隔 ${n.distance} 片）`);
+    } catch (err) { flash("邻片取色失败：" + err.message, true); }
+  }
+
+  async function applySAM(mode) {
     if (S.mergeBusy || !S.samPreview?.n_px) return;
-    if (!makeNew && S.cur === "0") { flash("请先拾取已有颜色，或使用“填为新标签”"); return; }
-    const z = S.z, token = S.samPreview.token;
+    if (mode === "cur" && S.cur === "0") { flash("请先拾取已有颜色，或使用“填为新标签”"); return; }
+    if (mode === "neighbour" && !S.samNeighbour?.found) { flash("邻片在这块区域也没有标签", true); return; }
+    const z = S.z, token = S.samPreview.token, from = S.samNeighbour;
     mergeBusy(true);
     try {
-      const id = makeNew ? (await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/new-id`)).id : S.cur;
+      const id = mode === "new" ? (await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/new-id`)).id
+               : mode === "neighbour" ? from.id : S.cur;
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/sam/apply`, {token, new_id: id});
       await afterEdit(r, z); setCur(id);
-      $("an-sam-result").textContent = `已填 ${r.edit?.n_px || 0} 像素，可 Ctrl+Z 撤销。`;
+      $("an-sam-result").textContent = mode === "neighbour"
+        ? `已用 z${from.z_src} 的颜色 ${id} 填了 ${r.edit?.n_px || 0} 像素，可 Ctrl+Z 撤销。`
+        : `已填 ${r.edit?.n_px || 0} 像素，可 Ctrl+Z 撤销。`;
     } catch (err) { discardSAMPreview(); $("an-sam-result").textContent = "应用失败：" + err.message; }
     finally { mergeBusy(false); renderHi(); }
   }
   $("an-sam-predict").addEventListener("click", predictSAM);
   $("an-sam-clear").addEventListener("click", clearSAM);
-  $("an-sam-new").addEventListener("click", () => applySAM(true));
-  $("an-sam-apply").addEventListener("click", () => applySAM(false));
+  $("an-sam-new").addEventListener("click", () => applySAM("new"));
+  $("an-sam-apply").addEventListener("click", () => applySAM("cur"));
+  $("an-sam-neighbour").addEventListener("click", () => applySAM("neighbour"));
+  $("an-neighbour-pick").addEventListener("click", neighbourPick);
   for (const id of ["an-sam-background", "an-sam-candidate", "an-sam-snap"]) $(id).addEventListener("change", () => {
     discardSAMPreview(); renderHi(); if (S.samPoints.length || S.samBox) predictSAM();
   });
@@ -733,6 +766,7 @@
     else if (k === "c") { $("an-curtain").checked = S.curtain = !S.curtain; if (S.curtain && !S.curtainX) S.curtainX = S.W >> 1; render(); }
     else if (k === "Tab") { ev.preventDefault(); if (!S.blink) { S.blink = true; render(); } }
     else if (k === "n") newId();
+    else if (k === "l") neighbourPick();
     else if (k === "0") fit(); else if (k === "1") { S.zoom = 1; applyView(); }
     else if (k === "+" || k === "=") { const r = P[0].stage.getBoundingClientRect(); zoomAt(1.25, r.width / 2, r.height / 2); }
     else if (k === "-") { const r = P[0].stage.getBoundingClientRect(); zoomAt(0.8, r.width / 2, r.height / 2); }

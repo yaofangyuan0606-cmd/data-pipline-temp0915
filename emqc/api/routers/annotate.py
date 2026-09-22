@@ -116,6 +116,38 @@ def sam_predict(block_id: str, body: SAMPredictIn):
         raise HTTPException(422, str(exc))
 
 
+class NeighbourLabelIn(BaseModel):
+    z: int = Field(ge=0)
+    x: int | None = Field(default=None, ge=0)
+    y: int | None = Field(default=None, ge=0)
+    token: str | None = Field(default=None, min_length=32, max_length=32)   # a pending SAM mask, voted over
+    radius: int = Field(default=6, ge=1, le=32)
+
+
+@router.post("/blocks/{block_id}/neighbour-label")
+def neighbour_label(block_id: str, body: NeighbourLabelIn):
+    """跨片取色: which cell owns this place on the nearest section that has a label there.
+
+    Read-only. It writes nothing — the annotator gets an id back and fills by hand as before."""
+    from emqc.annotate.neighbour import lookup
+    from emqc.annotate.sam import service as sam_service
+
+    b = _block(block_id, read_only=True)
+    mask, z = None, body.z
+    if body.token:
+        try:
+            p = sam_service.proposal(b, body.token)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+        mask, z = p["mask"], int(p["z"])
+    try:
+        return lookup(b, z, mask=mask, x=body.x, y=body.y, radius=body.radius)
+    except IndexError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
 @router.post("/blocks/{block_id}/sam/apply")
 def sam_apply(block_id: str, body: SAMApplyIn):
     from emqc.annotate.sam import service
