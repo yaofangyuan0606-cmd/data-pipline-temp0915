@@ -342,7 +342,7 @@ def overlay_png(labels, hole, uncertain) -> str:
 
 
 class RepairService:
-    """Preview → token → apply, the same shape as SmartFillService: nothing is written until the annotator has
+    """Preview → token → apply, the same shape as SAMService: nothing is written until the annotator has
     looked at the proposal, and a preview taken before someone else's edit is refused rather than applied."""
 
     TTL_S = 900

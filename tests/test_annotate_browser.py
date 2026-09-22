@@ -217,7 +217,7 @@ def test_hover_and_independent_merge_pairs_in_browser(browser):
     # Same-colour pairs are consumed, rather than keeping an old first click armed.
     page.move(a, click=True)
     page.move(b, click=True)
-    page.wait("!document.getElementById('an-undo').disabled && document.getElementById('an-merge-hint').textContent.startsWith('请点第一块')")
+    page.wait("!document.getElementById('an-undo').disabled && document.getElementById('an-merge-hint').textContent.startsWith('依次点两块')")
     page.edits(2)
     # Failed requests also clear the pair. A following C,D pair must still keep C.
     page.evaluate("""window.realFetch = window.fetch; window.failPair = true;
@@ -228,7 +228,7 @@ def test_hover_and_independent_merge_pairs_in_browser(browser):
         };""")
     page.move(a, click=True)
     page.move(c, click=True)
-    page.wait("!window.failPair && !document.getElementById('an-undo').disabled && document.getElementById('an-merge-hint').textContent.startsWith('请点第一块')")
+    page.wait("!window.failPair && !document.getElementById('an-undo').disabled && document.getElementById('an-merge-hint').textContent.startsWith('依次点两块')")
     page.evaluate("window.fetch = window.realFetch; document.getElementById('an-undo').click()")
     page.edits(1)
     page.move(c, click=True)

@@ -255,3 +255,38 @@ def test_blocks_page_survives_an_unreadable_block(client, ann_root):
     assert page.status_code == 200
     assert "无法打开" in page.text and "zz_broken" in page.text and "1 个打不开" in page.text
     assert "b0" in page.text, "the healthy block is still listed"
+
+
+def test_created_labels_persist_without_editing_pixels(tmp_path, monkeypatch):
+    from emqc.annotate import store
+    from annotation_data import write_pairs
+    data = tmp_path / 'blocks' / 'palette'
+    original = write_pairs(data)
+    work = tmp_path / 'work'
+    b = store.Block(data, work)
+    # Force the first unused ID to collide with an existing display colour.
+    real_color = store.label_color
+    monkeypatch.setattr(store, 'label_color', lambda label: real_color(BIG) if label == BIG + 1 else real_color(label))
+    first = b.new_id(0)
+    assert first == BIG + 2
+    assert b.labels_table(0)['created_ids'] == [str(first)]
+    assert str(first) not in b.labels_table(0)['ids']
+    assert b.edits() == [] and not (b.work / 'seg_edit.npy').exists()
+    reopened = store.Block(data, work)
+    second = reopened.new_id(1)
+    assert second > first
+    assert reopened.labels_table(0)['created_ids'] == [str(first), str(second)]
+    assert reopened.labels_table(1)['created_ids'] == [str(first), str(second)]
+    reopened.paint(0, [[5, 5]], 0, first)
+    assert str(first) in reopened.labels_table(0)['ids']
+    reopened.undo()
+    assert reopened.created_ids() == [str(first), str(second)]
+    assert np.array_equal(np.load(data / 'seg.npy'), original)
+    assert sorted(p.name for p in data.iterdir()) == ['em.npy', 'meta.json', 'seg.npy']
+    with pytest.raises(ValueError, match='只读'):
+        store.Block(data, work, read_only=True).new_id()
+
+
+def test_new_label_rejects_invalid_slice(client):
+    assert client.post('/api/v1/annotate/blocks/b0/new-id?z=-1').status_code == 422
+    assert client.post('/api/v1/annotate/blocks/b0/new-id?z=999').status_code == 422

@@ -71,12 +71,13 @@ def comparison_blocks():
 
 
 class SAMPredictIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
     z: int = Field(ge=0)
     points: list[tuple[int, int]] = Field(default_factory=list, max_length=64)
     labels: list[Literal[0, 1]] = Field(default_factory=list, max_length=64)
     box: tuple[int, int, int, int] | None = None
     only_background: bool = True
-    candidate: int | None = Field(default=None, ge=0, le=2)
     snap_boundary: bool = False                      # 贴合膜边界: post-process the mask with emqc.annotate.boundary
     boundary_sensitivity: float = Field(default=0.5, ge=0.0, le=1.0)
 
@@ -108,7 +109,7 @@ def sam_predict(block_id: str, body: SAMPredictIn):
         if not (0 <= x0 < x1 <= W and 0 <= y0 < y1 <= H):
             raise HTTPException(422, "invalid box")
     try:
-        return service.predict(b, body.z, body.points, body.labels, body.box, body.only_background, body.candidate,
+        return service.predict(b, body.z, body.points, body.labels, body.box, body.only_background,
                                snap_boundary=body.snap_boundary, boundary_sensitivity=body.boundary_sensitivity)
     except SAMUnavailable as exc:
         raise HTTPException(503, str(exc))
@@ -124,91 +125,6 @@ def sam_apply(block_id: str, body: SAMApplyIn):
         rec = service.apply(b, body.token, _int_id(body.new_id))
     except ValueError as exc:
         raise HTTPException(409, str(exc))
-    return _edit_response(b, rec)
-
-
-class SmartFillIn(BaseModel):
-    z: int = Field(ge=0)
-    x: int = Field(ge=0)
-    y: int = Field(ge=0)
-    sensitivity: float = Field(default=0.5, ge=0.0, le=1.0)
-    max_radius: int = Field(default=0, ge=0, le=8192)  # 0 = unlimited
-    scope: Literal["same", "same_bg", "any"] = "same"
-
-
-class TokenApplyIn(BaseModel):
-    token: str = Field(min_length=32, max_length=32)
-    new_id: str | int
-
-
-class SplitIn(BaseModel):
-    z: int = Field(ge=0)
-    x: int = Field(ge=0)
-    y: int = Field(ge=0)
-
-
-class CutIn(BaseModel):
-    z: int = Field(ge=0)
-    points: list[list[int]] = Field(min_length=2, max_length=5000)
-
-
-@router.post("/blocks/{block_id}/smart-fill/preview")
-def smart_fill_preview(block_id: str, body: SmartFillIn):
-    """智能填充 preview: the membrane-bounded region around the click, as an overlay PNG plus a token to apply it."""
-    from emqc.annotate.boundary import service as smart
-
-    b = _block(block_id)
-    Z, H, W = b.shape_zyx
-    if not (0 <= body.z < Z and 0 <= body.x < W and 0 <= body.y < H):
-        raise HTTPException(404, "outside the block")
-    try:
-        return smart.preview(b, body.z, body.x, body.y, body.sensitivity, body.max_radius, body.scope)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
-
-
-@router.post("/blocks/{block_id}/smart-fill/apply")
-def smart_fill_apply(block_id: str, body: TokenApplyIn):
-    from emqc.annotate.boundary import service as smart
-
-    b = _block(block_id)
-    try:
-        rec = smart.apply(b, body.token, _int_id(body.new_id))
-    except ValueError as e:
-        raise HTTPException(409, str(e))
-    return _edit_response(b, rec)
-
-
-@router.post("/blocks/{block_id}/split")
-def split(block_id: str, body: SplitIn):
-    """分离: the clicked component of its label becomes a new id (the label must have other pieces in this slice)."""
-    b = _block(block_id)
-    Z, H, W = b.shape_zyx
-    if not (0 <= body.z < Z and 0 <= body.x < W and 0 <= body.y < H):
-        raise HTTPException(404, "outside the block")
-    if not b.has_seg:
-        raise HTTPException(404, "block has no segmentation")
-    try:
-        rec = b.split_component(body.z, body.x, body.y)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
-    return _edit_response(b, rec)
-
-
-@router.post("/blocks/{block_id}/cut")
-def cut(block_id: str, body: CutIn):
-    """切割: a drawn line splits the label it crosses; the largest piece keeps the id, the others get new ids."""
-    b = _block(block_id)
-    Z, H, W = b.shape_zyx
-    if not 0 <= body.z < Z:
-        raise HTTPException(404, "z outside the block")
-    if not b.has_seg:
-        raise HTTPException(404, "block has no segmentation")
-    pts = [(min(max(int(p[0]), 0), W - 1), min(max(int(p[1]), 0), H - 1)) for p in body.points if len(p) >= 2]
-    try:
-        rec = b.cut(body.z, pts)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
     return _edit_response(b, rec)
 
 
@@ -276,11 +192,13 @@ def labels_png(block_id: str, z: int):
 
 @router.get("/blocks/{block_id}/labels/{z}.json")
 def labels_json(block_id: str, z: int):
+    from fastapi.responses import JSONResponse
+
     b = _block(block_id)
     if not b.has_seg:
         raise HTTPException(404, "block has no segmentation")
     try:
-        return b.labels_table(z)
+        return JSONResponse(b.labels_table(z), headers={"Cache-Control": "no-store"})
     except IndexError as e:
         raise HTTPException(404, str(e))
 
@@ -478,11 +396,14 @@ def undo(block_id: str):
 
 
 @router.post("/blocks/{block_id}/new-id")
-def new_id(block_id: str):
+def new_id(block_id: str, z: int = 0):
     b = _block(block_id)
     if not b.has_seg:
         raise HTTPException(404, "block has no segmentation")
-    return {"id": str(b.new_id())}
+    try:
+        return {"id": str(b.new_id(z)), "created_ids": b.created_ids()}
+    except (ValueError, IndexError) as e:
+        raise HTTPException(422, str(e))
 
 
 @router.get("/blocks/{block_id}/edits")

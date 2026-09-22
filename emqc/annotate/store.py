@@ -13,7 +13,7 @@ pixel. The mapping was pinned down by downloading the volume with CloudVolume an
 quadrant blocks match at exactly 1.000 with zero displacement under the convention above.
 
 `em_slice` / `seg_slice` hand out the displayed (transposed) orientation, so everything that thinks in screen
-coordinates — the tools, the boundary fill, SAM — is automatically right. Only the edit records go the other way:
+coordinates — the tools, SAM — is automatically right. Only the edit records go the other way:
 they store indices into the array as it sits on disk, so that records written before this change still replay.
 
 The data directory is treated as read-only. Everything the viewer writes lives in a separate *work directory*
@@ -48,9 +48,23 @@ from scipy import ndimage
 SEG_EDIT = "seg_edit.npy"
 EDIT_DIR = "edits"
 EDIT_LOG = "edits.jsonl"
+CREATED_LABELS = "created_labels.json"
 MAX_LABELS_PER_SLICE = 65535
 _BLOCK_LOCKS = WeakValueDictionary()
 _BLOCK_LOCKS_GUARD = threading.Lock()
+
+
+def label_color(label: int) -> tuple[int, int, int]:
+    """Match the browser's FNV-1a/HSL palette, including Math.round rounding."""
+    h = 2166136261
+    for c in str(label):
+        h = ((h ^ ord(c)) * 16777619) & 0xffffffff
+    hue, sat, light = h % 360, .62 + ((h >> 9) % 30) / 100, .48 + ((h >> 17) % 16) / 100
+    a = sat * min(light, 1 - light)
+    def channel(n):
+        k = (n + hue / 30) % 12
+        return int(255 * (light - a * max(-1, min(k - 3, 9 - k, 1))) + .5)
+    return tuple(channel(n) for n in (0, 8, 4))
 
 
 def find_blocks(root: Path | None, max_depth: int = 4) -> list[Path]:
@@ -255,7 +269,8 @@ class Block:
     def labels_table(self, z: int) -> dict:
         idx, ids = self.labels(z)
         counts = np.bincount(idx.ravel(), minlength=ids.size)
-        return {"z": z, "n": int(ids.size), "ids": [str(int(i)) for i in ids], "counts": counts.tolist()}
+        return {"z": z, "n": int(ids.size), "ids": [str(int(i)) for i in ids], "counts": counts.tolist(),
+                "created_ids": self.created_ids()}
 
     def pick(self, z: int, x: int, y: int) -> int:
         self._check_z(z)
@@ -276,10 +291,32 @@ class Block:
             self._max_id = m
         return self._max_id
 
-    def new_id(self) -> int:
+    def created_ids(self) -> list[str]:
         with self.lock:
-            self._max_id = self.max_id() + 1
-            return self._max_id
+            path = self.work_path(CREATED_LABELS)
+            return json.loads(path.read_text()) if path.exists() else []
+
+    def new_id(self, z: int = 0) -> int:
+        """Reserve a reusable block label without changing pixels or edit history."""
+        with self.lock:
+            if self.read_only:
+                raise ValueError("当前数据块以只读方式打开")
+            self._check_z(z)
+            created = self.created_ids()
+            used = {label_color(int(i)) for i in self.labels(z)[1] if i != 0}
+            used.update(label_color(int(i)) for i in created)
+            label = max(self.max_id(), max(map(int, created), default=0)) + 1
+            limit = np.iinfo(self._seg_ro.dtype).max
+            while label <= limit and label_color(label) in used:
+                label += 1
+            if label > limit:
+                raise ValueError("标签编号已用尽")
+            self.work.mkdir(parents=True, exist_ok=True)
+            tmp = self.work / (CREATED_LABELS + ".part")
+            tmp.write_text(json.dumps([*created, str(label)]))
+            tmp.replace(self.work / CREATED_LABELS)
+            self._max_id = label
+            return label
 
     # ------------------------------------------------------------------ edits
     def _edit_dir(self) -> Path:
@@ -304,7 +341,7 @@ class Block:
         return records
 
     def _record(self, kind: str, z: int | None, xs: np.ndarray, ys: np.ndarray, old, new_id: int, extra: dict | None = None,
-                zs: np.ndarray | None = None, new_values: np.ndarray | None = None) -> dict:
+                zs: np.ndarray | None = None) -> dict:
         """Persist one edit: every changed voxel (x, y, z) and the id it had before. `z` is the section shown in the
         UI (None for a 3-D edit spanning several sections); `zs` defaults to a constant z."""
         log = self.edits()
@@ -312,7 +349,7 @@ class Block:
         if zs is None:
             zs = np.full(xs.shape, int(z), dtype=np.uint16)
         np.savez_compressed(self._edit_dir() / f"{n:06d}.npz", z=-1 if z is None else int(z), xs=xs.astype(np.uint16), ys=ys.astype(np.uint16),
-                            zs=zs.astype(np.uint16), old=np.asarray(old), new=np.asarray(new_id if new_values is None else new_values))
+                            zs=zs.astype(np.uint16), old=np.asarray(old), new=np.asarray(new_id))
         many = np.ndim(new_id) > 0                  # a repair writes a different id per pixel
         rec = {"n": n, "kind": kind, "z": (None if z is None else int(z)), "n_px": int(xs.size),
                "new_id": (f"{int(np.unique(new_id).size)} 个 id" if many else str(int(new_id))),
@@ -329,7 +366,7 @@ class Block:
         return rec
 
     def apply_mask(self, z: int, mask: np.ndarray, new_id: int, metadata: dict, kind: str = "sam") -> dict | None:
-        """Apply a previewed mask (SAM or boundary-aware fill) in display (y, x) coordinates; preserve exact undo."""
+        """Apply a previewed mask (SAM) in display (y, x) coordinates; preserve exact undo."""
         self._check_z(z)
         if mask.shape != self.shape_zyx[1:] or mask.dtype != np.bool_:
             raise ValueError("mask shape or dtype does not match the slice")
@@ -350,94 +387,6 @@ class Block:
             seg.flush()
             self._invalidate(z)
             return rec
-
-    def _fresh_ids(self, n: int) -> list[int]:
-        """n unused ids (max + 1 ..), reserved immediately. Called with the edit lock held."""
-        base = self.max_id()
-        ids = [base + k for k in range(1, n + 1)]
-        self._max_id = ids[-1]
-        return ids
-
-    def split_component(self, z: int, x: int, y: int) -> dict:
-        """分离: the clicked 4-connected piece of its label gets a fresh id. Only meaningful when the label has other,
-        disconnected pieces in this slice (two cells wrongly sharing one id that do not touch here)."""
-        self._check_z(z)
-        with self.lock:
-            plane = self._plane_ro(z)
-            old = int(plane[y, x])
-            if old == 0:
-                raise ValueError("背景不能分离，请点一个色块")
-            comps, n = ndimage.label(plane == old)
-            if n < 2:
-                raise ValueError("该颜色在本片只有一块；相连的色块请用切割线画开")
-            mask = comps == comps[y, x]
-            xs, ys = self._disk_idx(mask)
-            (new_id,) = self._fresh_ids(1)
-            seg = self._seg_writable()
-            seg[xs, ys, z] = new_id
-            seg.flush()
-            self._invalidate(z)
-            return self._record("split", z, xs, ys, old, new_id, {"mode": "component", "x": int(x), "y": int(y), "pieces": int(n)})
-
-    @staticmethod
-    def _rasterize(points: list[tuple[int, int]], shape: tuple[int, int]) -> np.ndarray:
-        """8-connected 1-px path through the points (x = column, y = row), which is a wall for 4-connected labelling."""
-        path = np.zeros(shape, dtype=bool)
-        H, W = shape
-        pts = [points[0]]
-        for (x0, y0), (x1, y1) in zip(points, points[1:]):
-            n = int(max(abs(x1 - x0), abs(y1 - y0)))
-            pts.extend((int(round(x0 + (x1 - x0) * t / n)), int(round(y0 + (y1 - y0) * t / n))) for t in range(1, n + 1))
-        for x, y in pts:
-            if 0 <= x < W and 0 <= y < H:
-                path[y, x] = True
-        return path
-
-    def cut(self, z: int, points: list[tuple[int, int]]) -> dict:
-        """切割: draw a line through a label; the label's component(s) crossed by the line fall apart into pieces.
-        The largest piece keeps the id, every other piece gets a fresh id, and the pixels under the line itself go
-        to the nearest piece so no gap is left. The label to cut is the one the line runs over the most."""
-        self._check_z(z)
-        if len(points) < 2:
-            raise ValueError("切割线至少需要两个点")
-        with self.lock:
-            plane = self._plane_ro(z)
-            path = self._rasterize(points, plane.shape)
-            ids, counts = np.unique(plane[path], return_counts=True)
-            keep = ids != 0
-            if not keep.any():
-                raise ValueError("切割线没有经过任何色块")
-            cut_id = int(ids[keep][np.argmax(counts[keep])])
-            comps, _ = ndimage.label(plane == cut_id)
-            touched = np.unique(comps[path & (plane == cut_id)])
-            xs_all, ys_all, vals_all, new_ids = [], [], [], []
-            for c in touched[touched > 0]:
-                comp = comps == c
-                pieces, n = ndimage.label(comp & ~path)
-                if n < 2:
-                    continue
-                sizes = np.bincount(pieces.ravel())
-                sizes[0] = 0
-                largest = int(sizes.argmax())
-                _, (iy, ix) = ndimage.distance_transform_edt(pieces == 0, return_indices=True)
-                assigned = pieces.copy()
-                bar = comp & path
-                assigned[bar] = pieces[iy[bar], ix[bar]]  # line pixels join the nearest piece
-                fresh = self._fresh_ids(n - 1)
-                for k in [k for k in range(1, n + 1) if k != largest]:
-                    nid = fresh.pop(0)
-                    xs, ys = self._disk_idx(assigned == k)
-                    xs_all.append(xs); ys_all.append(ys); vals_all.append(np.full(xs.shape, nid, dtype=np.uint64)); new_ids.append(nid)
-            if not new_ids:
-                raise ValueError("切割线没有把色块分开，请从色块外画到色块外、穿过整个色块")
-            xs, ys, vals = np.concatenate(xs_all), np.concatenate(ys_all), np.concatenate(vals_all)
-            seg = self._seg_writable()
-            seg[xs, ys, z] = vals.astype(seg.dtype)
-            seg.flush()
-            self._invalidate(z)
-            return self._record("split", z, xs, ys, cut_id, new_ids[0],
-                                {"mode": "line", "cut_id": str(cut_id), "pieces": len(new_ids) + 1, "new_ids": [str(i) for i in new_ids], "n_points": len(points)},
-                                new_values=vals)
 
     def apply_labels(self, z: int, labels: np.ndarray, where: np.ndarray, metadata: dict) -> dict | None:
         """Write many different ids at once, inside `where` — what repairing a destroyed section needs.
