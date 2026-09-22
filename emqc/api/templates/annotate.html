@@ -30,7 +30,7 @@
 
     <div class="vast-sec">当前标签</div>
     <div class="vast-cur"><span class="sw" id="an-cur-sw"></span><span class="mono" id="an-cur-id">未选择</span></div>
-    <div class="actions" style="margin-top:6px"><button id="an-newid" class="primary" title="新建标签 (N)">新建标签 <kbd>N</kbd></button><button id="an-neighbour-pick" title="L：本片这块是空的时候，取最近一张有标签的邻片在光标处的颜色">邻片取色 <kbd>L</kbd></button><button id="an-gap" title="I：把当前标签设为「细胞间隙」。用它填色只会落在没有标签的像素上，不会盖掉任何细胞">细胞间隙 <kbd>I</kbd></button></div>
+    <div class="actions" style="margin-top:6px"><button id="an-newid" class="primary" title="新建标签 (N)">新建标签 <kbd>N</kbd></button><button id="an-neighbour-pick" title="L：本片这块是空的时候，取最近一张有标签的邻片在光标处的颜色">邻片取色 <kbd>L</kbd></button><button id="an-gap" title="把当前标签设为「细胞间隙」。快捷键 I：光标放在一块空白上按 I，直接把那一块填为间隙（连成大网的会改为切到画笔）。它只会落在没有标签的像素上，不会盖掉任何细胞">细胞间隙 <kbd>I</kbd></button></div>
     <div class="muted" id="an-gap-warn" role="status" style="font-size:12px;margin-top:6px;color:#b45309" hidden></div>
     <div class="vast-list" id="an-neighbour-list" style="margin-top:6px;max-height:150px" hidden></div>
 
@@ -124,7 +124,7 @@
       <div class="kbd-row"><kbd>Tab</kbd> 按住隐藏分割 · <kbd>G</kbd> 透明度渐变 · <kbd>,</kbd> <kbd>.</kbd> 步进</div>
       <div class="kbd-row"><kbd>O</kbd> 只画边界</div>
       <div class="kbd-row"><kbd>L</kbd> 邻片取色 <span class="muted">本片漏标时，取最近一张有标签的邻片在光标处的颜色</span></div>
-      <div class="kbd-row"><kbd>I</kbd> 细胞间隙 <span class="muted">通用保留标签；只填到没标签的像素上，不盖细胞</span></div>
+      <div class="kbd-row"><kbd>I</kbd> 细胞间隙 <span class="muted">光标在空白上按：直接填那一块（大网则切到画笔）；否则只选颜色。永不盖细胞</span></div>
       <div class="kbd-row"><kbd>U</kbd> 查看光标处 3D · 再按取消</div>
     </section>
     <section><h3>改标签</h3>
