@@ -34,6 +34,8 @@ from __future__ import annotations
 import json
 import urllib.parse
 
+from emqc.annotate.labels import GAP_ID
+
 VIEWER = "https://h01-dot-neuroglancer-demo.appspot.com/"
 # The public viewer reads these two directly from Google Storage; they are the same volumes meta.json names.
 H01_EM = "precomputed://gs://h01-release/data/20210601/4nm_raw"
@@ -67,7 +69,7 @@ def segment_is_public(meta: dict, segment: int | None) -> bool:
     derived block invents (SAM pre-fill starts numbering above the delivered maximum, recorded as
     `sam_merge.first_new_id`), and the ids the annotator creates with 新建标签, which are also above the original maximum. Both sit above
     the delivered maximum, so one threshold rules out both."""
-    if not segment:
+    if not segment or int(segment) == GAP_ID:      # 细胞间隙是平台保留的 id，公开分割里没有它
         return False
     first_new = ((meta.get("sam_merge") or {}).get("first_new_id"))
     if first_new is not None and int(segment) >= int(first_new):

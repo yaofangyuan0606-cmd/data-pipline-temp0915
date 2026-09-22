@@ -35,8 +35,12 @@
 
   // ------------------------------------------------------------------ colours: stable per id, everywhere
   const colorCache = new Map();
+  // 平台保留的「细胞间隙」标签：固定 id、固定颜色，在每个数据块里都一样（与 emqc/annotate/labels.py 一致）
+  const GAP_ID = "9223372036854775808", GAP_NAME = "细胞间隙", GAP_COLOR = [148, 163, 184];
+  const labelName = id => id === GAP_ID ? GAP_NAME : id;
   function colorOf(id) {
     if (id === "0") return [0, 0, 0];
+    if (id === GAP_ID) return GAP_COLOR;
     let c = colorCache.get(id);
     if (c) return c;
     let h = 2166136261;                                   // FNV-1a over the id string
@@ -291,7 +295,7 @@
     for (const p of P) p.stage.classList.toggle("pan", t === "pan");
     renderHi();
   }
-  function setCur(id) { S.cur = String(id); $("an-cur-id").textContent = S.cur === "0" ? "未选择" : S.cur; $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur)); status(); segList(); samButtons(); }
+  function setCur(id) { S.cur = String(id); $("an-cur-id").textContent = S.cur === "0" ? "未选择" : labelName(S.cur); $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur)); status(); segList(); samButtons(); }
   function pick(x, y) { const id = idAt(x, y); if (id == null || id === "0") return; setCur(id); if (S.tool === "merge") mergeArm({ id, xy: [x, y], z: S.z }); }
 
   function floodLocal(e, x, y, newIdx) {           // scanline flood fill on the index map, 4-connectivity
@@ -739,6 +743,7 @@
     else if (k === "Tab") { ev.preventDefault(); if (!S.blink) { S.blink = true; render(); } }
     else if (k === "n") newId();
     else if (k === "l") neighbourPick();
+    else if (k === "i") { setCur(GAP_ID); flash(`当前标签：${GAP_NAME}`); }
     else if (k === "0") fit(); else if (k === "1") { S.zoom = 1; applyView(); }
     else if (k === "+" || k === "=") { const r = P[0].stage.getBoundingClientRect(); zoomAt(1.25, r.width / 2, r.height / 2); }
     else if (k === "-") { const r = P[0].stage.getBoundingClientRect(); zoomAt(0.8, r.width / 2, r.height / 2); }
@@ -760,7 +765,7 @@
     $("an-nseg").textContent = `${ids.length} 个`;
     const group = (key, title, labels) => `<section class="vast-label-group" data-label-group="${key}" aria-labelledby="an-labels-${key}">`
       + `<div class="vast-list-heading" id="an-labels-${key}"><span>${title}</span><span class="muted mono">${labels.length}</span></div>`
-      + labels.slice(0, 400).map(([id, n, k]) => `<div class="row ${id === S.cur ? "cur" : ""}" data-id="${id}" data-k="${k}"><span class="sw" style="background:${css(colorOf(id))}"></span><span class="id" title="${id}">${id}</span><span class="n">${n || "未使用"}</span></div>`).join("")
+      + labels.slice(0, 400).map(([id, n, k]) => `<div class="row ${id === S.cur ? "cur" : ""}" data-id="${id}" data-k="${k}"><span class="sw" style="background:${css(colorOf(id))}"></span><span class="id" title="${id}">${labelName(id)}</span><span class="n">${n || "未使用"}</span></div>`).join("")
       + (!labels.length ? `<div class="vast-list-note">${q ? "无匹配标签" : "暂无"}</div>` : "")
       + (labels.length > 400 ? `<div class="vast-list-note">还有 ${labels.length - 400} 个，请搜索</div>` : "") + `</section>`;
     box.innerHTML = group("created", "新建标签", rows.filter(([id]) => created.has(id)))
@@ -784,6 +789,7 @@
   document.querySelectorAll(".tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
   $("an-brush").addEventListener("input", ev => setBrush(+ev.target.value));
   $("an-newid").addEventListener("click", newId);
+  $("an-gap").addEventListener("click", () => { setCur(GAP_ID); flash(`当前标签：${GAP_NAME}——只会填到没有标签的像素上，不会盖掉任何细胞`); });
   $("an-prev").addEventListener("click", () => goZ(S.z - 1));
   $("an-next").addEventListener("click", () => goZ(S.z + 1));
   $("an-z").addEventListener("change", ev => goZ(+ev.target.value));

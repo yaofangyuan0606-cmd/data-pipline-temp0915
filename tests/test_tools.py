@@ -1,5 +1,6 @@
 """SAM membrane refinement, retired API routes, Neuroglancer links and section repair."""
 import json
+import pathlib
 
 import numpy as np
 import pytest
@@ -146,6 +147,81 @@ def test_neuroglancer_endpoint(client_tools):
     d = r.json()
     assert d["url"] is None and "origin" in d["reason"], "the synthetic test block has no origin, so no link"
     assert c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer", params={"z": 0, "x": 999, "y": 10}).status_code == 404
+
+
+# ----------------------------------------------------------------------------- 细胞间隙
+def test_gap_label_only_ever_lands_on_unlabelled_pixels(block):
+    """「细胞间隙」是通用保留标签，用得很频繁，所以规矩要硬：它只落在 id 为 0 的像素上，永远不盖掉细胞。
+    画笔扫过细胞、SAM 掩膜压到细胞、修补说这里是间隙——三条路都要被挡住。"""
+    from emqc.annotate.labels import GAP_ID, GAP_NAME
+
+    before = block.seg_slice(1).copy()                       # z1: 左半是细胞 7，右半是 0
+    assert (before == 7).any() and (before == 0).any()
+    # 画笔：一笔横跨细胞和空白
+    rec = block.paint(1, [(40, 30), (70, 30)], 6, GAP_ID)
+    after = block.seg_slice(1)
+    assert rec["kind"] == "paint" and rec["n_px"] > 0
+    assert np.array_equal(after[before == 7], before[before == 7]), "细胞 7 的像素一个都没变"
+    assert ((after == GAP_ID) & (before == 0)).sum() == rec["n_px"], "写进去的全是原来为 0 的像素"
+    block.undo()
+    # SAM 掩膜：整片压下去
+    rec = block.apply_mask(1, np.ones(block.shape_zyx[1:], bool), GAP_ID, {"model": "test"})
+    after = block.seg_slice(1)
+    assert np.array_equal(after[before != 0], before[before != 0])
+    assert (after[before == 0] == GAP_ID).all()
+    block.undo()
+    # 填充：点在细胞上要被拒绝，并说明原因；点在空白上正常
+    with pytest.raises(ValueError, match=GAP_NAME):
+        block.fill(1, 10, 10, GAP_ID)
+    rec = block.fill(1, 60, 30, GAP_ID)
+    assert rec and int(block.seg_slice(1)[30, 60]) == GAP_ID
+    assert np.array_equal(block.seg_slice(1)[before == 7], before[before == 7])
+    block.undo()
+    # 修补：邻片说是间隙，也不许盖洞里已有的细胞
+    labels = np.full(block.shape_zyx[1:], GAP_ID, np.uint64)
+    rec = block.apply_labels(1, labels, np.ones(labels.shape, bool), {"interpolated": True})
+    after = block.seg_slice(1)
+    assert np.array_equal(after[before != 0], before[before != 0]) and (after[before == 0] == GAP_ID).all()
+    block.undo()
+    assert np.array_equal(block.seg_slice(1), before), "四次撤销后逐像素还原"
+
+
+def test_gap_label_cannot_be_merged_and_does_not_inflate_new_ids(block):
+    """并进去会删掉一个细胞，并出来会把整片间隙染成一个细胞；而且它是 2**63，不能把「最大 id + 1」顶到天上去。"""
+    from emqc.annotate import neuroglancer
+    from emqc.annotate.labels import GAP_ID
+
+    assert block.paint(1, [(60, 30)], 3, GAP_ID)["n_px"] > 0    # z1 右半是空的，间隙真的写进卷里了
+    assert int(block.seg_slice(1)[30, 60]) == GAP_ID
+    with pytest.raises(ValueError, match="合并"):
+        block.merge(GAP_ID, 7)
+    with pytest.raises(ValueError, match="合并"):
+        block.merge(7, GAP_ID)
+    with pytest.raises(ValueError, match="合并"):
+        block.merge_pair(1, (10, 10), (60, 30))                 # 细胞 7 ← 间隙
+    with pytest.raises(ValueError, match="合并"):
+        block.merge_pair(1, (60, 30), (10, 10))                 # 间隙 ← 细胞 7
+    assert block.max_id() == 7, "max_id 忽略保留 id"
+    assert block.new_id() < GAP_ID // 2, "新建的 id 仍然是小数字，没有被 2**63 顶上去"
+    assert neuroglancer.segment_is_public({"dataset": {"seg_source": "h01-release/x"}}, GAP_ID) is False
+
+
+def test_gap_label_constant_is_shared_by_server_and_page(client_tools):
+    """前端硬编码了同一个数字和颜色；服务端通过 info 把它交出来，两边必须一致。"""
+    from emqc.annotate.labels import GAP_COLOR, GAP_ID, GAP_NAME
+    from emqc.annotate.store import label_color
+
+    c, block_id = client_tools
+    info = c.get(f"/api/v1/annotate/blocks/{block_id}").json()
+    assert info["gap_id"] == str(GAP_ID) == "9223372036854775808" and info["gap_name"] == GAP_NAME
+    assert tuple(info["gap_color"]) == GAP_COLOR == label_color(GAP_ID)
+    js = (pathlib.Path(__file__).resolve().parents[1] / "emqc/api/static/annotate.js").read_text()
+    assert f'GAP_ID = "{GAP_ID}"' in js and f"GAP_COLOR = [{GAP_COLOR[0]}, {GAP_COLOR[1]}, {GAP_COLOR[2]}]" in js
+    # 用它填色走 API：只动 0 像素，撤销还原
+    r = c.post(f"/api/v1/annotate/blocks/{block_id}/paint", json={"z": 1, "points": [[40, 30], [70, 30]], "radius": 6, "new_id": str(GAP_ID)})
+    assert r.status_code == 200 and r.json()["edit"]["n_px"] > 0
+    r = c.post(f"/api/v1/annotate/blocks/{block_id}/fill", json={"z": 1, "x": 10, "y": 10, "new_id": str(GAP_ID)})
+    assert r.status_code in (409, 422), "往细胞上填间隙要被拒绝而不是 500"
 
 
 # ----------------------------------------------------------------------------- 跨片取色
