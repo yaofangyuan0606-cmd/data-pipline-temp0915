@@ -113,6 +113,6 @@ def test_api_rejects_invalid_prompts_before_inference(block, monkeypatch):
         {"z": 0, "points": [[1, -1]], "labels": [1]},
         {"z": 0, "box": [5, 5, 2, 7]},
         {"z": 0, "points": [[1, 1]], "labels": [2]},
-        {"z": 0, "box": [0, 0, 8, 8], "candidate": 3},
+        {"z": 0, "box": [0, 0, 8, 8], "candidate": 0},
     ]:
         assert client.post("/api/v1/annotate/blocks/example/sam/predict", json=body).status_code == 422

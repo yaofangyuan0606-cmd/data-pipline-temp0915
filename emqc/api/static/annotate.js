@@ -14,14 +14,15 @@
   const $ = id => document.getElementById(id);
   const S = {
     block: null, info: null, W: 0, H: 0, z: Math.max(0, parseInt(new URLSearchParams(location.search).get("z"), 10) || 0),
-    tool: "pick", brush: 4, cur: "0",
+    tool: "pick", brush: 4, cur: "0", createdIds: [],
     view: "overlay", rightSegOnly: false, curtain: false, curtainX: 0, blink: false, fade: false, fadeMax: 0.45, fadeRaf: 0,
     opacity: 0.45, outline: false, showEm: true, showSeg: true, hover: true,
     zoom: 1, tx: 0, ty: 0,
     cache: new Map(), loading: new Map(), cacheVersion: 0, hoverXY: null, hoverPane: 0, regionEntry: null, regions: [],
     playing: null, drag: null, stroke: null, mergeFirst: null, mergeBusy: false, spacePan: false, curtainDrag: false,
-    samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null, samNeighbour: null,
-    smart: null, smartMask: null, smartBusy: false, cutPts: null, repair: null, repairMask: null,
+    samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null, samRequest: null, samSequence: 0,
+    samNeighbour: null, repair: null, repairMask: null,
+    ngMode: null, ngRequest: null, ngSequence: 0, ngWindow: null, ngTimer: null,
   };
   function mkPane(id) {
     const stage = $(id), cv = stage.querySelector(".vast-canvas"), [em, seg, hi] = cv.querySelectorAll("canvas");
@@ -52,7 +53,7 @@
 
   // ------------------------------------------------------------------ data
   async function getJSON(u) { const r = await fetch(u); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); return r.json(); }
-  async function postJSON(u, body) { const r = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); return r.json(); }
+  async function postJSON(u, body, signal) { const r = await fetch(u, { signal, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); return r.json(); }
   const loadImg = url => new Promise((ok, bad) => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => bad(new Error("image " + url)); im.src = url; });
 
   function decodeIdx(img) {
@@ -73,6 +74,7 @@
       S.info.has_seg ? loadImg(`${API}/blocks/${b}/labels/${z}.png?v=${ver}`) : null,
       S.info.has_seg ? getJSON(`${API}/blocks/${b}/labels/${z}.json?v=${ver}`) : null,
     ]).then(([em, lab, tab]) => {
+      if (tab && version === S.cacheVersion) S.createdIds = tab.created_ids || [];
       const e = { em, idx: lab ? decodeIdx(lab) : null, ids: tab ? tab.ids : ["0"], counts: tab ? tab.counts : [], segImgs: new Map() };
       if (version !== S.cacheVersion || S.loading.get(z) !== p) return e;
       S.cache.set(z, e); S.loading.delete(z);
@@ -139,7 +141,7 @@
     if (pin) drawRegion(pin, [255, 214, 10], 90);
     if (hover && (!pin || !pin.mask[S.hoverXY[1] * S.W + S.hoverXY[0]])) drawRegion(hover, [255, 255, 255], 60);
     drawSAM();
-    drawTools();
+    if (S.repairMask && !S.blink) for (const p of panes()) p.gHi.drawImage(S.repairMask, 0, 0);
     if (S.view === "overlay" && S.curtain) {
       const g = P[0].gHi, cx = S.curtainX + 0.5, lw = 1 / S.zoom;
       g.lineWidth = 3 * lw; g.strokeStyle = "rgba(0,0,0,.55)"; g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, S.H); g.stroke();
@@ -223,7 +225,7 @@
     const nz = S.info ? S.info.shape_zyx[0] : 0;
     let s = `z ${S.z} / ${nz - 1}`;
     if (S.hoverXY) { const [x, y] = S.hoverXY; const id = idAt(x, y); s += ` · x ${x} y ${y}` + (id != null ? ` · id ${id}` : ""); }
-    s += ` · 当前 ${S.cur} · ${Math.round(S.zoom * 100)}%`;
+    s += ` · ${Math.round(S.zoom * 100)}%`;
     $("an-status").textContent = s;
   }
 
@@ -258,7 +260,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) { mergeArm(null); clearSAM(); clearSmart(); clearRepair(); clearNeighbourList("an-neighbour-list"); S.cutPts = null; }
+    if (z !== S.z) { if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); clearRepair(); clearNeighbourList("an-neighbour-list"); }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     $("an-compare").href = `/annotate/compare?block=${encodeURIComponent(S.block)}&z=${z}`;
@@ -279,18 +281,18 @@
   // ------------------------------------------------------------------ tools
   function setTool(t) {
     if (S.mergeBusy) return;
+    clear3D();
+    if (t.startsWith("sam") && S.tool === t) t = "pick";
     if (!t.startsWith("sam")) clearSAM();
-    if (t !== "smart") clearSmart();
     clearRepair();                       // 修补是整片操作，切到任何画笔工具都说明注意力已经离开它
-    if (t !== "cut") S.cutPts = null;
     S.tool = t; mergeArm(null);
-    if ((t === "merge" || t === "smart" || t === "cut" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
-    document.querySelectorAll(".tool").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
+    if ((t === "merge" || t === "ng" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
+    document.querySelectorAll(".tool").forEach(b => { const active = b.dataset.tool === t; b.classList.toggle("active", active); b.setAttribute("aria-pressed", String(active)); });
     for (const p of P) p.stage.classList.toggle("pan", t === "pan");
     renderHi();
   }
-  function setCur(id) { S.cur = String(id); $("an-cur-id").textContent = S.cur; $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur)); status(); segList(); }
-  function pick(x, y) { const id = idAt(x, y); if (id == null) return; setCur(id); if (S.tool === "merge") mergeArm(id !== "0" ? { id, xy: [x, y], z: S.z } : null); }
+  function setCur(id) { S.cur = String(id); $("an-cur-id").textContent = S.cur === "0" ? "未选择" : S.cur; $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur)); status(); segList(); samButtons(); }
+  function pick(x, y) { const id = idAt(x, y); if (id == null || id === "0") return; setCur(id); if (S.tool === "merge") mergeArm({ id, xy: [x, y], z: S.z }); }
 
   function floodLocal(e, x, y, newIdx) {           // scanline flood fill on the index map, 4-connectivity
     const W = S.W, H = S.H, idx = e.idx, target = idx[y * W + x]; if (target === newIdx) return 0;
@@ -311,6 +313,7 @@
 
   async function fill(x, y, whole) {
     const e = S.cache.get(S.z); if (!e || !e.idx) return;
+    if (S.cur === "0" && S.tool !== "clear") { flash("请先选择或新建标签"); return; }
     const old = idAt(x, y); if (old === S.cur) return;
     const k = ensureIdx(e, S.cur), z = S.z;
     if (whole) { const t = e.idx[y * S.W + x]; for (let i = 0; i < e.idx.length; i++) if (e.idx[i] === t) e.idx[i] = k; }
@@ -327,14 +330,15 @@
     S.mergeFirst = first;
     const h = $("an-merge-hint"); h.hidden = S.tool !== "merge";
     h.textContent = S.mergeBusy ? "正在合并，请稍候…" : first
-      ? "已选第一块（黄框），请点第二块，保留第一块颜色。Esc 取消"
-      : "请点第一块，再点第二块。仅合并当前切片点到的色块，保留第一块颜色。";
+      ? "已选第一块，请点第二块 · Esc 取消"
+      : "依次点两块，保留第一块颜色";
     renderHi();
   }
   function mergeBusy(on) {
     S.mergeBusy = on;
     document.querySelectorAll(".vast-tools button, .vast-tools input, .vast-tools select").forEach(el => el.disabled = on);
     samButtons();
+    $("an-rp-apply").disabled = on || !S.repair?.n_px;
   }
   async function mergeInto(x, y) {
     if (S.mergeBusy) return;
@@ -347,14 +351,14 @@
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/merge-pair`, { z, first: first.xy, second: [x, y] });
       await afterEdit(r, z);
       setCur(r.edit ? r.edit.new_id : first.id);
-      flash(r.edit ? "合并完成，保留第一块颜色。请点下一对的第一块。" : "两块已是同一颜色。请点下一对的第一块。");
+      flash(r.edit ? "已合并，可选择下一对" : "标签相同，可选择下一对");
     } catch (err) {
-      flash("合并失败，请重新点选这一对：" + err.message, true);
+      flash("合并失败：" + err.message, true);
       invalidate(z); await goZ(z, true, true);
     } finally { mergeBusy(false); mergeArm(null); }
   }
 
-  function strokeStart(x, y) { S.stroke = { pts: [[x, y]], z: S.z, id: S.tool === "erase" ? "0" : S.cur }; strokeDot(x, y); }
+  function strokeStart(x, y) { if (S.tool === "brush" && S.cur === "0") { flash("请先选择或新建标签"); return; } S.stroke = { pts: [[x, y]], z: S.z, id: S.tool === "erase" ? "0" : S.cur }; strokeDot(x, y); }
   function strokeDot(x, y) {
     const id = S.stroke.id;
     for (const p of segPanes()) {
@@ -377,13 +381,13 @@
     } catch (err) { flash("涂抹失败: " + err.message, true); invalidate(st.z); goZ(st.z, true); }
   }
   async function afterEdit(r, z) {
-    clearSAM(); clearSmart(); S.cutPts = null;
+    clearSAM();
     S.info.n_edits = r.n_edits; $("an-nedit").textContent = `${r.n_edits} 次改动`;
     invalidate(z); if (z === S.z) await goZ(z, true, true); editList();
   }
   async function undo() {
     if (S.mergeBusy) return;
-    clearSAM(); clearSmart(); S.cutPts = null;
+    clearSAM();
     mergeBusy(true);
     mergeArm(null);
     $("an-merge-hint").textContent = "正在撤销，请稍候…";
@@ -397,9 +401,17 @@
     } catch (err) { flash("撤销失败: " + err.message, true); }
     finally { mergeBusy(false); mergeArm(null); }
   }
+  async function reserveLabel() {
+    const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/new-id?z=${S.z}`);
+    dropAll(); S.createdIds = r.created_ids; await goZ(S.z, true, true);
+    return r.id;
+  }
   async function newId() {
-    try { const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/new-id`); setCur(r.id); if (S.tool === "pick") setTool("fill"); flash(`新标签 ${r.id}，已选为当前标签`); }
+    if (S.mergeBusy || !S.info?.has_seg) return;
+    mergeBusy(true);
+    try { const id = await reserveLabel(); setCur(id); flash(`已新建标签 ${id}`); }
     catch (err) { flash("新建失败: " + err.message, true); }
+    finally { mergeBusy(false); }
   }
 
   // ------------------------------------------------------------------ 修补损坏切片
@@ -426,15 +438,8 @@
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/repair/preview`, { z: S.z });
       S.repairMask = await loadImg(r.mask_png); S.repair = r;
       $("an-rp-apply").disabled = !r.n_px;
-      // Every number below is an absolute pixel count with its own base spelled out. The earlier wording put three
-      // percentages of *different* things behind one "其中", so they read as parts of one whole and summed past 100%.
-      const pct = n => `${(100 * n / Math.max(1, r.hole_px)).toFixed(0)}%`;
-      const kept = r.kept_px || 0, bg = Math.max(0, r.unfilled_px - kept);
-      el.innerHTML = `损坏 ${r.hole_px} px，补上 ${r.n_px} px（占 ${pct(r.n_px)}，${r.n_ids} 个细胞）；`
-        + `补上的这些里有 ${r.uncertain_px} px 上下两片对不上（斜纹，最不可信）。`
-        + `<br>剩下 ${r.unfilled_px} px 没人认领：${kept} px 保留原有标签不动，${bg} px 本来就是背景。`
-        + `<br>用切片 z${r.source_sections[0]} 和 z${r.source_sections[1]} 插值，${r.seconds}s。`
-        + (r.note ? `<br><b>${r.note}</b>` : "");
+      el.textContent = `可补 ${r.n_px} 像素 · 不确定 ${r.uncertain_px} 像素 · 保留 ${r.unfilled_px} 像素。`
+        + `参考切片 ${r.source_sections.join("、")}。` + (r.note || "");
     } catch (err) { S.repair = null; S.repairMask = null; el.textContent = "预览失败：" + err.message; }
     finally { renderHi(); }
   }
@@ -453,147 +458,84 @@
   $("an-rp-prev").addEventListener("click", repairPreview);
   $("an-rp-apply").addEventListener("click", repairApply);
 
-  // ------------------------------------------------------------------ 在 Neuroglancer 里看 3D
-  // 一张切片答不了「这团黑的到底是什么」，3D 能。把光标处的坐标换算成数据集自身的坐标交给公开查看器。
-  async function openNeuroglancerBlock() {
-    if (!S.block) return;
-    const el = $("an-ng-info");
-    if (el) el.textContent = "正在生成链接…";
-    try {
-      const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/neuroglancer/block?z=${S.z}`);
-      if (!r.url) { if (el) el.textContent = "打不开：" + (r.reason || "未知原因"); return; }
-      if (el) el.innerHTML = `整块 <span class="mono">${r.size_um.join(" × ")}</span> µm，黄框是本数据块的范围`;
-      window.open(r.url, "_blank", "noopener");
-    } catch (err) { if (el) el.textContent = "失败：" + err.message; }
+  // ------------------------------------------------------------------ 3D viewing, cancellable while links are loading
+  function clear3D() {
+    S.ngSequence++; S.ngRequest?.abort(); S.ngRequest = null;
+    if (S.ngWindow && !S.ngWindow.closed) S.ngWindow.close();
+    S.ngWindow = null; S.ngMode = null;
+    clearInterval(S.ngTimer); S.ngTimer = null;
+    for (const id of ["an-ng", "an-ng-block"]) {
+      $(id).classList.remove("active"); $(id).setAttribute("aria-pressed", "false");
+    }
+    $("an-ng-info").textContent = "";
   }
-  async function openNeuroglancer(x, y) {
-    if (!S.block) return;
-    const el = $("an-ng-info");
-    if (x == null || y == null) { if (el) el.textContent = "把鼠标放到要查看的位置，再按 U"; return; }
-    if (el) el.textContent = "正在生成链接…";
+  function toggle3D(mode, point = null) {
+    if (S.mergeBusy || !S.block) return;
+    if (S.ngMode === mode) { setTool("pick"); return; }
+    setTool("ng"); S.ngMode = mode;
+    const button = $(mode === "point" ? "an-ng" : "an-ng-block");
+    button.classList.add("active"); button.setAttribute("aria-pressed", "true");
+    $("an-ng-info").textContent = mode === "point" ? "点击图像选择位置" : "";
+    if (mode === "block" || point) open3D(point);
+  }
+  async function open3D(point) {
+    if (!S.ngMode || (S.ngMode === "point" && !point)) return;
+    const mode = S.ngMode, sequence = ++S.ngSequence;
+    S.ngRequest?.abort();
+    const request = new AbortController(); S.ngRequest = request;
+    // Open synchronously in the click/keyboard gesture, before awaiting the link.
+    // Keep the handle to close exactly this viewer when its mode is cancelled.
+    const viewer = S.ngWindow && !S.ngWindow.closed ? S.ngWindow : window.open("about:blank", "_blank");
+    if (!viewer) { setTool("pick"); $("an-ng-info").textContent = "请允许弹出 3D 窗口后重试"; return; }
+    viewer.opener = null; S.ngWindow = viewer;
+    clearInterval(S.ngTimer);
+    S.ngTimer = setInterval(() => { if (viewer.closed && S.ngWindow === viewer) setTool("pick"); }, 500);
+    $("an-ng-info").textContent = "正在打开 3D…";
     try {
-      const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/neuroglancer?z=${S.z}&x=${x}&y=${y}`);
-      if (!r.url) { if (el) el.textContent = "打不开：" + (r.reason || "未知原因"); flash("无法定位到公开数据集：" + (r.reason || ""), true); return; }
-      if (el) el.innerHTML = `坐标 <span class="mono">${r.position.join(", ")}</span><br>`
-        + (r.segment ? `已选中细胞 <span class="mono">${r.segment}</span>` : (r.segment_note || ""))
-        + `<br>查看器里黄色圆点就是这个位置，黄框是本数据块的范围`;
-      window.open(r.url, "_blank", "noopener");
-    } catch (err) { if (el) el.textContent = "失败：" + err.message; }
+      const path = mode === "block" ? `/neuroglancer/block?z=${S.z}` : `/neuroglancer?z=${S.z}&x=${point[0]}&y=${point[1]}`;
+      const response = await fetch(`${API}/blocks/${encodeURIComponent(S.block)}${path}`, {signal: request.signal});
+      const r = await response.json();
+      if (sequence !== S.ngSequence) return;
+      if (!response.ok || !r.url) throw new Error(r.reason || r.detail || "无法打开该数据块");
+      viewer.location = r.url;
+      $("an-ng-info").textContent = "3D 已打开 · 再次点击关闭";
+    } catch (err) {
+      if (sequence !== S.ngSequence || err.name === "AbortError") return;
+      setTool("pick"); $("an-ng-info").textContent = "打开失败：" + err.message;
+    } finally { if (sequence === S.ngSequence) S.ngRequest = null; }
   }
 
-  // ------------------------------------------------------------------ 智能填充 / 切割 / 分离 / 清除
-  // The boundary-aware fill and the cut are previewed client-side and only written when confirmed, like SAM.
-  function smartButtons() {
-    const off = S.mergeBusy || S.smartBusy || !S.smart?.n_px || !S.info?.has_seg;
-    $("an-smart-apply").disabled = off; $("an-smart-new").disabled = off;
-  }
   // The repair proposal is pinned to one section and one revision of the labels; leaving that context must take the
   // green overlay and the 应用 button with it, or a stale proposal stays on screen looking applicable.
-  const RP_HINT = `图像毁了就找不回来，能补的是标签。绿色是补出来的，<b>斜纹处上下两片不一致、把握较低</b>，红色是谁都没认领的——<b>那些像素原样不动</b>，已有的标签不会被抹掉。改动记为「修补」并标明是插值。`;
+  const RP_HINT = `插值补标签。绿：新增 · 斜纹：不确定 · 红：保留原样。`;
   function clearRepair() {
     if (!S.repair && !S.repairMask) return;
     S.repair = null; S.repairMask = null;
     const a = $("an-rp-apply"); if (a) a.disabled = true;
     const el = $("an-rp-info"); if (el) el.innerHTML = RP_HINT;
   }
-  function clearSmart() { S.smart = null; S.smartMask = null; smartButtons(); const el = $("an-smart-result"); if (el) el.textContent = "点细胞内部，沿膜边界圈出区域；确认后再填色。"; }
-  function drawTools() {
-    if (S.blink) return;
-    for (const p of panes()) {
-      const g = p.gHi;
-      if (S.smartMask) g.drawImage(S.smartMask, 0, 0);
-      if (S.repairMask) g.drawImage(S.repairMask, 0, 0);
-      if (S.cutPts && S.cutPts.length) {                    // the cut line, drawn as the user draws it
-        g.save(); g.lineWidth = Math.max(1, 2 / S.zoom); g.lineJoin = "round"; g.lineCap = "round";
-        g.beginPath(); g.moveTo(S.cutPts[0][0] + .5, S.cutPts[0][1] + .5);
-        for (const [x, y] of S.cutPts.slice(1)) g.lineTo(x + .5, y + .5);
-        g.strokeStyle = "rgba(0,0,0,.7)"; g.lineWidth = Math.max(2, 4 / S.zoom); g.stroke();
-        g.strokeStyle = "#ffd60a"; g.lineWidth = Math.max(1, 2 / S.zoom); g.stroke();
-        g.restore();
-      }
-    }
-  }
-  async function previewSmart(x, y) {
-    if (S.mergeBusy || S.smartBusy || !S.block) return;
-    S.smartBusy = true; smartButtons();
-    $("an-smart-result").textContent = "正在按膜边界圈选…";
-    try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/smart-fill/preview`, {
-        z: S.z, x, y,
-        sensitivity: +$("an-smart-sens").value / 100,
-        max_radius: +$("an-smart-radius").value || 0,
-        scope: $("an-smart-scope").value,
-      });
-      S.smartMask = await loadImg(r.mask_png); S.smart = r;
-      $("an-smart-result").textContent = r.n_px
-        ? `橙色区域 ${r.n_px} 像素（原 id ${r.seed_id}）。核对边界后填色；Enter 填为当前标签。`
-        : "没有圈到任何像素，请调整范围或灵敏度。";
-    } catch (err) { S.smart = null; S.smartMask = null; $("an-smart-result").textContent = "圈选失败：" + err.message; }
-    finally { S.smartBusy = false; smartButtons(); renderHi(); }
-  }
-  async function applySmart(makeNew) {
-    if (!S.smart?.n_px || S.mergeBusy) return;
-    const z = S.z, token = S.smart.token;
-    mergeBusy(true);
-    try {
-      const id = makeNew ? (await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/new-id`)).id : S.cur;
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/smart-fill/apply`, { token, new_id: id });
-      await afterEdit(r, z); setCur(id);
-      flash(r.edit ? `已填 ${r.edit.n_px} 像素，可 Ctrl+Z 撤销` : "该区域已经是这个颜色");
-    } catch (err) { clearSmart(); flash("填色失败：" + err.message, true); }
-    finally { mergeBusy(false); renderHi(); }
-  }
-  async function cutEnd() {
-    const pts = S.cutPts; S.cutPts = null;
-    if (!pts || pts.length < 2) { renderHi(); return; }
-    const z = S.z;
-    mergeBusy(true);
-    try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/cut`, { z, points: pts });
-      await afterEdit(r, z);
-      flash(`已切成 ${r.edit.pieces} 块，新颜色 ${r.edit.new_ids.join("、")}`);
-    } catch (err) { flash("切割失败：" + err.message, true); invalidate(z); await goZ(z, true, true); }
-    finally { mergeBusy(false); renderHi(); }
-  }
-  async function splitAt(x, y) {
-    if (S.mergeBusy) return;
-    const z = S.z;
-    mergeBusy(true);
-    try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/split`, { z, x, y });
-      await afterEdit(r, z); setCur(r.edit.new_id);
-      flash(`已分离为新颜色 ${r.edit.new_id}（本片共 ${r.edit.pieces} 块同色）`);
-    } catch (err) { flash("分离失败：" + err.message, true); }
-    finally { mergeBusy(false); }
-  }
   async function clearAt(x, y, whole) {                     // 清除: set to background, then re-colour with any tool
     const keep = S.cur;
     S.cur = "0";
     try { await fill(x, y, whole); } finally { setCur(keep); }
   }
-  $("an-ng").addEventListener("click", () => { const p = S.hoverXY; openNeuroglancer(p ? p[0] : null, p ? p[1] : null); });
-  $("an-ng-block").addEventListener("click", openNeuroglancerBlock);
-  $("an-smart-apply").addEventListener("click", () => applySmart(false));
-  $("an-smart-new").addEventListener("click", () => applySmart(true));
-  $("an-smart-clear").addEventListener("click", () => { clearSmart(); renderHi(); });
-  $("an-smart-sens").addEventListener("input", ev => { $("an-smart-sens-v").textContent = ev.target.value + "%"; });
-  for (const id of ["an-smart-sens", "an-smart-radius", "an-smart-scope"]) $(id).addEventListener("change", () => {
-    if (S.smart) previewSmart(S.smart.x ?? S.smart.seed[0], S.smart.y ?? S.smart.seed[1]);
-  });
-
+  $("an-ng").addEventListener("click", () => toggle3D("point"));
+  $("an-ng-block").addEventListener("click", () => toggle3D("block"));
   // SAM previews never change labels until the user applies them.
   function samButtons() {
     const disabled = S.mergeBusy || !S.samPreview?.n_px || !S.info?.has_seg;
-    $("an-sam-apply").disabled = disabled;
+    $("an-sam-apply").disabled = disabled || S.cur === "0";
+    $("an-newid").disabled = S.mergeBusy || !S.info?.has_seg;
     $("an-sam-new").disabled = disabled;
     $("an-sam-neighbour").disabled = disabled || !S.samNeighbour?.found;
   }
   function discardSAMPreview() { S.samPreview = null; S.samMask = null; S.samNeighbour = null; neighbourInfo(""); clearNeighbourList("an-sam-neighbour-list"); samButtons(); }
   function neighbourInfo(text) { const el = $("an-sam-neighbour-info"); if (el) el.textContent = text; }
   function clearSAM() {
+    S.samSequence++; S.samRequest?.abort(); S.samRequest = null;
     S.samPoints = []; S.samLabels = []; S.samBox = null; S.samStart = null;
     discardSAMPreview();
-    $("an-sam-result").textContent = "仅处理当前切片；应用后可 Ctrl+Z 撤销。";
+    $("an-sam-result").textContent = "";
     renderHi();
   }
   function drawSAM() {
@@ -613,22 +555,27 @@
   }
   async function predictSAM() {
     if (S.mergeBusy || !S.block) return;
-    if (!S.samPoints.length && !S.samBox) { flash("请先选择 SAM 点选或框选，在图像上添加提示"); return; }
-    discardSAMPreview(); mergeBusy(true);
-    $("an-sam-result").textContent = "正在分割，首次加载模型需要稍候…";
+    if (!S.samPoints.length && !S.samBox) { flash("请先点选或框选目标"); return; }
+    S.samRequest?.abort();
+    const request = new AbortController(), sequence = ++S.samSequence; S.samRequest = request;
+    discardSAMPreview();
+    $("an-sam-result").textContent = "正在生成预览…";
     try {
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/sam/predict`, {
         z: S.z, points: S.samPoints, labels: S.samLabels, box: S.samBox,
         only_background: $("an-sam-background").checked,
         snap_boundary: $("an-sam-snap").checked,
-        boundary_sensitivity: +$("an-smart-sens").value / 100,
-        candidate: $("an-sam-candidate").value === "" ? null : +$("an-sam-candidate").value,
-      });
-      S.samMask = await loadImg(r.mask_png); S.samPreview = r; S.samNeighbour = null; samNeighbourLookup(r.token);
-      $("an-sam-result").textContent = `候选 ${r.candidate+1} · ${r.n_px} 像素 · ${r.seconds}s。` + (r.n_px ? "请核对青色边界，再填为新标签或当前标签。" : "没有可填区域，请调整提示或取消仅补未标注区域。");
-      $("an-sam-status").textContent = "SAM 2.1 · 模型已加载";
-    } catch (err) { $("an-sam-result").textContent = "分割失败：" + err.message; }
-    finally { mergeBusy(false); renderHi(); }
+        boundary_sensitivity: +$("an-sam-sens").value / 100,
+      }, request.signal);
+      if (sequence !== S.samSequence) return;
+      const mask = await loadImg(r.mask_png);
+      if (sequence !== S.samSequence) return;
+      S.samMask = mask; S.samPreview = r;
+      S.samNeighbour = null; samNeighbourLookup(r.token);      // 顺便问一句邻片这块地方是谁
+      $("an-sam-result").textContent = `预览 ${r.n_px} 像素` + (r.n_px ? " · 确认后应用" : " · 请调整提示或填充范围");
+      $("an-sam-status").textContent = "模型就绪";
+    } catch (err) { if (sequence === S.samSequence && err.name !== "AbortError") $("an-sam-result").textContent = "分割失败：" + err.message; }
+    finally { if (sequence === S.samSequence) { S.samRequest = null; samButtons(); renderHi(); } }
   }
   // ---------------------------------------------------------------- 跨片取色
   // 分割漏标时，本片那块是空的，没有颜色可吸；颜色在隔壁片上。这里只把 id 取回来，画在哪、写哪一片仍然由人决定。
@@ -686,28 +633,27 @@
 
   async function applySAM(mode) {
     if (S.mergeBusy || !S.samPreview?.n_px) return;
-    if (mode === "cur" && S.cur === "0") { flash("请先拾取已有颜色，或使用“填为新标签”"); return; }
+    if (mode === "cur" && S.cur === "0") { flash("请先选择标签"); return; }
     if (mode === "neighbour" && !S.samNeighbour?.found) { flash("邻片在这块区域也没有标签", true); return; }
     const z = S.z, token = S.samPreview.token, from = S.samNeighbour;
     mergeBusy(true);
     try {
-      const id = mode === "new" ? (await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/new-id`)).id
-               : mode === "neighbour" ? from.id : S.cur;
+      const id = mode === "new" ? await reserveLabel() : mode === "neighbour" ? from.id : S.cur;
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/sam/apply`, {token, new_id: id});
       await afterEdit(r, z); setCur(id);
       $("an-sam-result").textContent = mode === "neighbour"
-        ? `已用 z${from.z_src} 的颜色 ${id} 填了 ${r.edit?.n_px || 0} 像素，可 Ctrl+Z 撤销。`
-        : `已填 ${r.edit?.n_px || 0} 像素，可 Ctrl+Z 撤销。`;
+        ? `已用 z${from.z_src} 的颜色 ${id} 填了 ${r.edit?.n_px || 0} 像素 · Ctrl/⌘+Z 撤销`
+        : `已填 ${r.edit?.n_px || 0} 像素 · Ctrl/⌘+Z 撤销`;
     } catch (err) { discardSAMPreview(); $("an-sam-result").textContent = "应用失败：" + err.message; }
     finally { mergeBusy(false); renderHi(); }
   }
-  $("an-sam-predict").addEventListener("click", predictSAM);
   $("an-sam-clear").addEventListener("click", clearSAM);
   $("an-sam-new").addEventListener("click", () => applySAM("new"));
   $("an-sam-apply").addEventListener("click", () => applySAM("cur"));
   $("an-sam-neighbour").addEventListener("click", () => applySAM("neighbour"));
   $("an-neighbour-pick").addEventListener("click", neighbourPick);
-  for (const id of ["an-sam-background", "an-sam-candidate", "an-sam-snap"]) $(id).addEventListener("change", () => {
+  $("an-sam-sens").addEventListener("input", ev => { $("an-sam-sens-v").textContent = ev.target.value + "%"; });
+  for (const id of ["an-sam-background", "an-sam-snap", "an-sam-sens"]) $(id).addEventListener("change", () => {
     discardSAMPreview(); renderHi(); if (S.samPoints.length || S.samBox) predictSAM();
   });
 
@@ -722,6 +668,7 @@
       if (ev.button === 2 || ev.button === 1 || S.tool === "pan" || S.spacePan) { S.drag = { x: ev.clientX, y: ev.clientY, tx: S.tx, ty: S.ty }; for (const q of P) q.stage.classList.add("panning"); return; }
       if (ev.button !== 0 || !inside(x, y)) return;
       if (S.mergeBusy) return;
+      if (S.ngMode) { if (S.ngMode === "point") open3D([x, y]); return; }
       if (ev.altKey || S.tool === "pick") { pick(x, y); return; }
       if (S.tool === "sam") {
         if (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey) clearSAM();
@@ -736,10 +683,7 @@
       }
       if (S.tool === "fill") { fill(x, y, ev.shiftKey); return; }
       if (S.tool === "merge") { mergeInto(x, y); return; }
-      if (S.tool === "smart") { previewSmart(x, y); return; }
-      if (S.tool === "split") { splitAt(x, y); return; }
       if (S.tool === "clear") { clearAt(x, y, ev.shiftKey); return; }
-      if (S.tool === "cut") { S.cutPts = [[x, y]]; renderHi(); return; }
       if (S.tool === "brush" || S.tool === "erase") strokeStart(x, y);
     });
     let pending = false;
@@ -751,7 +695,6 @@
         S.samBox = [Math.min(sx,bx),Math.min(sy,by),Math.max(sx,bx)+1,Math.max(sy,by)+1];
         renderHi(); return;
       }
-      if (S.cutPts) { const [lx, ly] = S.cutPts[S.cutPts.length - 1]; if (lx !== x || ly !== y) { S.cutPts.push([x, y]); renderHi(); } return; }
       if (S.curtainDrag) { S.curtainX = Math.max(0, Math.min(S.W, x)); render(); return; }
       p.stage.style.cursor = nearCurtain(x) ? "col-resize" : "";
       if (S.stroke) { if (S.hoverXY) strokeMove(x, y); return; }
@@ -767,7 +710,6 @@
     if (S.samBox[2] <= S.samBox[0] || S.samBox[3] <= S.samBox[1]) { S.samBox = null; renderHi(); return; }
     predictSAM();
   });
-  window.addEventListener("mouseup", () => { if (S.cutPts) cutEnd(); });
   window.addEventListener("mouseup", () => { S.curtainDrag = false; if (S.drag) { S.drag = null; for (const q of P) q.stage.classList.remove("panning"); } if (S.stroke) strokeEnd(); });
 
   // ------------------------------------------------------------------ keyboard
@@ -781,11 +723,9 @@
     else if (k === "PageUp") { ev.preventDefault(); goZ(S.z - 10, true); }
     else if (k === "PageDown") { ev.preventDefault(); goZ(S.z + 10, true); }
     else if (k === "Home") goZ(0); else if (k === "End") goZ(S.info.shape_zyx[0] - 1);
-    else if (k === "Escape") { mergeArm(null); clearSAM(); clearSmart(); clearRepair(); S.cutPts = null; renderHi(); }
+    else if (k === "Escape") { if (S.ngMode || S.tool.startsWith("sam")) setTool("pick"); mergeArm(null); clearSAM(); clearRepair(); renderHi(); }
     else if (k === "m") setTool("merge");
-    else if (k === "k") setTool("smart"); else if (k === "x") setTool("cut"); else if (k === "d") setTool("split");
-    else if (k === "u") { const p = S.hoverXY; openNeuroglancer(p ? p[0] : null, p ? p[1] : null); }
-    else if (k === "Enter" && S.smart) applySmart(false);
+    else if (k.toLowerCase() === "u" && !ev.repeat) toggle3D("point", S.hoverXY);
     else if (k === "p") setTool("pick"); else if (k === "f") setTool("fill"); else if (k === "b") setTool("brush"); else if (k === "e") setTool("erase"); else if (k === "h") setTool("pan");
     else if (k === "[") setBrush(S.brush - 1); else if (k === "]") setBrush(S.brush + 1);
     else if (k === "o") { $("an-outline").checked = S.outline = !S.outline; render(); }
@@ -810,11 +750,18 @@
   function segList() {
     const e = S.cache.get(S.z), box = $("an-segs"); if (!e || !e.idx) { box.innerHTML = ""; $("an-nseg").textContent = ""; return; }
     const q = $("an-search").value.trim();
-    let rows = e.ids.map((id, k) => [id, e.counts[k] || 0, k]).filter(r => r[0] !== "0" && (!q || r[0].includes(q)));
-    rows.sort((a, b) => b[1] - a[1]);
-    $("an-nseg").textContent = `${e.ids.length - 1} 个`;
-    box.innerHTML = rows.slice(0, 400).map(([id, n, k]) => `<div class="row ${id === S.cur ? "cur" : ""}" data-id="${id}" data-k="${k}"><span class="sw" style="background:${css(colorOf(id))}"></span><span class="id" title="${id}">${id}</span><span class="n">${n}</span></div>`).join("")
-      + (rows.length > 400 ? `<div class="row"><span class="n">… 还有 ${rows.length - 400} 个，用搜索框过滤</span></div>` : "");
+    const ids = [...new Set([...e.ids.filter(id => id !== "0"), ...S.createdIds])];
+    const counts = new Map(e.ids.map((id, k) => [id, e.counts[k] || 0])), created = new Set(S.createdIds);
+    let rows = ids.map((id, k) => [id, counts.get(id) || 0, k]).filter(r => r[0] !== "0" && (!q || r[0].includes(q)));
+    rows.sort((a, b) => (b[0] === S.cur) - (a[0] === S.cur) || b[1] - a[1]);
+    $("an-nseg").textContent = `${ids.length} 个`;
+    const group = (key, title, labels) => `<section class="vast-label-group" data-label-group="${key}" aria-labelledby="an-labels-${key}">`
+      + `<div class="vast-list-heading" id="an-labels-${key}"><span>${title}</span><span class="muted mono">${labels.length}</span></div>`
+      + labels.slice(0, 400).map(([id, n, k]) => `<div class="row ${id === S.cur ? "cur" : ""}" data-id="${id}" data-k="${k}"><span class="sw" style="background:${css(colorOf(id))}"></span><span class="id" title="${id}">${id}</span><span class="n">${n || "未使用"}</span></div>`).join("")
+      + (!labels.length ? `<div class="vast-list-note">${q ? "无匹配标签" : "暂无"}</div>` : "")
+      + (labels.length > 400 ? `<div class="vast-list-note">还有 ${labels.length - 400} 个，请搜索</div>` : "") + `</section>`;
+    box.innerHTML = group("created", "新建标签", rows.filter(([id]) => created.has(id)))
+      + group("existing", "已有标签", rows.filter(([id]) => !created.has(id)));
   }
   $("an-segs").addEventListener("click", ev => { const r = ev.target.closest(".row[data-id]"); if (r) setCur(r.dataset.id); });
   $("an-search").addEventListener("input", segList);
@@ -822,7 +769,7 @@
   async function editList() {
     try {
       const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/edits?limit=30`);
-      const label = e => e.kind === "smartfill" ? "智能填充" : e.kind === "repair" ? "修补·插值" : e.kind === "split" ? (e.mode === "line" ? "切割" : "分离") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
+      const label = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "修补·插值" : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
       // A repair writes a different id per pixel, so its new_id is the text "N 个 id" — there is no one colour for it.
       const swatch = e => /^\d+$/.test(String(e.new_id)) && e.new_id !== "0" ? css(colorOf(e.new_id)) : "transparent";
       $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${swatch(e)}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${e.new_id}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">还没有改动</span></div>`;
@@ -834,7 +781,6 @@
   document.querySelectorAll(".tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
   $("an-brush").addEventListener("input", ev => setBrush(+ev.target.value));
   $("an-newid").addEventListener("click", newId);
-  $("an-bg").addEventListener("click", () => setCur("0"));
   $("an-prev").addEventListener("click", () => goZ(S.z - 1));
   $("an-next").addEventListener("click", () => goZ(S.z + 1));
   $("an-z").addEventListener("change", ev => goZ(+ev.target.value));
@@ -860,16 +806,17 @@
   // ------------------------------------------------------------------ blocks
   async function selectBlock(id) {
     if (S.mergeBusy) return;
-    clearSAM();
+    if (S.ngMode) setTool("pick");
+    clearSAM(); clearRepair();
     if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
-    S.block = id; dropAll(); S.hoverXY = null; mergeArm(null);
+    S.block = id; S.createdIds = []; dropAll(); S.hoverXY = null; mergeArm(null);
     S.info = await getJSON(`${API}/blocks/${encodeURIComponent(id)}`);
     const [nz, H, W] = S.info.shape_zyx; S.W = W; S.H = H; S.curtainX = W >> 1;
     for (const p of P) { for (const c of [p.em, p.seg, p.hi]) { c.width = W; c.height = H; } p.cv.style.width = W + "px"; p.cv.style.height = H + "px"; }
     $("an-z").max = nz - 1; $("an-zr").max = nz - 1; $("an-nz").textContent = `/ ${nz - 1}`;
     $("an-nedit").textContent = `${S.info.n_edits} 次改动`;
     const g = S.info.voxel_size_nm ? ` · ${S.info.voxel_size_nm.join("×")} nm` : "";
-    $("an-meta").textContent = `${W}×${H}×${nz}${g}${S.info.has_seg ? "" : " · 无分割"}${S.info.has_working_copy ? " · 有编辑副本" : ""}`;
+    $("an-meta").textContent = `${W}×${H}×${nz}${g}${S.info.has_seg ? "" : " · 无分割"}`;
     history.replaceState(null, "", `/annotate?block=${encodeURIComponent(id)}`);
     setCur("0"); fit(); await goZ(Math.min(S.z, nz - 1)); editList();
   }
@@ -877,7 +824,7 @@
     setView(S.view);
     getJSON(`${API}/sam/status`).then(r => {
       $("an-sam-status").textContent = r.installed && r.checkpoint_exists
-        ? `SAM 2.1 · ${r.device} · ${r.loaded ? "已加载" : "首次点选时加载"}` : "SAM 尚未安装，请联系部署者";
+        ? (r.loaded ? "模型就绪" : "首次使用时加载") : "模型未安装";
     }).catch(() => { $("an-sam-status").textContent = "模型状态暂不可用"; });
     const r = await getJSON(`${API}/blocks`);
     const sel = $("an-block");

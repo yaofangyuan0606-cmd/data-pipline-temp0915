@@ -41,7 +41,7 @@
     <p id="cmp-policy" class="muted"></p>
     <div id="cmp-warnings" role="status" hidden></div>
     <div class="cmp-filters"><label>标签 ID <input id="cmp-search" class="text mono" type="search" placeholder="搜索完整或部分 ID"></label><label>来源 <select id="cmp-source" class="text"><option value="all">全部来源</option><option value="mixed">混合来源</option></select></label><span id="cmp-row-count" class="muted"></span></div>
-    <div class="cmp-table-wrap"><table><thead><tr><th>标签 ID</th><th>原始像素</th><th>当前像素</th><th title="当前归属此标签、且与原始值不同的像素数">当前区域改动</th><th>原始标签</th><th>人工编辑</th><th>SAM</th><th>插值修补</th><th>智能填充</th><th>来源不明</th></tr></thead><tbody id="cmp-rows"></tbody></table></div>
+    <div class="cmp-table-wrap"><table><thead><tr><th>标签 ID</th><th>原始像素</th><th>当前像素</th><th title="当前归属此标签、且与原始值不同的像素数">当前区域改动</th><th>原始标签</th><th>人工编辑</th><th>SAM</th><th>插值修补</th><th>智能填充（历史）</th><th>来源不明</th></tr></thead><tbody id="cmp-rows"></tbody></table></div>
     <div class="cmp-pagination"><button id="cmp-table-prev">上一页</button><span id="cmp-table-page" class="muted"></span><button id="cmp-table-next">下一页</button></div>
     <details><summary>当前切片的有效编辑记录</summary><p class="muted">“仍生效像素”表示当前仍由这次操作写入的像素，包括清除为背景的像素；已撤销记录不在此列。</p><div class="cmp-table-wrap"><table><thead><tr><th>操作</th><th>来源</th><th>时间</th><th>涉及像素</th><th>仍生效像素</th><th>模型 / 插值参考层</th></tr></thead><tbody id="cmp-operations"></tbody></table></div></details>
   </details>

@@ -253,7 +253,7 @@ td.tilecol { white-space: nowrap; font-size: 11px; line-height: 1.35; }
 .vast-toolgrid .tool { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--r-s); background: var(--surface-2); color: var(--text-2); font: inherit; cursor: pointer; }
 .vast-toolgrid .tool svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .vast-toolgrid .tool:hover { background: var(--surface-3); color: var(--text); }
-.vast-toolgrid .tool.active { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-line); }
+.vast-toolgrid .tool.active, .vast-tools button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-line); }
 .vast-cur { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-s); background: var(--surface-2); font-size: 12px; word-break: break-all; }
 .vast-cur .sw, .vast-list .sw { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(0,0,0,.25); flex: none; background: transparent; }
 .vast-z { display: flex; align-items: center; gap: 6px; }
@@ -272,6 +272,9 @@ td.tilecol { white-space: nowrap; font-size: 11px; line-height: 1.35; }
 .vast-list .row:hover { background: var(--surface-3); } .vast-list .row.cur { background: var(--accent-soft); }
 .vast-list .row .id { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vast-list .row .n { color: var(--muted); }
+.vast-label-group + .vast-label-group { border-top: 1px solid var(--border-2); margin-top: 8px; }
+.vast-list-heading { display: flex; justify-content: space-between; padding: 7px 8px; background: var(--surface); color: var(--text-2); font: 500 12px var(--sans); border-bottom: 1px solid var(--border); }
+.vast-list-note { padding: 6px 8px; color: var(--muted); font: 12px var(--sans); }
 .vast-edits .row { cursor: default; }
 @media (max-width: 1100px) { .vast { grid-template-columns: 1fr; height: auto; } .vast-stage { height: 70vh; } }
 .vast-scope { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; margin-top: 6px; }

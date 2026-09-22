@@ -3,10 +3,10 @@
 {% block crumbs %}<a href="/annotate">切片标注</a> › <b>标注工作台</b>{% endblock %}
 {% block topright %}
 <span id="instance" class="pill" hidden></span>
-<span class="pill hint" title="交付目录不写入；seg_edit.npy 与 edits/ 都在工作目录">原始数据只读 · 改动写入工作目录</span>
+<span class="pill hint" title="交付目录不写入；seg_edit.npy 与 edits/ 都在工作目录">改动自动保存</span>
 <a class="btn" href="/annotate/blocks">数据块</a>
 <a class="btn" id="an-compare" href="/annotate/compare">前后对比</a>
-<button id="an-help-btn" title="快捷键与操作说明 (?)">快捷键 <kbd>?</kbd></button>
+<button id="an-help-btn" title="快捷键与操作说明 (?)">帮助 <kbd>?</kbd></button>
 {% endblock %}
 {% block mainclass %}full{% endblock %}
 {% block content %}
@@ -17,61 +17,47 @@
 
     <div class="vast-sec">工具</div>
     <div class="vast-toolgrid">
-      <button class="tool active" data-tool="pick" title="拾取 (P)：选中光标下的分段作为当前标签；任何工具下 Alt+点击也是拾取"><svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M13 6l5 5"/></svg>拾取</button>
-      <button class="tool" data-tool="fill" title="填充 (F)：把点到的连通区域改成当前标签；Shift+点击改整片同 id"><svg viewBox="0 0 24 24"><path d="M7 3l10 10-6 6L3 11z"/><path d="M17 13c1.5 2 2 3.2 2 4a2 2 0 11-4 0c0-.8.5-2 2-4z"/></svg>填充</button>
-      <button class="tool" data-tool="brush" title="画笔 (B)：按半径涂当前标签"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔</button>
-      <button class="tool" data-tool="erase" title="橡皮 (E)：按半径涂成背景 0"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮</button>
-      <button class="tool" data-tool="merge" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并</button>
-      <button class="tool" data-tool="smart" title="智能填充 (K)：按电镜的膜边界圈出细胞，先预览再填色，不会漫过细胞膜"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0116 0"/><path d="M6 12c0 5 3 8 6 8s6-3 6-8"/><circle cx="12" cy="12" r="1.6"/></svg>智能填充</button>
-      <button class="tool" data-tool="cut" title="切割 (X)：按住左键画一条线穿过色块，把它切成两块，较大的一块保留原色"><svg viewBox="0 0 24 24"><path d="M5 4l9 12"/><path d="M19 4l-9 12"/><circle cx="7" cy="19" r="2.4"/><circle cx="17" cy="19" r="2.4"/></svg>切割</button>
-      <button class="tool" data-tool="split" title="分离 (D)：点一块，把它从同色但不相连的其他块中分出来，给新颜色"><svg viewBox="0 0 24 24"><path d="M12 3v6M12 15v6"/><path d="M8 7l4-4 4 4"/><path d="M8 17l4 4 4-4"/></svg>分离</button>
-      <button class="tool" data-tool="clear" title="清除 (C 长按无效，用按钮/点选)：把点到的色块清成背景，之后可重新上色；Shift+点击清整片同色"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M14 20h6"/></svg>清除</button>
-      <button class="tool" data-tool="pan" title="平移 (H · 或右键拖动)"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>平移</button>
+      <button class="tool active" data-tool="pick" aria-pressed="true" title="拾取颜色 (P / Alt+点击)"><svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M13 6l5 5"/></svg>拾取</button>
+      <button class="tool" data-tool="fill" aria-pressed="false" title="填充连通区域 (F)；Shift+点击填充本片同标签"><svg viewBox="0 0 24 24"><path d="M7 3l10 10-6 6L3 11z"/><path d="M17 13c1.5 2 2 3.2 2 4a2 2 0 11-4 0c0-.8.5-2 2-4z"/></svg>填充</button>
+      <button class="tool" data-tool="brush" aria-pressed="false" title="画笔 (B)：按半径涂当前标签"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔</button>
+      <button class="tool" data-tool="erase" aria-pressed="false" title="橡皮 (E)：按半径涂成背景 0"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮</button>
+      <button class="tool" data-tool="merge" aria-pressed="false" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并</button>
+      <button class="tool" data-tool="clear" aria-pressed="false" title="清除连通区域；Shift+点击清除本片同标签"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M14 20h6"/></svg>清除</button>
+      <button class="tool" data-tool="pan" aria-pressed="false" title="平移 (H · 或右键拖动)"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>平移</button>
     </div>
     <div class="vast-mergehint muted" id="an-merge-hint" hidden></div>
     <div class="field" style="margin-top:8px"><label>画笔半径 <span class="mono" id="an-brush-v">4</span> px <span class="muted">[ ]</span></label><input id="an-brush" type="range" min="0" max="60" value="4"></div>
 
-    <div class="vast-sec">智能填充 <span class="muted">按膜边界</span></div>
-    <div class="field" style="margin-top:0"><label>边界灵敏度 <span class="mono" id="an-smart-sens-v">50%</span> <span class="muted">高 = 更早停在膜上</span></label><input id="an-smart-sens" type="range" min="0" max="100" value="50"></div>
-    <div class="field"><label>可改范围</label><select id="an-smart-scope" class="text">
-      <option value="same">仅点到的颜色</option>
-      <option value="same_bg">点到的颜色 + 未标注</option>
-      <option value="any">不限颜色</option>
-    </select></div>
-    <div class="field"><label>最大半径 px <span class="muted">0 = 不限</span></label><input id="an-smart-radius" type="number" class="text mono" value="0" min="0" max="8192"></div>
-    <div class="actions"><button id="an-smart-new" class="primary" disabled>填为新标签</button><button id="an-smart-apply" disabled>填为当前标签</button><button id="an-smart-clear">清除预览</button></div>
-    <div class="muted" id="an-smart-result" role="status" style="font-size:12px;margin-top:6px">点细胞内部，沿膜边界圈出区域；确认后再填色。</div>
+    <div class="vast-sec">当前标签</div>
+    <div class="vast-cur"><span class="sw" id="an-cur-sw"></span><span class="mono" id="an-cur-id">未选择</span></div>
+    <div class="actions" style="margin-top:6px"><button id="an-newid" class="primary" title="新建标签 (N)">新建标签 <kbd>N</kbd></button><button id="an-neighbour-pick" title="L：本片这块是空的时候，取最近一张有标签的邻片在光标处的颜色">邻片取色 <kbd>L</kbd></button></div>
+    <div class="vast-list" id="an-neighbour-list" style="margin-top:6px;max-height:150px" hidden></div>
 
-    <div class="vast-sec">SAM 辅助分割</div>
+    <div class="vast-sec">SAM</div>
     <div class="muted" id="an-sam-status" style="font-size:12px">检查模型…</div>
     <div class="vast-toolgrid" style="margin-top:6px">
-      <button class="tool" data-tool="sam" title="点击选新目标；⌘/Ctrl+点击补点；Shift+点击排除">SAM 点选</button>
-      <button class="tool" data-tool="sam-box" title="拖框选新目标；按住 ⌘/Ctrl 保留已有提示">SAM 框选</button>
+      <button class="tool" data-tool="sam" aria-pressed="false" title="点击选新目标；⌘/Ctrl+点击补点；Shift+点击排除">SAM 点选</button>
+      <button class="tool" data-tool="sam-box" aria-pressed="false" title="拖框选新目标；按住 ⌘/Ctrl 保留已有提示">SAM 框选</button>
     </div>
-    <p class="muted" style="font-size:12px">点击选新目标；⌘/Ctrl+点击补点；Shift+点击排除。核对青色预览后应用。</p>
-    <label class="vast-layer"><input id="an-sam-background" type="checkbox" checked> 仅补未标注区域（标签 0）</label>
-    <label class="vast-layer"><input id="an-sam-snap" type="checkbox" checked> 贴合膜边界 <span class="muted">裁掉越过细胞膜的部分</span></label>
-    <div class="field"><label>分割候选</label><select id="an-sam-candidate" class="text"><option value="">自动选择</option><option value="0">候选 1</option><option value="1">候选 2</option><option value="2">候选 3</option></select></div>
-    <div class="actions"><button id="an-sam-predict">预览分割</button><button id="an-sam-clear">清除提示</button></div>
+    <p class="muted" style="font-size:12px">⌘/Ctrl 补点 · Shift 排除 · 再次点击工具取消</p>
+    <label class="vast-layer"><input id="an-sam-background" type="checkbox" checked> 仅填未标注</label>
+    <label class="vast-layer"><input id="an-sam-snap" type="checkbox" checked> 贴合膜边界</label>
+    <div class="field"><label>边界灵敏度 <span class="mono" id="an-sam-sens-v">50%</span></label><input id="an-sam-sens" type="range" min="0" max="100" value="50"></div>
+    <div class="actions"><button id="an-sam-clear">清除提示</button></div>
     <div class="actions" style="margin-top:6px"><button id="an-sam-new" class="primary" disabled>填为新标签</button><button id="an-sam-apply" disabled>填为当前标签</button></div>
     <div class="actions" style="margin-top:6px"><button id="an-sam-neighbour" disabled title="用最近一张有标签的邻片在这块区域的颜色来填——分割在本片漏标时用这个">填为邻片颜色</button></div>
     <div class="muted" id="an-sam-neighbour-info" style="font-size:12px;margin-top:6px"></div>
     <div class="vast-list" id="an-sam-neighbour-list" style="margin-top:6px;max-height:150px" hidden></div>
-    <div class="muted" id="an-sam-result" role="status" style="font-size:12px;margin-top:6px">仅处理当前切片；应用后可 Ctrl+Z 撤销。</div>
+    <div class="muted" id="an-sam-result" role="status" style="font-size:12px;margin-top:6px"></div>
 
-    <div class="vast-sec">修补损坏切片 <span class="muted">黑带 / 白页</span></div>
+    <div class="vast-sec">切片修补</div>
     <div class="actions"><button id="an-rp-scan" title="扫描整块，列出图像被毁的切片">扫描损坏</button><button id="an-rp-prev" title="用上下相邻切片的细胞形状插值，补回这一片丢失的标签">检测并预览</button></div>
     <div class="actions" style="margin-top:6px"><button id="an-rp-apply" class="primary" disabled>应用修补</button></div>
-    <div class="muted" id="an-rp-info" style="font-size:12px;margin-top:6px">图像毁了就找不回来，能补的是标签。绿色是补出来的，<b>斜纹处上下两片不一致、把握较低</b>，红色是谁都没认领的——<b>那些像素原样不动</b>，已有的标签不会被抹掉。改动记为「修补」并标明是插值。</div>
+    <div class="muted" id="an-rp-info" style="font-size:12px;margin-top:6px">插值补标签。绿：新增 · 斜纹：不确定 · 红：保留原样。</div>
 
-    <div class="vast-sec">3D 查看 <span class="muted">判断黑团是什么</span></div>
-    <div class="actions"><button id="an-ng" title="把光标所在位置在公开的 H01 Neuroglancer 里打开，位置会用黄点标出">看这一点 <kbd>U</kbd></button><button id="an-ng-block" title="把整个数据块在公开的 H01 Neuroglancer 里打开，范围用黄框标出，方便自己在 3D 里找">看整块</button></div>
-    <div class="muted" id="an-ng-info" style="font-size:12px;margin-top:6px">点有颜色的细胞会在 3D 里渲染它的网格；点没标签的黑团会改为渲染<b>周围的细胞</b>，黑团就是它们之间的空隙。</div>
-
-    <div class="vast-sec">当前标签</div>
-    <div class="vast-cur"><span class="sw" id="an-cur-sw"></span><span class="mono" id="an-cur-id">0</span></div>
-    <div class="actions" style="margin-top:6px"><button id="an-newid" class="primary" title="N">新建 ID</button><button id="an-bg" title="设为背景 0">背景</button><button id="an-neighbour-pick" title="L：本片这块是空的时候，取最近一张有标签的邻片在光标处的颜色">邻片取色</button></div>
-    <div class="vast-list" id="an-neighbour-list" style="margin-top:6px;max-height:150px" hidden></div>
+    <div class="vast-sec">3D</div>
+    <div class="actions"><button id="an-ng" aria-pressed="false" title="启用后点击图像查看；再次点击取消 (U)">看这一点 <kbd>U</kbd></button><button id="an-ng-block" aria-pressed="false" title="打开整块 3D；再次点击关闭">看整块</button></div>
+    <div class="muted" id="an-ng-info" style="font-size:12px;margin-top:6px"></div>
 
     <div class="vast-sec">翻页</div>
     <div class="vast-z">
@@ -92,7 +78,7 @@
       <div class="vast-canvas"><canvas></canvas><canvas></canvas><canvas></canvas></div>
       <div class="vast-label mono side-only">EM</div>
       <div class="vast-status mono" id="an-status">加载中…</div>
-      <div class="vast-hint mono">滚轮 z · Ctrl+滚轮 缩放 · 右键拖动 平移 · V 并排/叠加 · 0 适合窗口 · ? 说明</div>
+      <div class="vast-hint mono">滚轮翻片 · Ctrl+滚轮缩放 · 右键平移</div>
     </div>
     <div class="vast-stage off" id="an-stage2" tabindex="0">
       <div class="vast-canvas"><canvas></canvas><canvas></canvas><canvas></canvas></div>
@@ -104,21 +90,21 @@
     <div class="vast-sec" style="margin-top:0">视图</div>
     <div class="vast-scope">
       <label><input type="radio" name="an-view" value="overlay" checked> 叠加</label>
-      <label><input type="radio" name="an-view" value="side"> 并排 <span class="muted">左 EM · 右分割 (V)</span></label>
+      <label><input type="radio" name="an-view" value="side"> 并排 <span class="muted">V</span></label>
     </div>
-    <label class="vast-layer" id="an-curtain-row"><input type="checkbox" id="an-curtain"> 对比滑块 <span class="muted">拖黄线：左原图 · 右叠加 (C)</span></label>
-    <label class="vast-layer off" id="an-rightseg-row"><input type="checkbox" id="an-rightseg"> 右侧只看分割，不衬 EM</label>
-    <div class="muted" style="font-size:12px">按住 <span class="mono">Tab</span> 临时隐藏分割，松开恢复——用来闪烁对比。</div>
+    <label class="vast-layer" id="an-curtain-row"><input type="checkbox" id="an-curtain"> 对比滑块 <span class="muted">C</span></label>
+    <label class="vast-layer off" id="an-rightseg-row"><input type="checkbox" id="an-rightseg"> 右侧仅分割</label>
+    <div class="muted" style="font-size:12px">按住 Tab 看原图</div>
 
     <div class="vast-sec">图层</div>
-    <label class="vast-layer"><input type="checkbox" id="an-show-em" checked> EM（底图）</label>
-    <label class="vast-layer"><input type="checkbox" id="an-show-seg" checked> 分割（上层） <span class="muted">透明度</span><input id="an-op" type="range" min="0" max="100" value="45" style="flex:1"><span class="mono muted" id="an-op-v">45%</span></label>
-    <label class="vast-layer"><input type="checkbox" id="an-fade"> 透明度自动渐变 <span class="muted">(G) 分割在 EM 上淡入淡出；, . 手动步进</span></label>
+    <label class="vast-layer"><input type="checkbox" id="an-show-em" checked> 电镜图</label>
+    <label class="vast-layer"><input type="checkbox" id="an-show-seg" checked> 分割<input id="an-op" aria-label="分割透明度" type="range" min="0" max="100" value="45" style="flex:1"><span class="mono muted" id="an-op-v">45%</span></label>
+    <label class="vast-layer"><input type="checkbox" id="an-fade"> 透明度渐变 <span class="muted">G</span></label>
     <label class="vast-layer"><input type="checkbox" id="an-outline"> 只画边界 <span class="muted">(O)</span></label>
-    <label class="vast-layer"><input type="checkbox" id="an-hover" checked> 仅高亮鼠标所在色块</label>
+    <label class="vast-layer"><input type="checkbox" id="an-hover" checked> 悬停高亮</label>
 
     <div class="vast-sec">本片分段 <span class="muted mono" id="an-nseg"></span></div>
-    <input id="an-search" class="text mono" placeholder="按 id 查找…" style="width:100%">
+    <input id="an-search" class="text mono" placeholder="搜索标签…" style="width:100%">
     <div class="vast-list" id="an-segs"></div>
 
     <div class="vast-sec">最近改动</div>
@@ -137,22 +123,20 @@
       <div class="kbd-row"><kbd>Tab</kbd> 按住隐藏分割 · <kbd>G</kbd> 透明度渐变 · <kbd>,</kbd> <kbd>.</kbd> 步进</div>
       <div class="kbd-row"><kbd>O</kbd> 只画边界</div>
       <div class="kbd-row"><kbd>L</kbd> 邻片取色 <span class="muted">本片漏标时，取最近一张有标签的邻片在光标处的颜色</span></div>
-      <div class="kbd-row"><kbd>U</kbd> 把光标处在公开的 H01 Neuroglancer 里打开，用 3D 判断黑团是什么</div>
+      <div class="kbd-row"><kbd>U</kbd> 查看光标处 3D · 再按取消</div>
     </section>
     <section><h3>改标签</h3>
       <div class="kbd-row"><kbd>P</kbd> 拾取（任何工具下 <kbd>Alt</kbd>+点击）</div>
       <div class="kbd-row"><kbd>F</kbd> 填充连通区域 · <kbd>Shift</kbd>+点击改整片同 id</div>
-      <div class="kbd-row"><kbd>K</kbd> 智能填充：按电镜的膜边界圈出细胞，橙色预览，<kbd>Enter</kbd> 填为当前标签</div>
-      <div class="kbd-row"><kbd>X</kbd> 切割：画一条线穿过色块把它切开，较大的一块保留原色</div>
-      <div class="kbd-row"><kbd>D</kbd> 分离：把点到的块从同色不相连的块中分出来</div>
-      <div class="kbd-row">清除：把点到的色块清成背景，再重新上色；<kbd>Shift</kbd>+点击清整片同色</div>
-      <div class="kbd-row">修补损坏切片：黑带或白页上，用上下相邻切片的细胞形状插值补回标签，先预览再应用</div>
-      <div class="kbd-row"><kbd>M</kbd> 合并：先点 A 再点 B，B 变成 A 的颜色；每一对独立，只改当前片点到的色块</div>
+      <div class="kbd-row">清除：擦除连通区域 · Shift+点击清除本片同标签</div>
+      <div class="kbd-row">切片修补：相邻切片插值补标签，预览后应用</div>
+      <div class="kbd-row"><kbd>M</kbd> 合并：先点 A，再点 B，B 改为 A 的标签</div>
       <div class="kbd-row"><kbd>B</kbd> 画笔 · <kbd>E</kbd> 橡皮 · <kbd>[</kbd> <kbd>]</kbd> 半径</div>
-      <div class="kbd-row"><kbd>N</kbd> 新建 ID · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</div>
+      <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>
+      <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</div>
     </section>
   </div>
-  <p class="muted" style="margin:10px 0 0;font-size:12px">所有改动写到工作目录的 <span class="mono">seg_edit.npy</span>，交付目录里的 <span class="mono">seg.npy</span> 与 PNG 不会被碰。</p>
+  <p class="muted" style="margin:10px 0 0;font-size:12px">应用即保存 · Ctrl/⌘+Z 撤销 · 仅修改当前切片</p>
 </dialog>
 <script>
   window.AN_PRESELECT = {{ (preselect or '')|tojson }};

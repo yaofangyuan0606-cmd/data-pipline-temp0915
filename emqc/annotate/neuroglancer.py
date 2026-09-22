@@ -65,7 +65,7 @@ def segment_is_public(meta: dict, segment: int | None) -> bool:
 
     Two kinds of id in this platform are NOT c3 ids and would select an unrelated cell in the viewer: the ids a
     derived block invents (SAM pre-fill starts numbering above the delivered maximum, recorded as
-    `sam_merge.first_new_id`), and the ids the annotator creates with 新建 ID, which are also max + 1. Both sit above
+    `sam_merge.first_new_id`), and the ids the annotator creates with 新建标签, which are also above the original maximum. Both sit above
     the delivered maximum, so one threshold rules out both."""
     if not segment:
         return False

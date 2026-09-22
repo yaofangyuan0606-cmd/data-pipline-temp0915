@@ -281,14 +281,24 @@ def test_readonly_and_editor_share_lock_and_read_fresh_work(block):
     assert report(viewer, 0)["changed_px"] == 0
 
 
-def test_multicut_verifies_each_new_label_and_detects_swaps(tmp_path):
+def test_historical_multicut_verifies_each_new_label_and_undoes(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     np.save(source / "em.npy", np.zeros((30, 20, 1), np.uint8))
     np.save(source / "seg.npy", np.full((30, 20, 1), 7, np.uint64))
     block = Block(source, tmp_path / "work")
-    rec = block.cut(0, [(9, 0), (9, 19), (19, 19), (19, 0)])
-    assert len(rec["new_ids"]) == 2
+    # Recreate an existing edit on disk: the tool is gone, but its data remains readable.
+    edited = np.array(block._seg_ro)
+    edited[:9, :, 0] = 8
+    edited[20:, :, 0] = 9
+    xs, ys = np.nonzero(edited[:, :, 0] != 7)
+    (block.work / "edits").mkdir(parents=True)
+    np.save(block.work / "seg_edit.npy", edited)
+    np.savez_compressed(block.work / "edits" / "000001.npz", z=0, xs=xs, ys=ys,
+                        zs=np.zeros(xs.shape, np.uint16), old=np.uint64(7), new=edited[xs, ys, 0])
+    rec = {"n": 1, "kind": "split", "mode": "line", "z": 0, "n_px": int(xs.size),
+           "old_id": "7", "new_id": "8", "new_ids": ["8", "9"]}
+    (block.work / "edits.jsonl").write_text(json.dumps(rec) + "\n")
     with np.load(block.work / "edits" / "000001.npz") as data:
         assert data["new"].shape == data["xs"].shape
         assert np.array_equal(data["new"], block._seg()[data["xs"], data["ys"], 0])

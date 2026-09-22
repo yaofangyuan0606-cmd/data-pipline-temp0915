@@ -62,7 +62,7 @@ class SAMService:
             self.error = str(exc)
             raise SAMUnavailable(f"SAM 加载失败: {exc}") from exc
 
-    def predict(self, block, z, points, labels, box, only_background=True, candidate=None, snap_boundary=False, boundary_sensitivity=0.5):
+    def predict(self, block, z, points, labels, box, only_background=True, snap_boundary=False, boundary_sensitivity=0.5):
         # Same lock order in predict and apply. Each proposal is tied to a source and revision.
         with block.lock, self.lock:
             self._load()
@@ -91,7 +91,7 @@ class SAMService:
                 self.image_key = None
                 self.error = str(exc)
                 raise SAMUnavailable(f"SAM 推理失败: {exc}") from exc
-            best = int(np.argmax(scores)) if candidate is None else candidate
+            best = int(np.argmax(scores))
             mask = np.asarray(masks[best], dtype=bool)
             snapped = False
             if snap_boundary:
