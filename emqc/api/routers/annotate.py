@@ -422,10 +422,14 @@ def merge(block_id: str, body: MergeIn):
 
 
 @router.post("/blocks/{block_id}/undo")
-def undo(block_id: str):
+def undo(block_id: str, z: int | None = None):
     b = _block(block_id)
-    rec = b.undo()
-    return {"undone": rec, "n_edits": len(b.edits())}
+    try:
+        with b.lock:
+            rec = b.undo(z)
+            return {"undone": rec, "n_edits": len(b.edits()), "n_slice_edits": len(b.edits(z)) if z is not None else None}
+    except (ValueError, IndexError, OSError) as e:
+        raise HTTPException(422, str(e))
 
 
 @router.post("/blocks/{block_id}/new-id")
@@ -440,6 +444,9 @@ def new_id(block_id: str, z: int = 0):
 
 
 @router.get("/blocks/{block_id}/edits")
-def edits(block_id: str, limit: int = 50):
-    e = _block(block_id).edits()
+def edits(block_id: str, limit: int = 50, z: int | None = None):
+    try:
+        e = _block(block_id).edits(z)
+    except (ValueError, IndexError, OSError) as err:
+        raise HTTPException(422, str(err))
     return {"n": len(e), "edits": e[-limit:][::-1]}

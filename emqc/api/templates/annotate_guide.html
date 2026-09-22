@@ -30,7 +30,7 @@
     <dt>画笔 <kbd>B</kbd> / 橡皮 <kbd>E</kbd></dt><dd>按半径涂当前标签 / 涂成背景 0；<kbd>[</kbd> <kbd>]</kbd> 改半径。</dd>
     <dt>当前标签</dt><dd>填充、画笔和 SAM 应用使用的标签。翻片保留选择，因此它不一定已经出现在本片。初始未选择时请先拾取或新建标签。</dd>
     <dt>新建标签 <kbd>N</kbd></dt><dd>分配未使用的标签，避开本片已有颜色，立即选为当前标签。新建标签保存在工作目录的 created_labels.json；刷新后保留，可跨片复用。</dd>
-    <dt>撤销 <kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>按次精确回退，每次改动都记录了每个像素的旧 id。</dd>
+    <dt>撤销 <kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>只回退当前切片最近一次改动，其他切片保持不变；每次改动记录了每个像素的旧 id。</dd>
     <dt>本片分段</dt><dd>分为“新建标签”和“已有标签”两组；新建标签涂色后仍留在新建组，尚未涂色的显示“未使用”。点一行选中，搜索框同时过滤两组。</dd>
   </dl>
 </div>
@@ -73,9 +73,9 @@
   ('POST', '/api/v1/annotate/blocks/{b}/paint', '{z, points, radius, new_id}'),
   ('POST', '/api/v1/annotate/blocks/{b}/merge-pair', '{z, first:[x,y], second:[x,y]}'),
   ('POST', '/api/v1/annotate/blocks/{b}/merge', '{from_id, to_id, scope: block|slice, z}（脚本接口）'),
-  ('POST', '/api/v1/annotate/blocks/{b}/undo', '撤销最近一次'),
+  ('POST', '/api/v1/annotate/blocks/{b}/undo?z=0', '撤销本片最近一次'),
   ('POST', '/api/v1/annotate/blocks/{b}/new-id?z=0', '从最大 id 之后分配，跳过本片重复颜色'),
-  ('GET', '/api/v1/annotate/blocks/{b}/edits', '改动记录'),
+  ('GET', '/api/v1/annotate/blocks/{b}/edits?z=0', '本片改动记录'),
 ] %}<tr><td><span class="pill {{ 'on' if m == 'POST' }}">{{ m }}</span></td><td class="mono">{{ p }}</td><td>{{ d }}</td></tr>{% endfor %}
 </tbody></table></div>
 <p class="muted" style="font-size:12px">细节见仓库里的 <span class="mono">docs/ANNOTATE.md</span>。</p>
