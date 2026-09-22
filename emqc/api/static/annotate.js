@@ -36,8 +36,22 @@
   // ------------------------------------------------------------------ colours: stable per id, everywhere
   const colorCache = new Map();
   // 平台保留的「细胞间隙」标签：固定 id、固定颜色，在每个数据块里都一样（与 emqc/annotate/labels.py 一致）
-  const GAP_ID = "9223372036854775808", GAP_NAME = "细胞间隙", GAP_COLOR = [148, 163, 184];
+  const GAP_ID = "9223372036854775808", GAP_NAME = "细胞间隙", GAP_COLOR = [255, 255, 255], GAP_COLOR_MIN_DISTANCE = 80;
   const labelName = id => id === GAP_ID ? GAP_NAME : id;
+  // 某个细胞的颜色离白色太近，会和「细胞间隙」混——与 emqc/annotate/labels.py 的 looks_like_gap 同一判据
+  const looksLikeGap = rgb => rgb.reduce((s, v, i) => s + (v - GAP_COLOR[i]) ** 2, 0) < GAP_COLOR_MIN_DISTANCE ** 2;
+  // 本片（含已新建的标签）里和白色混的 id；有则在「当前标签」下方提示，并在标签列表里打标记
+  function gapConflicts() {
+    const e = S.cache.get(S.z), ids = new Set([...(e?.ids || []), ...S.createdIds]);
+    return [...ids].filter(id => id !== "0" && id !== GAP_ID && looksLikeGap(colorOf(id)));
+  }
+  function gapWarn() {
+    const el = $("an-gap-warn"); if (!el) return;
+    const bad = gapConflicts();
+    el.hidden = !bad.length;
+    el.innerHTML = bad.length ? `⚠ 本片有 ${bad.length} 个标签的颜色接近白色，会和「${GAP_NAME}」混淆：`
+      + bad.slice(0, 6).map(id => `<span class="mono">${id}</span>`).join("、") + (bad.length > 6 ? " …" : "") : "";
+  }
   function colorOf(id) {
     if (id === "0") return [0, 0, 0];
     if (id === GAP_ID) return GAP_COLOR;
@@ -743,7 +757,7 @@
     else if (k === "Tab") { ev.preventDefault(); if (!S.blink) { S.blink = true; render(); } }
     else if (k === "n") newId();
     else if (k === "l") neighbourPick();
-    else if (k === "i") { setCur(GAP_ID); flash(`当前标签：${GAP_NAME}`); }
+    else if (k === "i") pickGap();
     else if (k === "0") fit(); else if (k === "1") { S.zoom = 1; applyView(); }
     else if (k === "+" || k === "=") { const r = P[0].stage.getBoundingClientRect(); zoomAt(1.25, r.width / 2, r.height / 2); }
     else if (k === "-") { const r = P[0].stage.getBoundingClientRect(); zoomAt(0.8, r.width / 2, r.height / 2); }
@@ -765,11 +779,12 @@
     $("an-nseg").textContent = `${ids.length} 个`;
     const group = (key, title, labels) => `<section class="vast-label-group" data-label-group="${key}" aria-labelledby="an-labels-${key}">`
       + `<div class="vast-list-heading" id="an-labels-${key}"><span>${title}</span><span class="muted mono">${labels.length}</span></div>`
-      + labels.slice(0, 400).map(([id, n, k]) => `<div class="row ${id === S.cur ? "cur" : ""}" data-id="${id}" data-k="${k}"><span class="sw" style="background:${css(colorOf(id))}"></span><span class="id" title="${id}">${labelName(id)}</span><span class="n">${n || "未使用"}</span></div>`).join("")
+      + labels.slice(0, 400).map(([id, n, k]) => `<div class="row ${id === S.cur ? "cur" : ""}" data-id="${id}" data-k="${k}"><span class="sw" style="background:${css(colorOf(id))}"></span><span class="id" title="${id}">${labelName(id)}${id !== GAP_ID && looksLikeGap(colorOf(id)) ? ' <span class="muted" title="颜色接近白色，会和细胞间隙混淆">⚠近白</span>' : ""}</span><span class="n">${n || "未使用"}</span></div>`).join("")
       + (!labels.length ? `<div class="vast-list-note">${q ? "无匹配标签" : "暂无"}</div>` : "")
       + (labels.length > 400 ? `<div class="vast-list-note">还有 ${labels.length - 400} 个，请搜索</div>` : "") + `</section>`;
     box.innerHTML = group("created", "新建标签", rows.filter(([id]) => created.has(id)))
       + group("existing", "已有标签", rows.filter(([id]) => !created.has(id)));
+    gapWarn();
   }
   $("an-segs").addEventListener("click", ev => { const r = ev.target.closest(".row[data-id]"); if (r) setCur(r.dataset.id); });
   $("an-search").addEventListener("input", segList);
@@ -789,7 +804,12 @@
   document.querySelectorAll(".tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
   $("an-brush").addEventListener("input", ev => setBrush(+ev.target.value));
   $("an-newid").addEventListener("click", newId);
-  $("an-gap").addEventListener("click", () => { setCur(GAP_ID); flash(`当前标签：${GAP_NAME}——只会填到没有标签的像素上，不会盖掉任何细胞`); });
+  function pickGap() {
+    setCur(GAP_ID);
+    const bad = gapConflicts();
+    flash(bad.length ? `当前标签：${GAP_NAME}。注意：本片有 ${bad.length} 个标签颜色接近白色，见左栏提示` : `当前标签：${GAP_NAME}——只会填到没有标签的像素上，不会盖掉任何细胞`, !!bad.length);
+  }
+  $("an-gap").addEventListener("click", pickGap);
   $("an-prev").addEventListener("click", () => goZ(S.z - 1));
   $("an-next").addEventListener("click", () => goZ(S.z + 1));
   $("an-z").addEventListener("change", ev => goZ(+ev.target.value));

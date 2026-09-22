@@ -206,6 +206,25 @@ def test_gap_label_cannot_be_merged_and_does_not_inflate_new_ids(block):
     assert neuroglancer.segment_is_public({"dataset": {"seg_source": "h01-release/x"}}, GAP_ID) is False
 
 
+def test_gap_colour_is_white_and_no_hashed_label_comes_near_it(tmp_path):
+    """间隙是白色；哈希调色板锁着亮度和饱和度，任何细胞 id 的颜色都离白色很远——把这个事实钉住，
+    同时钉住「近白」判据本身和 new_id 对它的避让。"""
+    from emqc.annotate.labels import GAP_COLOR, GAP_COLOR_MIN_DISTANCE, looks_like_gap
+    from emqc.annotate.store import Block, label_color
+
+    assert GAP_COLOR == (255, 255, 255) and looks_like_gap(GAP_COLOR) and looks_like_gap((230, 240, 250))
+    assert not looks_like_gap((148, 163, 184)) and not looks_like_gap((0, 0, 0))
+    rng = np.random.default_rng(0)
+    sample = np.concatenate([np.arange(1, 5000), rng.integers(1, 2 ** 40, 20000)])
+    dists = [sum((a - b) ** 2 for a, b in zip(label_color(int(i)), GAP_COLOR)) ** .5 for i in sample]
+    assert min(dists) > GAP_COLOR_MIN_DISTANCE * 2, f"哈希色离白色最近也有 {min(dists):.0f}，判据不会误响"
+    d = tmp_path / "b"; d.mkdir()
+    np.save(d / "em.npy", np.zeros((8, 8, 2), np.uint8)); np.save(d / "seg.npy", np.zeros((8, 8, 2), np.uint64))
+    json.dump({"dataset": {"id": "demo"}}, open(d / "meta.json", "w"))
+    b = Block(d, tmp_path / "work")
+    assert not looks_like_gap(label_color(b.new_id())), "新建的 id 永远不会拿到近白的颜色"
+
+
 def test_gap_label_constant_is_shared_by_server_and_page(client_tools):
     """前端硬编码了同一个数字和颜色；服务端通过 info 把它交出来，两边必须一致。"""
     from emqc.annotate.labels import GAP_COLOR, GAP_ID, GAP_NAME

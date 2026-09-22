@@ -45,7 +45,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from emqc.annotate.labels import GAP_COLOR, GAP_ID, GAP_NAME
+from emqc.annotate.labels import GAP_COLOR, GAP_ID, GAP_NAME, looks_like_gap
 
 SEG_EDIT = "seg_edit.npy"
 EDIT_DIR = "edits"
@@ -316,7 +316,7 @@ class Block:
             used.add(GAP_COLOR)                  # a new cell must never be mistaken for 细胞间隙
             label = max(self.max_id(), max(map(int, created), default=0)) + 1
             limit = np.iinfo(self._seg_ro.dtype).max
-            while label <= limit and label_color(label) in used:
+            while label <= limit and (label_color(label) in used or looks_like_gap(label_color(label))):
                 label += 1
             if label > limit:
                 raise ValueError("标签编号已用尽")
