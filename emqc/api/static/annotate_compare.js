@@ -31,9 +31,9 @@
   }
   function draw() {
     if (!state.images) return;
-    const {em, indices, sources, changes} = state.images, data = state.snapshot, alpha = +$("opacity").value / 100;
-    $("opacity-value").textContent = `${$("opacity").value}%`;
-    const sourceMode = $("mode").value === "sources", highlight = $("highlight").checked;
+    const {em, indices, sources, changes} = state.images, data = state.snapshot;
+    // Fixed instead of a slider, and the change highlight is always on: this page exists to show what changed.
+    const alpha = 0.5, highlight = true, sourceMode = $("mode").value === "sources";
     $("after-caption").textContent = sourceMode ? "当前结果 · 按来源着色" : "当前编辑结果";
     const sourceColors = data.report.source_legend.map(s => s.color.match(/\w\w/g).map(v => parseInt(v, 16)));
     canvases.forEach((canvas, side) => {
@@ -62,6 +62,55 @@
     $("table-page").textContent = `${state.page+1} / ${pages}`;
     $("table-prev").disabled = state.page === 0; $("table-next").disabled = state.page+1 >= pages;
   }
+  // ---------------------------------------------------------------- 改了哪些地方 / 标签增减
+  const swatch = id => `<i class="cmp-dot" style="background:rgb(${color(id).join(",")})"></i>`;
+  const idCell = id => id === "0" ? '<span class="muted">背景</span>' : `${swatch(id)}<span class="mono">${esc(id)}</span>`;
+  function focusRegion(g) {
+    viewports.forEach((viewport, side) => {
+      const canvas = canvases[side], scale = canvas.clientWidth / canvas.width;
+      viewport.scrollTo({left: (g.cx + .5) * scale - viewport.clientWidth / 2,
+                         top: (g.cy + .5) * scale - viewport.clientHeight / 2, behavior: "smooth"});
+    });
+    document.querySelectorAll(".cmp-ring").forEach(ring => {
+      ring.hidden = false;
+      ring.style.left = `${(g.x0 + g.x1) / 2 / canvases[0].width * 100}%`;
+      ring.style.top = `${(g.y0 + g.y1) / 2 / canvases[0].height * 100}%`;
+      ring.style.width = `${Math.max(g.x1 - g.x0, 8) / canvases[0].width * 100}%`;
+      ring.style.height = `${Math.max(g.y1 - g.y0, 8) / canvases[0].height * 100}%`;
+      ring.classList.remove("cmp-pulse"); void ring.offsetWidth; ring.classList.add("cmp-pulse");
+    });
+  }
+  function renderChanges() {
+    const changes = state.snapshot.changes || {regions: [], n_total: 0, hidden: 0, hidden_px: 0}, report = state.snapshot.report;
+    const regions = changes.regions;
+    $("regions-count").textContent = changes.n_total ? `${fmt(changes.n_total)} 处 · 共 ${fmt(report.changed_px)} 像素` : "";
+    $("regions").innerHTML = regions.map((g, i) => `<tr class="cmp-click" data-region="${i}" tabindex="0"><td class="mono">${g.cx}, ${g.cy}</td><td>${fmt(g.px)}</td><td>${idCell(g.from_id)} → ${idCell(g.to_id)}</td></tr>`).join("")
+      || `<tr><td colspan="3" class="muted">${report.has_seg ? "这一片与原始分割完全一致。" : "此数据块没有分割标签。"}</td></tr>`;
+    $("regions-more").textContent = changes.hidden ? `另有 ${fmt(changes.hidden)} 处更小的改动，合计 ${fmt(changes.hidden_px)} 像素，未逐条列出。` : "";
+    // "新增了哪些标签" in practice means the whole balance sheet: what appeared, what grew, what was merged away.
+    // Strictly-new ids are often none — merging and clearing reuse ids that were already in the baseline.
+    const moved = report.labels.filter(l => l.current_px !== l.before_px)
+                               .sort((a, b) => Math.abs(b.current_px - b.before_px) - Math.abs(a.current_px - a.before_px));
+    const shown = moved.slice(0, 50);
+    $("labels-count").textContent = moved.length ? `${fmt(moved.length)} 个标签有增减` : "";
+    $("labels").innerHTML = shown.map(l => {
+      const d = l.current_px - l.before_px;
+      const tag = l.before_px === 0 ? '<span class="cmp-tag cmp-new">新出现</span>'
+                : l.current_px === 0 ? '<span class="cmp-tag cmp-gone">已消失</span>' : "";
+      return `<tr><td>${idCell(l.id)}${tag}</td><td>${fmt(l.before_px)}</td><td>${fmt(l.current_px)}</td><td class="${d > 0 ? "cmp-up" : "cmp-down"}">${d > 0 ? "+" : "−"}${fmt(Math.abs(d))}</td></tr>`;
+    }).join("") || '<tr><td colspan="4" class="muted">没有标签的像素数发生变化。</td></tr>';
+    $("labels-more").textContent = moved.length > shown.length ? `另有 ${fmt(moved.length - shown.length)} 个标签变化较小，未列出；完整清单见下方溯源报表。` : "";
+  }
+  $("regions").addEventListener("click", ev => {
+    const row = ev.target.closest("tr[data-region]");
+    if (row && state.snapshot) focusRegion(state.snapshot.changes.regions[+row.dataset.region]);
+  });
+  $("regions").addEventListener("keydown", ev => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const row = ev.target.closest("tr[data-region]");
+    if (row && state.snapshot) { ev.preventDefault(); focusRegion(state.snapshot.changes.regions[+row.dataset.region]); }
+  });
+
   function renderReport() {
     const r = state.snapshot.report, names = Object.fromEntries(r.source_legend.map(s => [s.key, s.name]));
     if ($("source").options.length === 2) r.source_legend.forEach(s => { const o = document.createElement("option"); o.value=s.key; o.textContent=s.name; $("source").append(o); });
@@ -80,13 +129,13 @@
     state.block = block.block_id; state.z = Math.max(0, Math.min(block.nz-1, Math.trunc(Number(z)) || 0));
     state.images = state.snapshot = null; state.page = 0;
     $("page").setAttribute("aria-busy", "true");
-    for (const id of ["images", "report", "metrics"]) $(id).hidden = true;
+    for (const id of ["images", "report", "summary"]) $(id).hidden = true;
     downloadButtons();
     $("z").value = state.z; $("z").max = block.nz-1; $("zmax").textContent = `/ ${block.nz-1}`;
     $("prev").disabled = state.z === 0; $("next").disabled = state.z === block.nz-1;
     $("status").textContent = `正在加载 ${state.block} · Z ${state.z}…`;
     $("pixel").textContent = "移动鼠标查看两侧同一像素的标签与来源。";
-    document.querySelectorAll(".cmp-cursor").forEach(c => { c.hidden = true; });
+    document.querySelectorAll(".cmp-cursor, .cmp-ring").forEach(c => { c.hidden = true; });
     const params = new URLSearchParams({block:state.block, z:state.z});
     history.replaceState(null, "", `/annotate/compare?${params}`); $("edit").href = `/annotate?${params}`;
     try {
@@ -94,8 +143,8 @@
       const [em, before, after, sources, changes] = await Promise.all([data.em_png, data.before.png, data.after.png, data.sources_png, data.changes_png].map(image));
       if (serial !== state.serial) return;
       state.snapshot = data; state.images = {em, indices:[decode(before, true), decode(after, true)], sources:decode(sources), changes:decode(changes)};
-      draw(); renderReport();
-      for (const id of ["images", "report", "metrics"]) $(id).hidden = false;
+      draw(); renderReport(); renderChanges();
+      for (const id of ["images", "report", "summary"]) $(id).hidden = false;
       downloadButtons();
       const r = data.report;
       $("status").textContent = `${state.block} · Z ${state.z} · ${em.width} × ${em.height} · ${!r.has_seg ? "此数据块没有分割标签，两侧均显示原始电镜图" : r.changed_px ? `${fmt(r.changed_px)} 像素与原始分割不同` : "当前结果与原始分割一致"}`;
@@ -149,8 +198,7 @@
   $("block").addEventListener("change", () => load(0)); $("z").addEventListener("change", () => load($("z").value));
   $("prev").addEventListener("click", () => load(state.z-1)); $("next").addEventListener("click", () => load(state.z+1));
   $("refresh").addEventListener("click", () => state.blocks.length ? load() : init());
-  for (const id of ["mode", "opacity", "highlight"]) $(id).addEventListener("input", draw);
-  $("zoom").addEventListener("input", () => { $("zoom-value").textContent = `${$("zoom").value}%`; document.querySelectorAll(".cmp-canvas-wrap").forEach(c => { c.style.width = `${$("zoom").value}%`; }); });
+  $("mode").addEventListener("input", draw);
   for (const id of ["source", "search"]) $(id).addEventListener("input", () => { state.page=0; rows(); });
   $("table-prev").addEventListener("click", () => { state.page--; rows(); }); $("table-next").addEventListener("click", () => { state.page++; rows(); });
   $("csv").addEventListener("click", () => download("csv")); $("json").addEventListener("click", () => download("json"));

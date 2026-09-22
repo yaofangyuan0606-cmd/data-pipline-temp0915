@@ -1,31 +1,42 @@
 {% extends "base.html" %}
-{% block title %}前后对比与溯源{% endblock %}
-{% block crumbs %}<a href="/annotate">切片标注</a> › <b>前后对比与溯源</b>{% endblock %}
+{% block title %}前后对比{% endblock %}
+{% block crumbs %}<a href="/annotate">切片标注</a> › <b>前后对比</b>{% endblock %}
 {% block topright %}<span class="pill">只读对比</span><a class="btn" id="cmp-edit" href="/annotate">返回标注</a>{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="/static/annotate_compare.css?v={{ static_v('annotate_compare.css') }}">
 <section class="cmp-page" id="cmp-page" aria-busy="true">
-  <div class="cmp-heading"><div><h1>前后对比与溯源</h1><p class="muted">同一张电镜切片，核对原始分割与当前标注，追踪每一处修改的来源。</p></div><button id="cmp-refresh">刷新当前结果</button></div>
+  <div class="cmp-heading"><div><h1>前后对比</h1><p class="muted">同一张电镜切片：改了哪些地方，标签增减了什么。<b class="cmp-key">粉色</b>是与原始分割不同的像素。</p></div><button id="cmp-refresh">刷新</button></div>
   <div class="cmp-controls">
     <label class="cmp-block">数据块<select id="cmp-block" class="text"><option>加载中…</option></select></label>
     <div><label for="cmp-z">切片 Z</label><div class="cmp-z"><button id="cmp-prev" aria-label="上一片">←</button><input id="cmp-z" class="text mono" type="number" min="0" value="0"><span id="cmp-zmax" class="muted">/ —</span><button id="cmp-next" aria-label="下一片">→</button></div></div>
-    <label>右图着色<select id="cmp-mode" class="text"><option value="labels">标签颜色</option><option value="sources">标注来源</option></select></label>
-    <label>标签透明度 <output id="cmp-opacity-value">50%</output><input id="cmp-opacity" type="range" min="0" max="100" value="50"></label>
-    <label>同步缩放 <output id="cmp-zoom-value">100%</output><input id="cmp-zoom" type="range" min="100" max="400" step="25" value="100"></label>
-    <label class="cmp-check"><input id="cmp-highlight" type="checkbox">高亮修改区域</label>
   </div>
   <p id="cmp-status" class="muted" role="status" aria-live="polite">正在加载数据块…</p>
-  <div class="cmp-metrics" id="cmp-metrics" hidden></div>
   <div class="cmp-images" id="cmp-images" hidden>
-    <figure><figcaption><b>标注前</b><span>原始分割 · 只读基线</span></figcaption><div class="cmp-viewport" tabindex="0" aria-label="原始分割图，可滚动查看"><div class="cmp-canvas-wrap"><canvas id="cmp-before" aria-label="原始分割叠加电镜切片"></canvas><i class="cmp-cursor" hidden></i></div></div></figure>
-    <figure><figcaption><b>标注后</b><span id="cmp-after-caption">当前编辑结果</span></figcaption><div class="cmp-viewport" tabindex="0" aria-label="当前标注图，可滚动查看"><div class="cmp-canvas-wrap"><canvas id="cmp-after" aria-label="当前标注叠加电镜切片"></canvas><i class="cmp-cursor" hidden></i></div></div></figure>
+    <figure><figcaption><b>标注前</b><span>原始分割 · 只读基线</span></figcaption><div class="cmp-viewport" tabindex="0" aria-label="原始分割图，可滚动查看"><div class="cmp-canvas-wrap"><canvas id="cmp-before" aria-label="原始分割叠加电镜切片"></canvas><i class="cmp-cursor" hidden></i><i class="cmp-ring" hidden></i></div></div></figure>
+    <figure><figcaption><b>标注后</b><span id="cmp-after-caption">当前编辑结果</span></figcaption><div class="cmp-viewport" tabindex="0" aria-label="当前标注图，可滚动查看"><div class="cmp-canvas-wrap"><canvas id="cmp-after" aria-label="当前标注叠加电镜切片"></canvas><i class="cmp-cursor" hidden></i><i class="cmp-ring" hidden></i></div></div></figure>
   </div>
   <p id="cmp-pixel" class="cmp-pixel mono muted">移动鼠标查看两侧同一像素的标签与来源；拖动滚动条可同步平移。</p>
-  <section class="cmp-report" id="cmp-report" hidden>
-    <div class="cmp-heading"><div><h2>标注溯源报表</h2><p class="muted">按像素最后一次有效编辑汇总，同一标签可包含多种来源。下方来源数量仅统计非背景标签。</p></div>
-      <div class="cmp-download"><select id="cmp-scope" class="text" aria-label="导出范围"><option value="slice">当前切片</option><option value="block">整个数据块</option></select><button id="cmp-csv" disabled>导出 CSV</button><button id="cmp-json" disabled>导出 JSON</button></div>
+
+  <div class="cmp-two" id="cmp-summary" hidden>
+    <section>
+      <h2>改了哪些地方 <span id="cmp-regions-count" class="muted"></span></h2>
+      <div class="cmp-table-wrap"><table><thead><tr><th>位置 X, Y</th><th>像素</th><th class="cmp-left">标签变化</th></tr></thead><tbody id="cmp-regions"></tbody></table></div>
+      <p id="cmp-regions-more" class="muted"></p>
+    </section>
+    <section>
+      <h2>标签增减 <span id="cmp-labels-count" class="muted"></span></h2>
+      <div class="cmp-table-wrap"><table><thead><tr><th>标签 ID</th><th>原始</th><th>当前</th><th>变化</th></tr></thead><tbody id="cmp-labels"></tbody></table></div>
+      <p id="cmp-labels-more" class="muted"></p>
+    </section>
+  </div>
+
+  <details class="cmp-report" id="cmp-report" hidden>
+    <summary>完整溯源报表与导出<span class="muted"> · 每个标签的来源构成、编辑记录、CSV / JSON</span></summary>
+    <div class="cmp-heading"><p class="muted">按像素最后一次有效编辑汇总，同一标签可包含多种来源。下方来源数量仅统计非背景标签。</p>
+      <div class="cmp-download"><label>右图着色<select id="cmp-mode" class="text"><option value="labels">标签颜色</option><option value="sources">标注来源</option></select></label><select id="cmp-scope" class="text" aria-label="导出范围"><option value="slice">当前切片</option><option value="block">整个数据块</option></select><button id="cmp-csv" disabled>导出 CSV</button><button id="cmp-json" disabled>导出 JSON</button></div>
     </div>
     <p id="cmp-export-status" class="muted" role="status" aria-live="polite"></p>
+    <div class="cmp-metrics" id="cmp-metrics"></div>
     <div id="cmp-legend" class="cmp-legend"></div>
     <p id="cmp-policy" class="muted"></p>
     <div id="cmp-warnings" role="status" hidden></div>
@@ -33,7 +44,7 @@
     <div class="cmp-table-wrap"><table><thead><tr><th>标签 ID</th><th>原始像素</th><th>当前像素</th><th title="当前归属此标签、且与原始值不同的像素数">当前区域改动</th><th>原始标签</th><th>人工编辑</th><th>SAM</th><th>插值修补</th><th>智能填充</th><th>来源不明</th></tr></thead><tbody id="cmp-rows"></tbody></table></div>
     <div class="cmp-pagination"><button id="cmp-table-prev">上一页</button><span id="cmp-table-page" class="muted"></span><button id="cmp-table-next">下一页</button></div>
     <details><summary>当前切片的有效编辑记录</summary><p class="muted">“仍生效像素”表示当前仍由这次操作写入的像素，包括清除为背景的像素；已撤销记录不在此列。</p><div class="cmp-table-wrap"><table><thead><tr><th>操作</th><th>来源</th><th>时间</th><th>涉及像素</th><th>仍生效像素</th><th>模型 / 插值参考层</th></tr></thead><tbody id="cmp-operations"></tbody></table></div></details>
-  </section>
+  </details>
 </section>
 <script src="/static/annotate_compare.js?v={{ static_v('annotate_compare.js') }}" defer></script>
 {% endblock %}

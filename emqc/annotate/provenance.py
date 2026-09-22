@@ -230,13 +230,47 @@ def _label_image(plane):
     return {"png": _png_url(rgb), "ids": [str(int(i)) for i in ids]}
 
 
+def changed_regions(changed, before, after, limit: int = 200) -> dict:
+    """The connected patches of change, largest first — "which places changed", as a list you can walk.
+
+    The highlight overlay answers this visually, but on a 512x512 section a few scattered brush strokes are easy to
+    miss, and there is no way to step through them. Each region carries its own bounding box so the page can scroll
+    both viewports onto it, and the label it went from / to (the most common one inside that patch, since a single
+    stroke can clip a neighbour). Ids stay strings: H01 ids exceed 2^53 and JSON numbers would round them."""
+    from scipy import ndimage
+
+    lab, n = ndimage.label(changed, structure=np.ones((3, 3), bool))
+    if not n:
+        return {"regions": [], "n_total": 0, "hidden": 0, "hidden_px": 0}
+    sizes = np.bincount(lab.ravel())
+    sizes[0] = 0
+    order = [int(k) for k in np.argsort(sizes)[::-1].tolist() if sizes[k]][:limit]
+    boxes = ndimage.find_objects(lab)
+    regions = []
+    for k in order:
+        sl = boxes[k - 1]
+        m = lab[sl] == k
+        ys, xs = np.nonzero(m)
+        def top(arr):
+            v, c = np.unique(arr[sl][m], return_counts=True)
+            return str(int(v[int(np.argmax(c))]))
+        regions.append({"px": int(sizes[k]), "from_id": top(before), "to_id": top(after),
+                        "x0": int(sl[1].start), "y0": int(sl[0].start),
+                        "x1": int(sl[1].stop), "y1": int(sl[0].stop),
+                        "cx": int(sl[1].start + xs.mean()), "cy": int(sl[0].start + ys.mean())})
+    shown = sum(r["px"] for r in regions)
+    return {"regions": regions, "n_total": int(n), "hidden": int(n - len(regions)),
+            "hidden_px": int(int(sizes.sum()) - shown)}
+
+
 def comparison(block, z: int) -> dict:
     # A single response binds both images and the report to the same edit state.
     with block.lock:
         data, before, after, sources, changed = _snapshot(block, z)
         return {"report": data, "em_png": _png_url(block.em_slice(z)),
                 "before": _label_image(before), "after": _label_image(after),
-                "sources_png": _png_url(sources), "changes_png": _png_url(changed.astype(np.uint8) * 255)}
+                "sources_png": _png_url(sources), "changes_png": _png_url(changed.astype(np.uint8) * 255),
+                "changes": changed_regions(changed, before, after)}
 
 
 def csv_report(data):

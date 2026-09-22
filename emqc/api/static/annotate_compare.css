@@ -29,7 +29,35 @@
 .cmp-canvas-wrap canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; cursor: crosshair; }
 .cmp-cursor { position: absolute; width: 15px; height: 15px; border: 1px solid #fff; box-shadow: 0 0 0 1px #000; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
 .cmp-pixel { min-height: 20px; font-size: 12px; padding: 2px 0; }
+/* 两块摘要：改了哪些地方 / 标签增减 —— 页面默认只显示这两样 */
+.cmp-two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
+.cmp-two > section { min-width: 0; padding: 18px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r); }
+.cmp-two h2 { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.cmp-two h2 span { font: 12px/1 sans-serif; }
+.cmp-two .cmp-table-wrap { max-height: 320px; }
+/* H01 的 id 有 11 位，两栏并排时一行放不下「原 id → 新 id」，这两张表允许换行 */
+.cmp-two .cmp-table-wrap table { white-space: normal; }
+.cmp-two .cmp-table-wrap th, .cmp-two .cmp-table-wrap td { padding: 8px 10px; }
+#cmp-regions td:last-child, .cmp-two th.cmp-left { text-align: left; }
+.cmp-two tbody tr:not(:last-child) { border-bottom: 1px solid var(--border); }
+.cmp-two p { margin: 10px 0 0; font-size: 12px; line-height: 1.6; }
+.cmp-two td .cmp-dot { margin-right: 6px; vertical-align: -1px; }
+.cmp-click { cursor: pointer; }
+.cmp-click:hover, .cmp-click:focus-visible { background: var(--surface-2); outline: none; }
+.cmp-tag { margin-left: 8px; padding: 1px 6px; border-radius: var(--r-s); font: 11px sans-serif; }
+.cmp-new { background: var(--accent-soft); color: var(--accent-ink); }
+.cmp-gone { background: var(--surface-2); color: var(--muted); }
+.cmp-up { color: #2f9e6a; }
+.cmp-down { color: #d2566d; }
+.cmp-key { color: #ff5096; }
+/* 点击左表的一行，两侧同步滚到那处改动并闪一个方框 */
+.cmp-ring { position: absolute; border: 2px solid #ff5096; border-radius: 3px; transform: translate(-50%, -50%); pointer-events: none; box-shadow: 0 0 0 1px #000; }
+.cmp-pulse { animation: cmp-pulse 1.4s ease-out 2; }
+@keyframes cmp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
 .cmp-report { padding: 22px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r); margin-top: 22px; }
+.cmp-report > summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+.cmp-report[open] > summary { margin-bottom: 16px; }
 .cmp-report p { font-size: 12px; line-height: 1.7; }
 .cmp-legend { display: flex; flex-wrap: wrap; gap: 10px; }
 .cmp-legend > span { padding: 7px 11px; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--r-s); font-size: 12px; display: inline-flex; align-items: center; gap: 7px; }
@@ -49,4 +77,4 @@
 .cmp-page [hidden] { display: none !important; }
 .cmp-page [aria-busy=true] { opacity: .65; }
 @media (max-width: 1000px) { .cmp-heading { flex-wrap: wrap; } .cmp-report { padding: 16px; } }
-@media (max-width: 700px) { .cmp-images { grid-template-columns: 1fr; } .cmp-metrics { grid-template-columns: 1fr 1fr; } .cmp-download { flex-wrap: wrap; } }
+@media (max-width: 700px) { .cmp-images, .cmp-two { grid-template-columns: 1fr; } .cmp-metrics { grid-template-columns: 1fr 1fr; } .cmp-download { flex-wrap: wrap; } }

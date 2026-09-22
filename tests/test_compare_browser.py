@@ -27,6 +27,15 @@ def test_comparison_in_browser(tmp_path):
         assert page.locator("#cmp-before").evaluate("c => [c.width,c.height]") == [64, 32]
         assert page.locator("#cmp-after").evaluate("c => [c.width,c.height]") == [64, 32]
         assert page.locator("#cmp-before").evaluate("c => c.toDataURL()") != page.locator("#cmp-after").evaluate("c => c.toDataURL()")
+        # 页面默认只给两样东西：改了哪些地方，标签增减了什么
+        assert page.locator("#cmp-regions tr[data-region]").count() == 3, "三处改动各自成一块"
+        assert "3 处" in page.locator("#cmp-regions-count").inner_text()
+        assert "77" in page.locator("#cmp-labels").inner_text() and "新出现" in page.locator("#cmp-labels").inner_text()
+        page.locator("#cmp-regions tr[data-region]").first.click()          # 点一行，两侧定位到那处改动
+        page.wait_for_function("![...document.querySelectorAll('.cmp-ring')].some(r => r.hidden)")
+        # 完整溯源报表默认收起，展开后才是同事那套按来源的明细与导出
+        assert page.locator("#cmp-rows").is_visible() is False
+        page.locator("#cmp-report > summary").click()
         page.locator("#cmp-search").fill("77")
         assert page.locator("#cmp-rows tr").count() == 1
         assert "混合" in page.locator("#cmp-rows").inner_text()
@@ -34,9 +43,6 @@ def test_comparison_in_browser(tmp_path):
         assert "77" in page.locator("#cmp-rows").inner_text()
         page.locator("#cmp-mode").select_option("sources")
         assert "按来源着色" in page.locator("#cmp-after-caption").inner_text()
-        page.locator("#cmp-highlight").check()
-        page.locator("#cmp-zoom").fill("200")
-        assert page.locator("#cmp-zoom-value").inner_text() == "200%"
         page.locator(".cmp-viewport").first.evaluate("el => {el.scrollLeft = 120; el.dispatchEvent(new Event('scroll'));}")
         page.wait_for_function("Math.abs(document.querySelectorAll('.cmp-viewport')[0].scrollLeft-document.querySelectorAll('.cmp-viewport')[1].scrollLeft)<2")
         with page.expect_download() as pending:
@@ -52,6 +58,7 @@ def test_comparison_in_browser(tmp_path):
         pending.value.save_as(target)
         assert "9007199254740993" in target.read_text()
         page.locator("#cmp-mode").select_option("labels")
+        page.locator("#cmp-report > summary").click()          # 收起，回到默认的精简视图
         page.locator("#cmp-next").click()
         page.wait_for_function("document.querySelector('#cmp-status').textContent.includes('Z 1') && document.querySelector('#cmp-status').textContent.includes('一致')")
         assert page.locator("#cmp-before").evaluate("c => c.toDataURL()") == page.locator("#cmp-after").evaluate("c => c.toDataURL()")
@@ -62,7 +69,6 @@ def test_comparison_in_browser(tmp_path):
         page.set_viewport_size({"width": 1280, "height": 1100})
         page.locator("#cmp-prev").click()
         page.wait_for_function("document.querySelector('#cmp-status').textContent.includes('3 像素')")
-        page.locator("#cmp-mode").select_option("labels")
         page.screenshot(path=str(tmp_path / "comparison-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 640, "height": 1000})
         assert page.locator("#cmp-before").is_visible() and page.locator("#cmp-after").is_visible()
