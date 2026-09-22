@@ -2,7 +2,7 @@
 (() => {
   const $ = id => document.getElementById(`cmp-${id}`), API = "/api/v1/annotate/blocks";
   const fmt = n => Number(n).toLocaleString("zh-CN"), esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]));
-  const state = {blocks: [], block: "", z: 0, snapshot: null, images: null, serial: 0, controller: null, page: 0, downloads: new Set()};
+  const state = {blocks: [], block: "", z: 0, snapshot: null, images: null, serial: 0, controller: null, page: 0, downloads: new Set(), zoom: 100};
   const canvases = [$("before"), $("after")], viewports = [...document.querySelectorAll(".cmp-viewport")];
   const image = url => new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => reject(new Error("图片读取失败")); im.src = url; });
   async function json(url, signal) {
@@ -34,11 +34,15 @@
     const {em, indices, sources, changes} = state.images, data = state.snapshot;
     // Fixed instead of a slider, and the change highlight is always on: this page exists to show what changed.
     const alpha = 0.5, highlight = true, sourceMode = $("mode").value === "sources";
+    // 左图默认是纯 EM 原图——「标注前」对标注员来说就是什么颜色都没有的那张；想对照交付的原始分割可以切过去
+    const leftRaw = $("left-mode").value === "em";
     $("after-caption").textContent = sourceMode ? "当前结果 · 按来源着色" : "当前编辑结果";
     const sourceColors = data.report.source_legend.map(s => s.color.match(/\w\w/g).map(v => parseInt(v, 16)));
     canvases.forEach((canvas, side) => {
       canvas.width = em.width; canvas.height = em.height;
-      const g = canvas.getContext("2d"), overlay = g.createImageData(em.width, em.height), pixels = overlay.data;
+      const g = canvas.getContext("2d");
+      if (!side && leftRaw) { g.drawImage(em, 0, 0); return; }           // 原图：一个像素的叠加都不画
+      const overlay = g.createImageData(em.width, em.height), pixels = overlay.data;
       const ids = (side ? data.after : data.before).ids, palette = ids.map(color), idx = indices[side];
       for (let i = 0; i < idx.length; i++) {
         const c = side && sourceMode ? sourceColors[sources[i]] : palette[idx[i]];
@@ -199,6 +203,35 @@
   $("prev").addEventListener("click", () => load(state.z-1)); $("next").addEventListener("click", () => load(state.z+1));
   $("refresh").addEventListener("click", () => state.blocks.length ? load() : init());
   $("mode").addEventListener("input", draw);
+  $("left-mode").addEventListener("input", draw);
+  // ---------------------------------------------------------------- 缩放 / 滚轮翻 z / 拖动平移，和标注页一个习惯
+  function setZoom(v) {
+    state.zoom = Math.max(100, Math.min(400, Math.round(v / 25) * 25));
+    $("zoom").value = state.zoom; $("zoom-value").textContent = `${state.zoom}%`;
+    document.querySelectorAll(".cmp-canvas-wrap").forEach(w => { w.style.width = `${state.zoom}%`; });
+    try { localStorage.setItem("cmp-zoom", String(state.zoom)); } catch (_) {}
+  }
+  $("zoom").addEventListener("input", ev => setZoom(+ev.target.value));
+  try { const saved = +localStorage.getItem("cmp-zoom"); if (saved) setZoom(saved); } catch (_) {}
+  let wheelBusy = false;
+  viewports.forEach(viewport => {
+    viewport.addEventListener("wheel", ev => {
+      ev.preventDefault();
+      if (ev.ctrlKey || ev.metaKey) { setZoom(state.zoom + (ev.deltaY < 0 ? 25 : -25)); return; }
+      if (wheelBusy) return;                                   // 一格滚轮只翻一片，别把一次惯性滚动变成十几片
+      wheelBusy = true; setTimeout(() => { wheelBusy = false; }, 120);
+      load(state.z + (ev.deltaY > 0 ? 1 : -1));
+    }, {passive: false});
+    let drag = null;
+    viewport.addEventListener("mousedown", ev => { if (ev.button !== 0) return; drag = {x: ev.clientX, y: ev.clientY, l: viewport.scrollLeft, t: viewport.scrollTop}; viewport.classList.add("cmp-dragging"); });
+    // 直接写两侧的滚动位置，不依赖 scroll 事件来同步——后台标签页/未合成帧时 scroll 事件可能不发，两边会走散
+    window.addEventListener("mousemove", ev => {
+      if (!drag) return;
+      const l = drag.l - (ev.clientX - drag.x), t = drag.t - (ev.clientY - drag.y);
+      viewports.forEach(v => { v.scrollLeft = l; v.scrollTop = t; });
+    });
+    window.addEventListener("mouseup", () => { drag = null; viewport.classList.remove("cmp-dragging"); });
+  });
   for (const id of ["source", "search"]) $(id).addEventListener("input", () => { state.page=0; rows(); });
   $("table-prev").addEventListener("click", () => { state.page--; rows(); }); $("table-next").addEventListener("click", () => { state.page++; rows(); });
   $("csv").addEventListener("click", () => download("csv")); $("json").addEventListener("click", () => download("json"));
