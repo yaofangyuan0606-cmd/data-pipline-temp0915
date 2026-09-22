@@ -461,6 +461,19 @@ class Block:
             if not whole_slice:
                 lab, _ = ndimage.label(mask)
                 mask = lab == lab[y, x]
+                if new_id == GAP_ID:
+                    # 空白在这种数据里常常是一张连通的大网：实测一片 512² 上 97% 的 0 像素连成一块、贯穿全片。
+                    # 对着一条缝点填充，本意是涂那条缝，不是涂掉全片 22% 的像素。所以太大的空白块拒绝整块填，
+                    # 让人用画笔扫（只落在 0 像素上，可以放心大笔扫）或明确地用整片填充。
+                    n_px = int(mask.sum())
+                    ys_, xs_ = np.nonzero(mask)
+                    span_y, span_x = ys_.max() - ys_.min() + 1, xs_.max() - xs_.min() + 1
+                    H, W = plane.shape
+                    if n_px >= 0.02 * mask.size or span_x >= 0.5 * W or span_y >= 0.5 * H:
+                        raise ValueError(f"这片空白连成一片，共 {n_px:,} 像素（占全片 {100 * n_px / mask.size:.0f}%，"
+                                         f"跨 {span_x}×{span_y}）。一次填掉不像是本意：要涂这一段请用画笔扫过去"
+                                         f"（{GAP_NAME}只落在空白像素上，笔再大也不会碰到细胞）；"
+                                         f"确实要把本片全部空白都标成{GAP_NAME}，请用整片填充（Shift+点击）。")
             xs, ys = self._disk_idx(mask)
             plane[mask] = new_id
             seg.flush()

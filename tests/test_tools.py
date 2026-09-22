@@ -170,10 +170,13 @@ def test_gap_label_only_ever_lands_on_unlabelled_pixels(block):
     assert np.array_equal(after[before != 0], before[before != 0])
     assert (after[before == 0] == GAP_ID).all()
     block.undo()
-    # 填充：点在细胞上要被拒绝，并说明原因；点在空白上正常
+    # 填充：点在细胞上要被拒绝，并说明原因；z1 的右半是一大片贯穿的空白，普通填充也拒绝（见下一个测试），
+    # 明确的整片填充放行，且同样只动 0 像素
     with pytest.raises(ValueError, match=GAP_NAME):
         block.fill(1, 10, 10, GAP_ID)
-    rec = block.fill(1, 60, 30, GAP_ID)
+    with pytest.raises(ValueError, match="连成一片"):
+        block.fill(1, 60, 30, GAP_ID)
+    rec = block.fill(1, 60, 30, GAP_ID, whole_slice=True)
     assert rec and int(block.seg_slice(1)[30, 60]) == GAP_ID
     assert np.array_equal(block.seg_slice(1)[before == 7], before[before == 7])
     block.undo()
@@ -184,6 +187,35 @@ def test_gap_label_only_ever_lands_on_unlabelled_pixels(block):
     assert np.array_equal(after[before != 0], before[before != 0]) and (after[before == 0] == GAP_ID).all()
     block.undo()
     assert np.array_equal(block.seg_slice(1), before), "四次撤销后逐像素还原"
+
+
+def test_gap_fill_refuses_the_connected_web_but_fills_enclosed_holes(tmp_path):
+    """空白常是一张贯穿全片的大网，点一下填充不该涂掉全片；封闭的小洞照常一点一个；整片填充是明确动作，放行。"""
+    from emqc.annotate.labels import GAP_ID
+    from emqc.annotate.store import Block
+
+    d = tmp_path / "b"; d.mkdir()
+    H = W = 64
+    seg = np.zeros((W, H, 1), np.uint64)              # 磁盘序 (X, Y, z)
+    disp = np.zeros((H, W), np.uint64)
+    disp[4:28, 4:28] = 1; disp[36:60, 4:28] = 2; disp[4:28, 36:60] = 3; disp[36:60, 36:60] = 4   # 四个细胞
+    disp[10:14, 10:14] = 0                             # 细胞 1 里挖一个封闭小洞
+    seg[:, :, 0] = disp.T
+    np.save(d / "em.npy", np.zeros((W, H, 1), np.uint8)); np.save(d / "seg.npy", seg)
+    json.dump({"dataset": {"id": "demo"}}, open(d / "meta.json", "w"))
+    b = Block(d, tmp_path / "work")
+
+    with pytest.raises(ValueError, match="连成一片") as ei:
+        b.fill(0, 32, 32, GAP_ID)                      # 点在贯穿全片的十字形空白网上
+    assert "画笔" in str(ei.value) and "整片" in str(ei.value)
+    assert int(b.seg_slice(0)[32, 32]) == 0, "拒绝时一个像素都没写"
+    rec = b.fill(0, 12, 12, GAP_ID)                    # 封闭小洞：一点一个
+    assert rec["n_px"] == 16 and int(b.seg_slice(0)[12, 12]) == GAP_ID
+    before = b.seg_slice(0).copy()
+    rec = b.fill(0, 32, 32, GAP_ID, whole_slice=True)  # 明确的整片动作：放行，全部空白变间隙
+    after = b.seg_slice(0)
+    assert rec["n_px"] == int((before == 0).sum()) and (after[before == 0] == GAP_ID).all()
+    assert np.array_equal(after[before != 0], before[before != 0]), "四个细胞原样"
 
 
 def test_gap_label_cannot_be_merged_and_does_not_inflate_new_ids(block):
