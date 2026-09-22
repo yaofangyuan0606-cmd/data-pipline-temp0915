@@ -813,7 +813,10 @@
     S.info = await getJSON(`${API}/blocks/${encodeURIComponent(id)}`);
     const [nz, H, W] = S.info.shape_zyx; S.W = W; S.H = H; S.curtainX = W >> 1;
     for (const p of P) { for (const c of [p.em, p.seg, p.hi]) { c.width = W; c.height = H; } p.cv.style.width = W + "px"; p.cv.style.height = H + "px"; }
-    $("an-z").max = nz - 1; $("an-zr").max = nz - 1; $("an-nz").textContent = `/ ${nz - 1}`;
+    $("an-z").max = nz - 1; $("an-zr").max = nz - 1;
+    // 框里是切片序号 z，从 0 起算，所以这里是"最大序号"而不是总数。只写 "/ 99" 会被读成"共 99 页"，
+    // 实际有 100 片，所以把总数一并写出来。
+    $("an-nz").textContent = `/ ${nz - 1}　共 ${nz} 片`;
     $("an-nedit").textContent = `${S.info.n_edits} 次改动`;
     const g = S.info.voxel_size_nm ? ` · ${S.info.voxel_size_nm.join("×")} nm` : "";
     $("an-meta").textContent = `${W}×${H}×${nz}${g}${S.info.has_seg ? "" : " · 无分割"}`;

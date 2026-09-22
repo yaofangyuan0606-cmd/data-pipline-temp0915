@@ -131,7 +131,7 @@
     $("page").setAttribute("aria-busy", "true");
     for (const id of ["images", "report", "summary"]) $(id).hidden = true;
     downloadButtons();
-    $("z").value = state.z; $("z").max = block.nz-1; $("zmax").textContent = `/ ${block.nz-1}`;
+    $("z").value = state.z; $("z").max = block.nz-1; $("zmax").textContent = `/ ${block.nz-1}　共 ${block.nz} 片`;
     $("prev").disabled = state.z === 0; $("next").disabled = state.z === block.nz-1;
     $("status").textContent = `正在加载 ${state.block} · Z ${state.z}…`;
     $("pixel").textContent = "移动鼠标查看两侧同一像素的标签与来源。";
