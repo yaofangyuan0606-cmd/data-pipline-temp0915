@@ -204,6 +204,24 @@ def test_neighbour_lookup_lists_every_candidate_slice_for_manual_choice(tmp_path
     assert got == sorted(got, key=lambda t: abs(t[0] - 3)), "按距离从近到远"
     assert set(got) == {(1, "11"), (5, "22"), (6, "33")}, "半径内每一片都列出来，不只是自动挑中的那片"
 
+    # 同一个颜色连着好几片都在是常态，列成好几行只占地方——一种颜色一行，记下它出现在哪几片
+    d2 = tmp_path / "b2"          # 另起一个目录：覆盖上面那个块的 seg.npy 会把 b 也改掉
+    d2.mkdir()
+    np.save(d2 / "em.npy", np.zeros((10, 10, 7), np.uint8))
+    seg2 = np.zeros((10, 10, 7), np.uint64)
+    seg2[:, :, 0] = seg2[:, :, 1] = seg2[:, :, 5] = 11      # 同一个 id，三片
+    seg2[:, :, 6] = 22
+    np.save(d2 / "seg.npy", seg2)
+    json.dump({"dataset": {"id": "demo"}}, open(d2 / "meta.json", "w"))
+    b2 = Block(d2, tmp_path / "work2")
+    r2 = neighbour.lookup(b2, 3, x=5, y=5)
+    ids = [c["id"] for c in r2["candidates"]]
+    assert ids == ["11", "22"], f"一种颜色一行，去重后应只剩两种，实际 {ids}"
+    first = r2["candidates"][0]
+    # z1 和 z5 距离都是 2，同距离时取下方那一侧，和自动挑选的规则一致
+    assert first["z_src"] == 1 and first["distance"] == 2, "留最近的那一片"
+    assert first["n_slices"] == 3 and first["slices"] == [1, 5, 0], "记下它出现在哪几片，按由近及远"
+
     # 指定某一片：只看那片，不搜
     m = neighbour.lookup(b, 3, x=5, y=5, z_src=6)
     assert m["found"] and m["id"] == "33" and m["picked"] == "manual" and m["searched"] == [6]

@@ -122,7 +122,7 @@ class NeighbourLabelIn(BaseModel):
     x: int | None = Field(default=None, ge=0)
     y: int | None = Field(default=None, ge=0)
     token: str | None = Field(default=None, min_length=32, max_length=32)   # a pending SAM mask, voted over
-    radius: int = Field(default=6, ge=1, le=32)
+    radius: int = Field(default=10, ge=1, le=32)
     z_src: int | None = Field(default=None, ge=0)          # 指定去哪一片取色；不给就自动挑最近的
 
 

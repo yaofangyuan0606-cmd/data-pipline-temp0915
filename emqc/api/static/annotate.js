@@ -586,10 +586,13 @@
     const list = res?.candidates || [];
     const draw = chosen => {
       el.hidden = list.length < 2;                       // 只有一个候选，没什么可选的
+      // 一种颜色一行（服务端已按 id 去重，只留最近那片）；出现的片数越多越可信，所以一并显示。
       el.innerHTML = el.hidden ? "" : list.map((c, i) =>
-        `<div class="row${c.z_src === chosen?.z_src ? " cur" : ""}" data-i="${i}" title="改用 z${c.z_src} 的这个颜色">`
+        `<div class="row${c.z_src === chosen?.z_src ? " cur" : ""}" data-i="${i}" `
+        + `title="改用 z${c.z_src} 的这个颜色（它出现在 z${(c.slices || [c.z_src]).join("、z")}）">`
         + `<span class="sw" style="background:${css(colorOf(c.id))}"></span>`
-        + `<span class="id">z${c.z_src} · ${c.id}</span><span class="n">${Math.round(c.share * 100)}%</span></div>`).join("");
+        + `<span class="id">z${c.z_src} · ${c.id}</span>`
+        + `<span class="n">${Math.round(c.share * 100)}% · ${c.n_slices || 1}片</span></div>`).join("");
     };
     el.onclick = ev => {
       const row = ev.target.closest(".row[data-i]");
@@ -627,7 +630,7 @@
       setCur(n.id);
       neighbourList("an-neighbour-list", n, c => { setCur(c.id); flash(`已改用 z${c.z_src} 的颜色 ${c.id}`); });
       flash(`已取 z${n.z_src} 的颜色 ${n.id}（相隔 ${n.distance} 片）`
-            + (n.candidates.length > 1 ? `，另有 ${n.candidates.length - 1} 片可选，见左栏` : ""));
+            + (n.candidates.length > 1 ? `，上下 10 片内共 ${n.candidates.length} 种颜色可选，见左栏` : ""));
     } catch (err) { flash("邻片取色失败：" + err.message, true); }
   }
 

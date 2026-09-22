@@ -18,13 +18,18 @@ import numpy as np
 
 
 def lookup(block, z: int, mask=None, x: int | None = None, y: int | None = None,
-           radius: int = 6, top: int = 3, z_src: int | None = None) -> dict:
+           radius: int = 10, top: int = 3, z_src: int | None = None) -> dict:
     """邻片在这块地方是哪个 id。给一块掩膜就按掩膜里的多数投票，给一个点就取那一点。
 
     由近及远地找：先看 z±1，再 z±2……同一距离上下都有标签时，取占比高的那一侧，所以自动挑中的永远是最近的
     那一片。但自动未必对——细胞在几片之间可能换了邻居，最近的那片不一定是标注员想要的那个。所以半径内
-    **所有**有标签的邻片都放在 `candidates` 里一并返回，界面可以摆出来让人自己点；`z_src` 则是直接指定去哪
-    一片取，指定了就只看那一片，不搜。没找到返回 {"found": False, ...}，而不是猜一个。"""
+    （默认上下各 10 片）有标签的邻片都扫一遍，放进 `candidates` 让人自己点。
+
+    候选**按 id 去重**：同一个颜色在连续好几片上都在是常态，列成好几行只是占地方，人要看的是「有哪几种
+    不同的颜色可选」。每个 id 只留最近的那一片，另外记上它在这半径内出现过几片（`n_slices`）和具体是哪几片
+    （`slices`）——出现的片数越多，这个颜色越可信。
+
+    `z_src` 则是直接指定去哪一片取，指定了就只看那一片，不搜。没找到返回 {"found": False, ...}，而不是猜一个。"""
     nz, H, W = block.shape_zyx
     if not 0 <= int(z) < nz:
         raise IndexError(f"z {z} 超出数据块的 0..{nz - 1}")
@@ -89,7 +94,18 @@ def lookup(block, z: int, mask=None, x: int | None = None, y: int | None = None,
             candidates.append(got)
             if best is None or (got["distance"] == best["distance"] and got["share"] > best["share"]):
                 best = got
-    candidates.sort(key=lambda c: (c["distance"], -c["share"]))
+    # 按 id 去重：同一个颜色只留最近的那一片，但记下它总共出现在哪几片上
+    by_id: dict[str, dict] = {}
+    for c in sorted(candidates, key=lambda c: (c["distance"], -c["share"])):
+        keep = by_id.get(c["id"])
+        if keep is None:
+            by_id[c["id"]] = {**c, "slices": [c["z_src"]], "n_slices": 1}
+        else:
+            keep["slices"].append(c["z_src"])
+            keep["n_slices"] += 1
+    candidates = sorted(by_id.values(), key=lambda c: (c["distance"], -c["share"]))
+    for c in candidates:
+        c["slices"].sort(key=lambda k: abs(k - z))
     if best is not None:
         return {"found": True, **best, "searched": sorted(set(searched)), "radius": int(radius),
                 "picked": "auto", "candidates": candidates}
