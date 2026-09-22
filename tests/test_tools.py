@@ -282,6 +282,10 @@ def test_interpolation_recovers_cells_and_flags_its_own_uncertainty():
     assert inter > 0.75, f"the drifting cell is recovered (IoU {inter:.2f})"
     assert r.uncertain.any() and not r.uncertain[19, 19], "disagreement is flagged, the cell's core is not"
     assert r.stats["hole_px"] == H * W and r.n_px > 0
+    # the reported uncertain count is the hatched region — filled AND disputed. Reporting the raw `uncertain` mask
+    # let the preview claim more disputed pixels than it had filled, and more than the overlay actually hatches.
+    assert r.stats["uncertain_px"] == int((r.uncertain & (r.labels != 0)).sum())
+    assert r.stats["uncertain_px"] <= r.n_px, "a subset of what was filled, never more"
 
 
 def test_interpolation_steps_over_a_second_destroyed_section():

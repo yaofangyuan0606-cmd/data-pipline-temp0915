@@ -317,7 +317,10 @@ def interpolate_section(seg, z: int, hole, em=None) -> InterpolationResult:
         note = "整片损坏，没有幸存像素可以锚定，置信度低于只坏一条带的情况"
     unclaimed = hole & (fill == 0)
     return InterpolationResult(fill, uncertain, (int(a), int(b)), int((fill[hole] != 0).sum()), note=note,
-                               stats={"hole_px": int(hole.sum()), "uncertain_px": int(uncertain.sum()),
+                               # uncertain_px counts only the pixels that were BOTH filled and disputed — the same
+                               # set overlay_png hatches. `uncertain` itself spans the whole hole, so reporting its
+                               # raw size let the preview say "of the 248 px filled, 512 px are disputed".
+                               stats={"hole_px": int(hole.sum()), "uncertain_px": int((uncertain & (fill != 0)).sum()),
                                       "unfilled_px": int(unclaimed.sum()),
                                       # unclaimed pixels that already carry a label: apply_labels keeps them,
                                       # so the annotator is told they are kept rather than wondering why the
