@@ -286,6 +286,38 @@ def test_neighbour_lookup_votes_over_a_mask_and_reports_the_runner_up(tmp_path):
     assert 0 < r["share"] < 1 and r["others"] and r["others"][0]["id"] == "22"
 
 
+def test_neighbour_lookup_lists_every_candidate_slice_for_manual_choice(tmp_path):
+    """自动挑的是最近的一片，可能不是想要的那个细胞——半径内每一片的答案都要列出来让人自己选。"""
+    from emqc.annotate import neighbour
+
+    d = tmp_path / "b"
+    d.mkdir()
+    np.save(d / "em.npy", np.zeros((10, 10, 7), np.uint8))
+    seg = np.zeros((10, 10, 7), np.uint64)
+    seg[:, :, 1] = 11          # z1（相隔 2）是 11
+    seg[:, :, 5] = 22          # z5（相隔 2，另一侧）是 22
+    seg[:, :, 6] = 33          # z6（相隔 3）是 33
+    np.save(d / "seg.npy", seg)
+    json.dump({"dataset": {"id": "demo"}}, open(d / "meta.json", "w"))
+    b = Block(d, tmp_path / "work")
+
+    r = neighbour.lookup(b, 3, x=5, y=5)
+    assert r["found"] and r["picked"] == "auto" and r["distance"] == 2
+    got = [(c["z_src"], c["id"]) for c in r["candidates"]]
+    assert got == sorted(got, key=lambda t: abs(t[0] - 3)), "按距离从近到远"
+    assert set(got) == {(1, "11"), (5, "22"), (6, "33")}, "半径内每一片都列出来，不只是自动挑中的那片"
+
+    # 指定某一片：只看那片，不搜
+    m = neighbour.lookup(b, 3, x=5, y=5, z_src=6)
+    assert m["found"] and m["id"] == "33" and m["picked"] == "manual" and m["searched"] == [6]
+    blank = neighbour.lookup(b, 3, x=5, y=5, z_src=4)
+    assert blank["found"] is False and "z4" in blank["reason"], "指定的那片没有标签就直说，不退回自动"
+    with pytest.raises(ValueError):
+        neighbour.lookup(b, 3, x=5, y=5, z_src=3)
+    with pytest.raises(IndexError):
+        neighbour.lookup(b, 3, x=5, y=5, z_src=99)
+
+
 def test_neighbour_lookup_refuses_to_guess_and_writes_nothing(block):
     """前后都没有标签时如实说没有，不猜；而且整个过程一个像素都不写。"""
     from emqc.annotate import neighbour

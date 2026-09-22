@@ -258,7 +258,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) { mergeArm(null); clearSAM(); clearSmart(); clearRepair(); S.cutPts = null; }
+    if (z !== S.z) { mergeArm(null); clearSAM(); clearSmart(); clearRepair(); clearNeighbourList("an-neighbour-list"); S.cutPts = null; }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     $("an-compare").href = `/annotate/compare?block=${encodeURIComponent(S.block)}&z=${z}`;
@@ -588,7 +588,7 @@
     $("an-sam-new").disabled = disabled;
     $("an-sam-neighbour").disabled = disabled || !S.samNeighbour?.found;
   }
-  function discardSAMPreview() { S.samPreview = null; S.samMask = null; S.samNeighbour = null; neighbourInfo(""); samButtons(); }
+  function discardSAMPreview() { S.samPreview = null; S.samMask = null; S.samNeighbour = null; neighbourInfo(""); clearNeighbourList("an-sam-neighbour-list"); samButtons(); }
   function neighbourInfo(text) { const el = $("an-sam-neighbour-info"); if (el) el.textContent = text; }
   function clearSAM() {
     S.samPoints = []; S.samLabels = []; S.samBox = null; S.samStart = null;
@@ -632,6 +632,28 @@
   }
   // ---------------------------------------------------------------- 跨片取色
   // 分割漏标时，本片那块是空的，没有颜色可吸；颜色在隔壁片上。这里只把 id 取回来，画在哪、写哪一片仍然由人决定。
+  // 自动挑的是最近的一片，未必是想要的那个细胞——半径内每一片的答案都摆出来，点一行就换。
+  function neighbourList(elId, res, onPick) {
+    const el = $(elId);
+    if (!el) return;
+    const list = res?.candidates || [];
+    const draw = chosen => {
+      el.hidden = list.length < 2;                       // 只有一个候选，没什么可选的
+      el.innerHTML = el.hidden ? "" : list.map((c, i) =>
+        `<div class="row${c.z_src === chosen?.z_src ? " cur" : ""}" data-i="${i}" title="改用 z${c.z_src} 的这个颜色">`
+        + `<span class="sw" style="background:${css(colorOf(c.id))}"></span>`
+        + `<span class="id">z${c.z_src} · ${c.id}</span><span class="n">${Math.round(c.share * 100)}%</span></div>`).join("");
+    };
+    el.onclick = ev => {
+      const row = ev.target.closest(".row[data-i]");
+      if (!row) return;
+      const c = list[+row.dataset.i];
+      draw(c); onPick(c);
+    };
+    draw(res);
+  }
+  function clearNeighbourList(elId) { const el = $(elId); if (el) { el.hidden = true; el.innerHTML = ""; } }
+
   async function samNeighbourLookup(token) {
     neighbourInfo("正在看邻片这块区域是谁…");
     try {
@@ -641,6 +663,11 @@
       neighbourInfo(n.found
         ? `邻片 z${n.z_src} 在这块区域是 ${n.id}（占 ${Math.round(n.share * 100)}%${n.others?.length ? `，另有 ${n.others.length} 个 id` : ""}）`
         : `前后 ${n.radius} 片在这块区域都没有标签`);
+      neighbourList("an-sam-neighbour-list", n, c => {
+        S.samNeighbour = { ...n, ...c, picked: "manual" };
+        neighbourInfo(`改用 z${c.z_src} 的 ${c.id}（占 ${Math.round(c.share * 100)}%）`);
+        samButtons();
+      });
     } catch (err) { S.samNeighbour = null; neighbourInfo("邻片取色失败：" + err.message); }
     finally { samButtons(); }
   }
@@ -649,9 +676,11 @@
     if (!S.block || !p) { flash("把鼠标放到要取色的位置上再按 L", true); return; }
     try {
       const n = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/neighbour-label`, { z: S.z, x: p[0], y: p[1] });
-      if (!n.found) { flash(`前后 ${n.radius} 片在这一点都没有标签`, true); return; }
+      if (!n.found) { clearNeighbourList("an-neighbour-list"); flash(`前后 ${n.radius} 片在这一点都没有标签`, true); return; }
       setCur(n.id);
-      flash(`已取 z${n.z_src} 的颜色 ${n.id}（相隔 ${n.distance} 片）`);
+      neighbourList("an-neighbour-list", n, c => { setCur(c.id); flash(`已改用 z${c.z_src} 的颜色 ${c.id}`); });
+      flash(`已取 z${n.z_src} 的颜色 ${n.id}（相隔 ${n.distance} 片）`
+            + (n.candidates.length > 1 ? `，另有 ${n.candidates.length - 1} 片可选，见左栏` : ""));
     } catch (err) { flash("邻片取色失败：" + err.message, true); }
   }
 

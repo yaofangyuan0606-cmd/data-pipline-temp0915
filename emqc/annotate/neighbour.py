@@ -18,11 +18,13 @@ import numpy as np
 
 
 def lookup(block, z: int, mask=None, x: int | None = None, y: int | None = None,
-           radius: int = 6, top: int = 3) -> dict:
+           radius: int = 6, top: int = 3, z_src: int | None = None) -> dict:
     """邻片在这块地方是哪个 id。给一块掩膜就按掩膜里的多数投票，给一个点就取那一点。
 
-    由近及远地找：先看 z±1，再 z±2……同一距离上下都有标签时，取占比高的那一侧。找到就停，所以返回的
-    永远是最近的那一片。没找到返回 {"found": False, ...}，而不是猜一个。"""
+    由近及远地找：先看 z±1，再 z±2……同一距离上下都有标签时，取占比高的那一侧，所以自动挑中的永远是最近的
+    那一片。但自动未必对——细胞在几片之间可能换了邻居，最近的那片不一定是标注员想要的那个。所以半径内
+    **所有**有标签的邻片都放在 `candidates` 里一并返回，界面可以摆出来让人自己点；`z_src` 则是直接指定去哪
+    一片取，指定了就只看那一片，不搜。没找到返回 {"found": False, ...}，而不是猜一个。"""
     nz, H, W = block.shape_zyx
     if not 0 <= int(z) < nz:
         raise IndexError(f"z {z} 超出数据块的 0..{nz - 1}")
@@ -42,28 +44,55 @@ def lookup(block, z: int, mask=None, x: int | None = None, y: int | None = None,
         if not mask.any():
             raise ValueError("掩膜是空的")
 
+    def read(k: int) -> dict | None:
+        # 一个点就只读那一个体素（block.pick 直接按磁盘下标取），不必把整片转置出来——按一次 L 要扫十几片，
+        # 整片读会把 1 毫秒的事做成 130 毫秒。
+        vals = (block.seg_slice(k)[mask] if mask is not None
+                else np.array([block.pick(k, x, y)], dtype=np.uint64))
+        ids, counts = np.unique(vals[vals != 0], return_counts=True)
+        if not ids.size:
+            return None
+        order = np.argsort(counts)[::-1]
+        return {"id": str(int(ids[order[0]])), "z_src": int(k), "distance": int(abs(k - z)),
+                "share": round(float(counts[order[0]]) / max(1, vals.size), 4), "px": int(counts[order[0]]),
+                # 同一块地方在邻片上可能横跨两个细胞；把次要的也报出来，让人看见再决定
+                "others": [{"id": str(int(ids[i])), "px": int(counts[i]),
+                            "share": round(float(counts[i]) / max(1, vals.size), 4)} for i in order[1:max(1, top)]]}
+
+    # 指定了某一片就只看那一片：自动挑的未必是想要的那个细胞，人要能自己说去哪片取
+    if z_src is not None:
+        k = int(z_src)
+        if not 0 <= k < nz:
+            raise IndexError(f"z_src {k} 超出数据块的 0..{nz - 1}")
+        if k == z:
+            raise ValueError("z_src 不能就是当前这一片")
+        got = read(k)
+        if got is None:
+            return {"found": False, "searched": [k], "radius": int(radius), "candidates": [],
+                    "reason": f"z{k} 在这块地方没有标签"}
+        return {"found": True, **got, "searched": [k], "radius": int(radius), "picked": "manual",
+                "candidates": [got]}
+
+    # 自动挑最近的一片（同距离取占比高的一侧），但半径内所有有标签的邻片都扫一遍列进 candidates，
+    # 让界面能摆出候选让人手动选——自动挑中的那个未必对。
     searched: list[int] = []
+    candidates: list[dict] = []
+    best = None
     for d in range(1, int(radius) + 1):
-        best = None
         for k in (z - d, z + d):
             if not 0 <= k < nz:
                 continue
             searched.append(k)
-            plane = block.seg_slice(k)
-            vals = plane[mask] if mask is not None else plane[y:y + 1, x:x + 1].ravel()
-            ids, counts = np.unique(vals[vals != 0], return_counts=True)
-            if not ids.size:
+            got = read(k)
+            if got is None:
                 continue
-            order = np.argsort(counts)[::-1]
-            share = float(counts[order[0]]) / max(1, vals.size)
-            cand = {"id": str(int(ids[order[0]])), "z_src": int(k), "distance": int(abs(k - z)),
-                    "share": round(share, 4), "px": int(counts[order[0]]),
-                    # 同一块地方在邻片上可能横跨两个细胞；把次要的也报出来，让人看见再决定
-                    "others": [{"id": str(int(ids[i])), "px": int(counts[i])} for i in order[1:max(1, top)]]}
-            if best is None or cand["share"] > best["share"]:
-                best = cand
-        if best is not None:
-            return {"found": True, **best, "searched": sorted(set(searched)), "radius": int(radius)}
-    return {"found": False, "searched": sorted(set(searched)), "radius": int(radius),
+            candidates.append(got)
+            if best is None or (got["distance"] == best["distance"] and got["share"] > best["share"]):
+                best = got
+    candidates.sort(key=lambda c: (c["distance"], -c["share"]))
+    if best is not None:
+        return {"found": True, **best, "searched": sorted(set(searched)), "radius": int(radius),
+                "picked": "auto", "candidates": candidates}
+    return {"found": False, "searched": sorted(set(searched)), "radius": int(radius), "candidates": [],
             "reason": (f"前后 {radius} 片里，这块地方都没有标签"
                        if searched else "这一片没有相邻切片可看")}

@@ -122,6 +122,7 @@ class NeighbourLabelIn(BaseModel):
     y: int | None = Field(default=None, ge=0)
     token: str | None = Field(default=None, min_length=32, max_length=32)   # a pending SAM mask, voted over
     radius: int = Field(default=6, ge=1, le=32)
+    z_src: int | None = Field(default=None, ge=0)          # 指定去哪一片取色；不给就自动挑最近的
 
 
 @router.post("/blocks/{block_id}/neighbour-label")
@@ -141,7 +142,7 @@ def neighbour_label(block_id: str, body: NeighbourLabelIn):
             raise HTTPException(409, str(exc))
         mask, z = p["mask"], int(p["z"])
     try:
-        return lookup(b, z, mask=mask, x=body.x, y=body.y, radius=body.radius)
+        return lookup(b, z, mask=mask, x=body.x, y=body.y, radius=body.radius, z_src=body.z_src)
     except IndexError as exc:
         raise HTTPException(404, str(exc))
     except ValueError as exc:
