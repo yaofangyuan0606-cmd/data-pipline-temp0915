@@ -180,7 +180,7 @@ def test_comparison_api_exports_bounds_and_no_seg(block, monkeypatch):
     with TestClient(app) as client:
         root = f"/api/v1/annotate/blocks/{block.id}"
         page = client.get("/annotate/compare")
-        assert page.status_code == 200 and 'id="cmp-before"' in page.text and 'id="cmp-after"' in page.text
+        assert page.status_code == 200 and 'id="cmp-after"' in page.text and 'id="cmp-ng-em-frame"' in page.text and 'id="cmp-ng-seg-frame"' in page.text
         assert 'class="ws-annotate"' in page.text
         response = client.get(root + "/compare/0")
         assert response.status_code == 200 and response.headers["cache-control"] == "no-store"

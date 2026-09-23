@@ -165,7 +165,7 @@ def block_state(meta: dict, shape_zyx, z: int, screen_px: int = 700) -> dict | N
     return state
 
 
-def embed_state(meta: dict, shape_zyx, z: int, screen_px: int = 600) -> dict | None:
+def embed_state(meta: dict, shape_zyx, z: int, screen_px: int = 600, with_seg: bool = True) -> dict | None:
     """A state for EMBEDDING the public viewer beside our own before/after panes on the compare page.
 
     Same framing as block_state, but flat: a single xy cross-section (no 3D panel, no slice planes), the EM under
@@ -184,12 +184,14 @@ def embed_state(meta: dict, shape_zyx, z: int, screen_px: int = 600) -> dict | N
             layer["selectedAlpha"] = 0.45
             layer["notSelectedAlpha"] = 0
             layer.pop("segments", None)                     # empty selection = every segment rendered
+    if not with_seg:                                        # the plain-EM pane: image + block outline only
+        state["layers"] = [l for l in state["layers"] if l.get("type") != "segmentation"]
     return state
 
 
-def link_for_embed(meta: dict, shape_zyx, z: int, screen_px: int = 600) -> dict:
+def link_for_embed(meta: dict, shape_zyx, z: int, screen_px: int = 600, with_seg: bool = True) -> dict:
     """{'url', 'center', ...} for an iframe framing this block at section z, or {'url': None, 'reason': ...}."""
-    state = embed_state(meta, shape_zyx, z, screen_px)
+    state = embed_state(meta, shape_zyx, z, screen_px, with_seg)
     if state is None:
         return {"url": None, "reason": "这个数据块没有 geometry.origin 或不是 H01 数据，公开查看器里没有对应的体数据"}
     return {"url": VIEWER + "#!" + urllib.parse.quote(json.dumps(state, separators=(",", ":")), safe=""),

@@ -20,12 +20,11 @@
 .cmp-metrics small { color: var(--muted); display: block; margin-bottom: 5px; }
 .cmp-metrics strong { font: 600 23px var(--mono); }
 .cmp-metrics .cmp-total { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); }
-.cmp-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; --cmp-view-height: 50vh; }
-.cmp-images.with-ng { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cmp-images { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 16px; --cmp-view-height: 50vh; }
 .cmp-ngbox { position: relative; height: var(--cmp-view-height); background: #000; }
 .cmp-ngbox iframe { width: 100%; height: 100%; border: 0; display: block; }
-#cmp-ng-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 20px; color: #ddd; font-size: 13px; }
-#cmp-ng-open { font-size: 11px; padding: 2px 8px; flex: none; }
+.cmp-ng-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 20px; color: #ddd; font-size: 13px; }
+.cmp-ng-pane .btn { font-size: 11px; padding: 2px 8px; flex: none; }
 .cmp-images figure { display: grid; grid-template-rows: subgrid; grid-row: span 2; min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r); }
 .cmp-images figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; background: var(--surface); font-size: 13px; }
 .cmp-images figcaption span { color: var(--muted); font-size: 12px; }
@@ -87,13 +86,11 @@
 .cmp-page.cmp-load-failed :is(.cmp-images, .cmp-two, .cmp-report) { visibility: hidden; }
 @media (max-width: 1000px) { .cmp-heading { flex-wrap: wrap; } .cmp-report { padding: 16px; } }
 @media (max-width: 1100px) {
-  .cmp-images.with-ng { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .cmp-images.with-ng #cmp-ng-pane { grid-column: 1 / -1; margin-top: 16px; }
+  .cmp-images { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
 }
 @media (max-width: 700px) {
-  .cmp-images, .cmp-images.with-ng, .cmp-two { grid-template-columns: minmax(0, 1fr); row-gap: 16px; }
+  .cmp-images, .cmp-two { grid-template-columns: minmax(0, 1fr); row-gap: 16px; }
   .cmp-images figure { grid-template-rows: auto auto; grid-row: auto; }
-  .cmp-images.with-ng #cmp-ng-pane { margin-top: 0; }
   .cmp-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cmp-block { max-width: 100%; }
 }

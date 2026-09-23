@@ -127,14 +127,16 @@ class NeighbourLabelIn(BaseModel):
 
 
 @router.get("/blocks/{block_id}/neuroglancer/embed")
-def neuroglancer_embed(block_id: str, z: int = Query(ge=0), px: int = Query(default=600, ge=100, le=4000)):
-    """A public-viewer URL framing this block at section z, flat xy layout, for the compare page's third pane."""
+def neuroglancer_embed(block_id: str, z: int = Query(ge=0), px: int = Query(default=600, ge=100, le=4000),
+                       layers: Literal["em", "em+seg"] = "em+seg"):
+    """A public-viewer URL framing this block at section z, flat xy layout, for the compare page's viewer panes:
+    `layers=em` is the bare EM, `em+seg` the EM under the full c3 segmentation."""
     from emqc.annotate.neuroglancer import link_for_embed
 
     b = _block(block_id, read_only=True)
     if not 0 <= z < b.shape_zyx[0]:
         raise HTTPException(404, "z outside the block")
-    return {**link_for_embed(b.meta, b.shape_zyx, z, px), "block_id": b.id, "z": z}
+    return {**link_for_embed(b.meta, b.shape_zyx, z, px, with_seg=(layers == "em+seg")), "block_id": b.id, "z": z, "layers": layers}
 
 
 @router.post("/blocks/{block_id}/neighbour-label")

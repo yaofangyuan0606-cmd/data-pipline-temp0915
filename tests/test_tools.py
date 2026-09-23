@@ -161,11 +161,15 @@ def test_embed_state_is_flat_and_shows_every_segment(client_tools):
     assert "segments" not in seg and seg["selectedAlpha"] == 0.45, "不选中任何分段 = 全部渲染，透明度让 EM 透出来"
     assert st["position"] == [355846 + 512 + 256 + .5, 68275 + 256 + .5, 1245 + .5], "块中心，y0 配 origin.x"
     assert ng.link_for_embed(meta, (100, 512, 512), 20)["url"].startswith(ng.VIEWER + "#!")
+    em_only = ng.embed_state(meta, (100, 512, 512), 20, 600, with_seg=False)
+    assert [l["type"] for l in em_only["layers"]] == ["image", "annotation"], "纯 EM 栏：没有分割层，保留块边框"
     assert ng.embed_state({"dataset": {"id": "mouse"}}, (100, 512, 512), 20) is None
     # 接口：合成块不是 H01 → url 为 None 并给出原因；z 越界 404
     c, block_id = client_tools
     r = c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer/embed", params={"z": 0}).json()
-    assert r["url"] is None and "H01" in r["reason"]
+    assert r["url"] is None and "H01" in r["reason"] and r["layers"] == "em+seg"
+    assert c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer/embed", params={"z": 0, "layers": "em"}).json()["layers"] == "em"
+    assert c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer/embed", params={"z": 0, "layers": "seg"}).status_code == 422
     assert c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer/embed", params={"z": 99}).status_code == 404
 
 

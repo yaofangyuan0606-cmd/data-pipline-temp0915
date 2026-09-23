@@ -153,8 +153,7 @@ def test_neuroglancer_third_pane_keeps_images_fitted_and_aligned(comparison_page
         route.fulfill(json={"url": f"https://neuroglancer.example/viewer#z={z}", "center": [10, 20, int(z)]})
 
     page.route("**/neuroglancer/embed?*", embed)
-    page.locator("#cmp-ng").check()
-    page.wait_for_function("document.querySelector('#cmp-ng-caption').textContent.includes('Z 0')")
+    page.wait_for_function("document.querySelector('#cmp-ng-seg-caption').textContent.includes('Z 0')")   # 两栏 Neuroglancer 默认常驻
     for width, height in [(2559, 1345), (1366, 768), (1024, 768), (768, 1024), (390, 844), (320, 740)]:
         page.set_viewport_size({"width": width, "height": height})
         page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
@@ -169,15 +168,13 @@ def test_neuroglancer_third_pane_keeps_images_fitted_and_aligned(comparison_page
         assert geometry["scroll"] <= width + 1
         assert geometry["fitted"]
         panes = geometry["panes"]
-        assert panes[2]["height"] == pytest.approx(panes[0]["height"], abs=1)
+        assert all(p["height"] == pytest.approx(panes[0]["height"], abs=1) for p in panes)
         if width > 1100:
             assert all(p["y"] == pytest.approx(panes[0]["y"], abs=1) for p in panes)
     assert len(requests) == 1, "enabling or resizing the third pane must not reload the comparison"
     page.locator("#cmp-next").click()
-    page.wait_for_function("document.querySelector('#cmp-ng-frame').getAttribute('src').endsWith('z=1')")
+    page.wait_for_function("document.querySelector('#cmp-ng-seg-frame').getAttribute('src').endsWith('z=1') && document.querySelector('#cmp-ng-em-frame').getAttribute('src').endsWith('z=1')")
     assert len(requests) == 2
-    page.locator("#cmp-ng").uncheck()
-    assert not page.locator("#cmp-ng-pane").is_visible()
     assert page.locator(".cmp-viewport").evaluate_all("es=>es.every(v=>v.scrollWidth<=v.clientWidth+1&&v.scrollHeight<=v.clientHeight+1)")
 
 
@@ -198,10 +195,9 @@ def test_comparison_in_browser(tmp_path):
         page.locator("#an-compare").click()
         page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false' && !document.querySelector('#cmp-report').hidden")
         assert page.locator("#cmp-status").inner_text().endswith("3 像素与原始分割不同")
-        assert page.locator("#cmp-before").evaluate("c => [c.width,c.height]") == [64, 32]
         assert page.locator("#cmp-after").evaluate("c => [c.width,c.height]") == [64, 32]
-        # The left defaults to raw EM; the right outlines changes. The readout still shows both labels.
-        page.locator("#cmp-before").evaluate('''c => {
+        # Our single canvas outlines changes; the "before" pictures are the embedded viewer. The readout shows both labels.
+        page.locator("#cmp-after").evaluate('''c => {
             const r = c.getBoundingClientRect();
             c.dispatchEvent(new MouseEvent('mousemove', {clientX: r.left + 4.5*r.width/c.width, clientY: r.top + 4.5*r.height/c.height}));
         }''')
@@ -240,8 +236,6 @@ def test_comparison_in_browser(tmp_path):
         page.locator("#cmp-report > summary").click()          # 收起，回到默认的精简视图
         page.locator("#cmp-next").click()
         page.wait_for_function("document.querySelector('#cmp-status').textContent.includes('Z 1') && document.querySelector('#cmp-status').textContent.includes('一致')")
-        page.locator("#cmp-left-mode").select_option("seg")
-        assert page.locator("#cmp-before").evaluate("c => c.toDataURL()") == page.locator("#cmp-after").evaluate("c => c.toDataURL()")
         page.locator("#cmp-edit").click()
         page.wait_for_function("document.querySelector('#an-z').value === '1'")
         page.locator("#an-compare").click()
@@ -251,7 +245,7 @@ def test_comparison_in_browser(tmp_path):
         page.wait_for_function("document.querySelector('#cmp-status').textContent.includes('3 像素')")
         page.screenshot(path=str(tmp_path / "comparison-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 640, "height": 1000})
-        assert page.locator("#cmp-before").is_visible() and page.locator("#cmp-after").is_visible()
+        assert page.locator("#cmp-after").is_visible() and page.locator("#cmp-ng-seg-frame").is_visible()
         page.screenshot(path=str(tmp_path / "comparison-mobile.png"), full_page=True)
     assert np.array_equal(np.load(data / "seg.npy"), original)
     assert (block.work / "seg_edit.npy").read_bytes() == before_work
@@ -269,7 +263,7 @@ def test_comparison_recovers_from_discovery_failure_and_keeps_export_status_sepa
         page.unroute(pattern)
         page.locator("#cmp-refresh").click()
         page.wait_for_function("!document.querySelector('#cmp-report').hidden")
-        assert page.locator("#cmp-before").is_visible()
+        assert page.locator("#cmp-after").is_visible()
         # A slow export of Z 0 must not clobber the status of a newer slice.
         page.locator("#cmp-report > summary").click()
         pending = []
