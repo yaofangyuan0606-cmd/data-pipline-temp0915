@@ -59,7 +59,7 @@ def test_pages_and_api_are_gated_until_login(app):
         assert r.status_code == 401 and detail(r)["code"] == "auth"
         assert c.get("/api/v1/annotate/blocks/any/edits").status_code == 401
         assert c.get("/login").status_code == 200 and 'id="login-form"' in c.get("/login").text
-        assert c.get("/api/v1/auth/status").json() == {"auth_disabled": False, "has_users": False}
+        assert c.get("/api/v1/auth/status").json() == {"auth_disabled": False, "auth_open": False, "has_users": False}
         assert c.get("/api/v1/auth/me").status_code == 401
         # the QC workspace is not part of the login system
         assert c.get("/api/v1/health").status_code == 200
