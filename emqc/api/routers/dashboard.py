@@ -294,7 +294,9 @@ def login_page(request: Request, next: str = "/annotate"):
         return RedirectResponse(safe_next(next), status_code=303)
     if current_user(request) is not None:
         return RedirectResponse(safe_next(next), status_code=303)
-    return templates.TemplateResponse(request, "login.html", {"next": safe_next(next)})
+    from emqc import __version__
+
+    return templates.TemplateResponse(request, "login.html", {"next": safe_next(next), "version": __version__})
 
 
 @router.get("/account", response_class=HTMLResponse)

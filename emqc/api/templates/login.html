@@ -5,35 +5,64 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>登录 · 切片标注</title>
 <link rel="stylesheet" href="/static/style.css?v={{ static_v('style.css') }}">
+<link rel="stylesheet" href="/static/login.css?v={{ static_v('login.css') }}">
 </head>
 <body class="ws-annotate login-body">
-<main class="login-wrap">
-  <form class="card login-card" id="login-form" autocomplete="on">
-    <div class="login-brand"><span class="logo">AN</span><div><b>切片标注</b><small>EM 分割标注与溯源</small></div></div>
-    <p class="muted" style="margin:0 0 6px">登录后每一笔改动都会记在你的名字下，前后对比和导出里都能追溯到是谁改的。</p>
-    <div class="field"><label for="login-user">登录名</label><input id="login-user" class="text mono" name="username" autocomplete="username" autofocus required maxlength="64"></div>
-    <div class="field"><label for="login-pass">密码</label><input id="login-pass" class="text" name="password" type="password" autocomplete="current-password" required maxlength="256"></div>
-    <div class="login-error" id="login-error" role="alert" hidden></div>
-    <div class="actions"><button type="submit" class="primary" id="login-btn">登录</button><span class="muted" id="login-note" style="font-size:12px"></span></div>
-  </form>
+<main class="login-shell">
+  <section class="login-hero">
+    <div class="hero-brand"><span class="logo">AN</span><div><b>切片标注</b><small>EM 分割标注 · 前后对比 · 全程可追溯</small></div></div>
+    <div class="hero-copy">
+      <h1>每一笔改动，<br>都留在<em>该留的人</em>名下</h1>
+      <p>在电镜切片上拾取、填充、合并分割标签，SAM 辅助勾边；与原始分割逐像素对比，谁、几点、改了什么，一条都不丢。</p>
+      <ul class="hero-points">
+        <li><i><svg viewBox="0 0 24 24"><path d="M4 20l4-1 11-11-3-3L5 16z"/><path d="M14 6l3 3"/></svg></i><div><b>看图改标签</b><span>拾取 · 填充 · 画笔 · 合并 · 批量删除 · SAM 点选框选，改动即保存、可撤销</span></div></li>
+        <li><i><svg viewBox="0 0 24 24"><path d="M3 5h7v14H3zM14 5h7v14h-7z"/><path d="M6.5 12h1M17.5 9v6"/></svg></i><div><b>前后对比与溯源</b><span>黑白双线描出与原始分割不同的地方，每处都写着是谁改的；操作流水连撤销都记</span></div></li>
+        <li><i><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c0-3 2.5-5.5 5.5-5.5S14.5 16 14.5 19"/><circle cx="17" cy="9.5" r="2.4"/><path d="M15.5 13.6c2.7 0 5 2 5 4.9"/></svg></i><div><b>多人同时标注</b><span>同块在线提示；对着旧画面下笔会被拦住并自动刷新，撤销只能撤自己的</span></div></li>
+      </ul>
+    </div>
+    <div class="hero-foot"><span class="mono">{{ settings.deployment_name or 'local' }}</span><span class="dot"></span><span>v{{ version }}</span><span class="dot"></span><span>数据目录只读，改动全部落在工作目录</span></div>
+  </section>
+
+  <section class="login-side">
+    <form class="login-card" id="login-form" autocomplete="on" novalidate>
+      <h2>登录</h2>
+      <p class="hint">用管理员给你开通的账号登录。第一次登录会先让你把初始密码改成自己的。</p>
+      <label class="fld"><span>登录名</span><input id="login-user" class="mono" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" autofocus required maxlength="64" placeholder="例如 zhangsan"></label>
+      <label class="fld"><span>密码</span><div class="pw"><input id="login-pass" name="password" type="password" autocomplete="current-password" required maxlength="256" placeholder="••••••••"><button type="button" class="pw-toggle" id="pw-toggle" aria-label="显示密码">显示</button></div></label>
+      <div class="login-error" id="login-error" role="alert" hidden><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg><span id="login-error-text"></span></div>
+      <button type="submit" class="login-btn" id="login-btn"><span class="spin"></span><span class="label">登录</span></button>
+      <p class="login-note" id="login-note"></p>
+      <p class="login-help"><b>没有账号？</b>请找管理员在「用户管理」里开通。<br><b>忘了密码？</b>管理员可以重置，会给你一个新的初始密码。</p>
+    </form>
+  </section>
 </main>
 <script>
   const next = {{ next|tojson }};
-  const form = document.getElementById("login-form"), err = document.getElementById("login-error"), btn = document.getElementById("login-btn");
+  const form = document.getElementById("login-form"), err = document.getElementById("login-error"), errText = document.getElementById("login-error-text");
+  const btn = document.getElementById("login-btn"), note = document.getElementById("login-note"), pass = document.getElementById("login-pass"), toggle = document.getElementById("pw-toggle");
+  toggle.addEventListener("click", () => { const show = pass.type === "password"; pass.type = show ? "text" : "password"; toggle.textContent = show ? "隐藏" : "显示"; toggle.setAttribute("aria-label", show ? "隐藏密码" : "显示密码"); pass.focus(); });
   fetch("/api/v1/auth/status").then(r => r.json()).then(s => {
     if (s.auth_disabled) { location.href = next; return; }
-    if (s.has_users === false) document.getElementById("login-note").textContent = "还没有任何账号：请在服务器上运行 python -m emqc create-user --role admin 建第一个管理员";
+    if (s.has_users === false) note.textContent = "这个实例还没有任何账号：请在服务器上运行 python -m emqc create-user --role admin 建第一个管理员。";
   }).catch(() => {});
+  function fail(message) {
+    errText.textContent = message; err.hidden = false;
+    err.classList.remove("shake"); void err.offsetWidth; err.classList.add("shake");
+    btn.disabled = false; btn.classList.remove("busy"); pass.focus(); pass.select();
+  }
   form.addEventListener("submit", async ev => {
     ev.preventDefault();
-    err.hidden = true; btn.disabled = true;
+    const username = form.username.value.trim(), password = form.password.value;
+    if (!username) { fail("请输入登录名"); form.username.focus(); return; }
+    if (!password) { fail("请输入密码"); return; }
+    err.hidden = true; btn.disabled = true; btn.classList.add("busy");
     try {
-      const r = await fetch("/api/v1/auth/login", {method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({username: form.username.value.trim(), password: form.password.value})});
+      const r = await fetch("/api/v1/auth/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({username, password})});
       const body = await r.json().catch(() => ({}));
       if (!r.ok) { const d = body.detail; throw new Error(typeof d === "string" ? d : d?.message || `登录失败 (${r.status})`); }
+      btn.querySelector(".label").textContent = "正在进入…";
       location.href = body.user?.must_change_password ? "/account?force=1&next=" + encodeURIComponent(next) : next;
-    } catch (e) { err.textContent = e.message; err.hidden = false; btn.disabled = false; form.password.focus(); form.password.select(); }
+    } catch (e) { fail(e.message); }
   });
 </script>
 </body>
