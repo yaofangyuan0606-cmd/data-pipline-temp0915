@@ -5,7 +5,7 @@
 {% block content %}
 <link rel="stylesheet" href="/static/annotate_compare.css?v={{ static_v('annotate_compare.css') }}">
 <section class="cmp-page" id="cmp-page" aria-busy="true">
-  <div class="cmp-heading"><div><h1>前后对比</h1><p class="muted">同一位置同一切片三栏并排：本平台的标注结果（<b>黑白双线描出的区域</b>是与原始分割不同的地方）、公开 H01 的电镜原图、公开 H01 的 c3 分割。后两栏是嵌入的 Neuroglancer，可在其中缩放、开关图层。</p></div><button id="cmp-refresh">刷新</button></div>
+  <div class="cmp-heading"><div><h1>前后对比</h1><p class="muted">同一位置同一切片三栏并排：公开 H01 的电镜原图、公开 H01 的 c3 分割、本平台的标注结果（<b>黑白双线描出的区域</b>是与原始分割不同的地方）。前两栏是嵌入的 Neuroglancer；鼠标在标注后图上移动，它们会用<b>黄点</b>标出同一位置，点一下则让查看器居中到该点。</p></div><button id="cmp-refresh">刷新</button></div>
   <div class="cmp-controls">
     <label class="cmp-block">数据块<select id="cmp-block" class="text"><option>加载中…</option></select></label>
     <div><label for="cmp-z">切片 Z</label><div class="cmp-z"><button id="cmp-prev" aria-label="上一片">←</button><input id="cmp-z" class="text mono" type="number" min="0" value="0"><span id="cmp-zmax" class="muted">/ —</span><button id="cmp-next" aria-label="下一片">→</button></div></div>
@@ -14,9 +14,9 @@
   </div>
   <p id="cmp-status" class="muted" role="status" aria-live="polite">正在加载数据块…</p>
   <div class="cmp-images" id="cmp-images" hidden>
-    <figure><figcaption><b>标注后</b><span id="cmp-after-caption">当前编辑结果</span></figcaption><div class="cmp-viewport" tabindex="0" aria-label="当前标注图，可滚动查看"><div class="cmp-canvas-wrap"><canvas id="cmp-after" aria-label="当前标注叠加电镜切片"></canvas><i class="cmp-cursor" hidden></i><i class="cmp-ring" hidden></i></div></div></figure>
     <figure class="cmp-ng-pane"><figcaption><b>Neuroglancer · EM</b><span id="cmp-ng-em-caption">公开 H01 · 电镜原图</span><a id="cmp-ng-em-open" class="btn" target="_blank" rel="noopener" href="#">新窗口</a></figcaption><div class="cmp-ngbox"><iframe id="cmp-ng-em-frame" title="公开 H01 Neuroglancer：电镜原图" allow="fullscreen"></iframe><div id="cmp-ng-em-note" class="cmp-ng-note muted" hidden></div></div></figure>
     <figure class="cmp-ng-pane"><figcaption><b>Neuroglancer · seg</b><span id="cmp-ng-seg-caption">公开 H01 · c3 分割叠在电镜上</span><a id="cmp-ng-seg-open" class="btn" target="_blank" rel="noopener" href="#">新窗口</a></figcaption><div class="cmp-ngbox"><iframe id="cmp-ng-seg-frame" title="公开 H01 Neuroglancer：c3 分割" allow="fullscreen"></iframe><div id="cmp-ng-seg-note" class="cmp-ng-note muted" hidden></div></div></figure>
+    <figure><figcaption><b>标注后</b><span id="cmp-after-caption">当前编辑结果</span></figcaption><div class="cmp-viewport" tabindex="0" aria-label="当前标注图，可滚动查看"><div class="cmp-canvas-wrap"><canvas id="cmp-after" aria-label="当前标注叠加电镜切片"></canvas><i class="cmp-cursor" hidden></i><i class="cmp-ring" hidden></i></div></div></figure>
   </div>
   <p id="cmp-pixel" class="cmp-pixel mono muted">滚轮翻片（一次手势一片） · Ctrl/⌘+滚轮缩放 · 拖动平移（两侧同步） · 移动鼠标查看标签与来源</p>
 

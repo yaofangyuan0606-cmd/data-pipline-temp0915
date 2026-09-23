@@ -32,6 +32,12 @@
     const f = n => { const k = (n + hue / 30) % 12; return Math.round(255 * (l - a * Math.max(-1, Math.min(k-3, 9-k, 1)))); };
     return [f(0), f(8), f(4)];
   }
+  // native pixels per displayed pixel, rounded — the rim must be at least this wide to be visible
+  function rimWidth(canvas) {
+    const shown = canvas.getBoundingClientRect().width || canvas.clientWidth || canvas.width;
+    // one extra native pixel on top of the scale so the rim lands at ~1.5 displayed px, not a faint 1 px
+    return Math.max(2, Math.min(8, Math.round(canvas.width / Math.max(1, shown)) + 1));
+  }
   function draw() {
     if (!state.images) return;
     const {em, indices, sources, changes} = state.images, data = state.snapshot;
@@ -57,15 +63,36 @@
       // colour the annotator had actually painted. A two-tone edge cannot be mistaken for any label colour and
       // leaves the interior visible.
       if (side) {
-        const W = em.width, H = em.height;
+        // Rim width follows the display scale: a 1-px rim on a 1024 canvas shown at 317 px loses ~90% of its
+        // pixels to downsampling (measured: 7,625 -> 702). Draw it `rim` native pixels wide so it survives.
+        const W = em.width, H = em.height, rim = rimWidth(canvas);
         const changedAt = (x, y) => x >= 0 && y >= 0 && x < W && y < H && changes[y * W + x] > 0;
+        const inner = new Uint8Array(W * H), outer = new Uint8Array(W * H);
         for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
           const i = y * W + x, me = changes[i] > 0;
-          const nb = changedAt(x - 1, y) || changedAt(x + 1, y) || changedAt(x, y - 1) || changedAt(x, y + 1);
-          const inner = me && !(changedAt(x - 1, y) && changedAt(x + 1, y) && changedAt(x, y - 1) && changedAt(x, y + 1));
-          if (inner) { pixels.set([255, 255, 255], i*4); pixels[i*4+3] = 255; }        // white rim just inside
-          else if (!me && nb) { pixels.set([0, 0, 0], i*4); pixels[i*4+3] = 230; }     // black rim just outside
+          const l = changedAt(x - 1, y), r = changedAt(x + 1, y), u = changedAt(x, y - 1), d = changedAt(x, y + 1);
+          if (me && !(l && r && u && d)) inner[i] = 1;
+          else if (!me && (l || r || u || d)) outer[i] = 1;
         }
+        // thicken both rims by (rim - 1) 4-neighbour dilations, each kept on its own side of the boundary
+        const grow = (mask, keep) => {
+          for (let k = 1; k < rim; k++) {
+            const next = new Uint8Array(mask);
+            for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+              const i = y * W + x;
+              if (mask[i] || !keep(i)) continue;
+              if ((x > 0 && mask[i-1]) || (x < W-1 && mask[i+1]) || (y > 0 && mask[i-W]) || (y < H-1 && mask[i+W])) next[i] = 1;
+            }
+            mask = next;
+          }
+          return mask;
+        };
+        const innerW = grow(inner, i => changes[i] > 0), outerB = grow(outer, i => changes[i] === 0);
+        for (let i = 0; i < W * H; i++) {
+          if (innerW[i]) { pixels.set([255, 255, 255], i*4); pixels[i*4+3] = 255; }
+          else if (outerB[i]) { pixels.set([0, 0, 0], i*4); pixels[i*4+3] = 230; }
+        }
+        state.rimDrawn = rim;
       }
       const layer = document.createElement("canvas"); layer.width = em.width; layer.height = em.height;
       layer.getContext("2d").putImageData(overlay, 0, 0);
@@ -227,9 +254,20 @@
       if (x<0 || y<0 || x>=canvas.width || y>=canvas.height) return;
       const i = y*canvas.width+x, {indices, sources} = state.images, data = state.snapshot;
       $("pixel").textContent = `X ${x} · Y ${y} · Z ${state.z}    原始 ${data.before.ids[indices[0][i]]} → 当前 ${data.after.ids[indices[1][i]]}    来源：${data.report.source_legend[sources[i]].name}`;
+      ngHover(x, y);
       document.querySelectorAll(".cmp-cursor").forEach(c => { c.hidden = false; c.style.left = `${(x+.5)/canvas.width*100}%`; c.style.top = `${(y+.5)/canvas.height*100}%`; });
     });
-    viewport.addEventListener("mouseleave", () => document.querySelectorAll(".cmp-cursor").forEach(c => { c.hidden = true; }));
+    viewport.addEventListener("mouseleave", () => { document.querySelectorAll(".cmp-cursor").forEach(c => { c.hidden = true; }); ngHoverPending = null; ngMark(null); });
+    // 点一下（不是拖动）：让两个查看器居中到这个体素
+    let press = null;
+    canvases[side].addEventListener("mousedown", ev => { press = [ev.clientX, ev.clientY]; });
+    canvases[side].addEventListener("mouseup", ev => {
+      if (!press || Math.hypot(ev.clientX - press[0], ev.clientY - press[1]) > 3 || !state.images) { press = null; return; }
+      press = null;
+      const canvas = canvases[side], rect = canvas.getBoundingClientRect();
+      const x = Math.floor((ev.clientX-rect.left)*canvas.width/rect.width), y = Math.floor((ev.clientY-rect.top)*canvas.height/rect.height);
+      if (x >= 0 && y >= 0 && x < canvas.width && y < canvas.height) ngMark(x, y, true);
+    });
   });
   $("block").addEventListener("change", () => load(0)); $("z").addEventListener("change", () => load($("z").value));
   $("z").addEventListener("wheel", ev => ev.preventDefault(), {passive: false});  // No native number-input wheel increments.
@@ -242,6 +280,37 @@
   // 翻 z 时只改 URL 的 # 片段：Neuroglancer 监听 hashchange 就地更新，不会整页重载。
   // 两栏常驻：EM 原图、EM + c3 分割，各自一个 iframe，同一位置同一切片。
   let ngSerial = 0, ngLast = {block: "", z: -1, px: 0};
+  // 每栏记住基础 URL 和块角点；悬停时在 # 片段里加一个点标注（不改 position，查看器不会跟着平移），点击才居中
+  const ngBase = {em: null, seg: null};
+  let ngCorner = null, ngHoverTimer = null, ngHoverPending = null;
+  function ngWithPoint(url, pt, centre) {
+    try {
+      const [head, frag] = url.split("#!"); const st = JSON.parse(decodeURIComponent(frag));
+      const ann = st.layers[st.layers.length - 1];
+      if (ann && ann.type === "annotation") {
+        ann.annotations = ann.annotations.filter(a => a.id !== "hover");
+        if (pt) ann.annotations.push({type: "point", id: "hover", point: pt, description: "标注后图上的光标位置"});
+      }
+      if (centre && pt) st.position = pt;
+      return head + "#!" + encodeURIComponent(JSON.stringify(st));
+    } catch (_) { return url; }
+  }
+  function ngMark(x, y, centre = false) {
+    if (!ngCorner) return;
+    const pt = x == null ? null : [ngCorner[0] + x + .5, ngCorner[1] + y + .5, ngCorner[2] + state.z + .5];
+    for (const key of ["em", "seg"]) {
+      const base = ngBase[key]; if (!base) continue;
+      const frame = $(`ng-${key}-frame`), next = ngWithPoint(base, pt, centre);
+      if (frame.getAttribute("src") !== next) frame.src = next;
+      // after a click the new centre becomes the base, so later hovers do not snap the view back
+      if (centre && pt) ngBase[key] = ngWithPoint(ngWithPoint(base, pt, true), null, false);
+    }
+  }
+  function ngHover(x, y) {           // ~8 次/秒，够跟手，也不会把查看器淹在 hashchange 里
+    ngHoverPending = [x, y];
+    if (ngHoverTimer) return;
+    ngHoverTimer = setTimeout(() => { ngHoverTimer = null; const p = ngHoverPending; ngHoverPending = null; if (p) ngMark(p[0], p[1]); }, 120);
+  }
   // 取景尺寸必须用 iframe 的实际宽度：查看器按 "整块正好装进 px 像素" 算比例，读到 0 而退回 600 会让它只显示
   // 块中心的一半，和左边的整块对不上。首次同步时布局可能还没排出来，所以先向上找有宽度的容器，之后再由
   // ResizeObserver 在宽度明显变化时重新对齐（片段 URL 变化，查看器就地重取景，不重载）。
@@ -265,6 +334,7 @@
         if (!r.url) { note.hidden = false; note.textContent = r.reason || "无法定位到公开数据集"; frame.removeAttribute("src"); open.removeAttribute("href"); return; }
         note.hidden = true; open.href = r.url;
         cap.textContent = `${title} · Z ${state.z}`;
+        ngBase[key] = r.url; ngCorner = r.corner || ngCorner;
         if (frame.getAttribute("src") !== r.url) frame.src = r.url;     // 只换 # 片段：查看器就地更新，不重载
       } catch (e) { if (serial === ngSerial) { note.hidden = false; note.textContent = "加载失败：" + e.message; } }
     }));
@@ -294,6 +364,7 @@
     });
     $("zoom").value = state.zoom; $("zoom-value").textContent = `${state.zoom}%`;
     layout = {key, W, H};
+    if (state.images && state.rimDrawn && rimWidth(canvases[0]) !== state.rimDrawn) draw();   // rim must track the new scale
   }
   function setZoom(v) {
     state.zoom = Math.max(100, Math.min(400, Math.round(v / 25) * 25));

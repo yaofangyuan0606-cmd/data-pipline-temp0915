@@ -160,7 +160,9 @@ def test_embed_state_is_flat_and_shows_every_segment(client_tools):
     seg = [l for l in st["layers"] if l["type"] == "segmentation"][0]
     assert "segments" not in seg and seg["selectedAlpha"] == 0.45, "不选中任何分段 = 全部渲染，透明度让 EM 透出来"
     assert st["position"] == [355846 + 512 + 256 + .5, 68275 + 256 + .5, 1245 + .5], "块中心，y0 配 origin.x"
-    assert ng.link_for_embed(meta, (100, 512, 512), 20)["url"].startswith(ng.VIEWER + "#!")
+    link = ng.link_for_embed(meta, (100, 512, 512), 20)
+    assert link["url"].startswith(ng.VIEWER + "#!")
+    assert link["corner"] == [355846 + 512, 68275 + 0, 1225], "块角点：画布 (x, y) 加上它就是体数据坐标"
     em_only = ng.embed_state(meta, (100, 512, 512), 20, 600, with_seg=False)
     assert [l["type"] for l in em_only["layers"]] == ["image", "annotation"], "纯 EM 栏：没有分割层，保留块边框"
     assert ng.embed_state({"dataset": {"id": "mouse"}}, (100, 512, 512), 20) is None

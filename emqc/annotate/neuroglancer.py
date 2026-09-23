@@ -194,8 +194,11 @@ def link_for_embed(meta: dict, shape_zyx, z: int, screen_px: int = 600, with_seg
     state = embed_state(meta, shape_zyx, z, screen_px, with_seg)
     if state is None:
         return {"url": None, "reason": "这个数据块没有 geometry.origin 或不是 H01 数据，公开查看器里没有对应的体数据"}
+    box = next((a for a in state["layers"][-1]["annotations"] if a.get("id") == "block"), None)
     return {"url": VIEWER + "#!" + urllib.parse.quote(json.dumps(state, separators=(",", ":")), safe=""),
-            "center": [int(p - 0.5) for p in state["position"]], "layout": state["layout"]}
+            "center": [int(p - 0.5) for p in state["position"]], "layout": state["layout"],
+            # the block's corner in volume voxels: screen (x, y) on section z maps to corner + (x, y, z)
+            "corner": list(box["pointA"]) if box else None}
 
 
 def link_for(meta: dict, x: int, y: int, z: int, segment: int | None = None, zoom_nm: float = 4.0,
