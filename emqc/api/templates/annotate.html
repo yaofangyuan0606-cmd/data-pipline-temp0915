@@ -17,21 +17,20 @@
 
     <div class="vast-sec">工具</div>
     <div class="vast-toolgrid">
-      <button class="tool active" data-tool="pick" aria-pressed="true" title="拾取颜色 (P / Alt+点击)"><svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M13 6l5 5"/></svg>拾取</button>
-      <button class="tool" data-tool="fill" aria-pressed="false" title="填充连通区域 (F)；Shift+点击填充本片同标签"><svg viewBox="0 0 24 24"><path d="M7 3l10 10-6 6L3 11z"/><path d="M17 13c1.5 2 2 3.2 2 4a2 2 0 11-4 0c0-.8.5-2 2-4z"/></svg>填充</button>
-      <button class="tool" data-tool="brush" aria-pressed="false" title="画笔 (B)：只涂没有标签的像素，不覆盖已有标签"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔</button>
-      <button class="tool" data-tool="erase" aria-pressed="false" title="橡皮 (E)：按半径涂成背景 0"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮</button>
-      <button class="tool" data-tool="merge" aria-pressed="false" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并</button>
+      <button class="tool active" data-tool="pick" aria-pressed="true" title="拾取颜色 (P / Alt+点击)"><svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M13 6l5 5"/></svg>拾取 <kbd>P</kbd></button>
+      <button class="tool" data-tool="fill" aria-pressed="false" title="填充连通区域 (F)；Shift+点击填充本片同标签"><svg viewBox="0 0 24 24"><path d="M7 3l10 10-6 6L3 11z"/><path d="M17 13c1.5 2 2 3.2 2 4a2 2 0 11-4 0c0-.8.5-2 2-4z"/></svg>填充 <kbd>F</kbd></button>
+      <button class="tool" data-tool="brush" aria-pressed="false" title="画笔 (B)：只涂没有标签的像素，不覆盖已有标签"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔 <kbd>B</kbd></button>
+      <button class="tool" data-tool="erase" aria-pressed="false" title="橡皮 (E)：按半径涂成背景 0"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮 <kbd>E</kbd></button>
+      <button class="tool" data-tool="merge" aria-pressed="false" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并 <kbd>M</kbd></button>
       <button class="tool" data-tool="clear" aria-pressed="false" title="清除连通区域；Shift+点击清除本片同标签"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M14 20h6"/></svg>清除</button>
-      <button class="tool" data-tool="pan" aria-pressed="false" title="平移 (H · 或右键拖动)"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>平移</button>
+      <button class="tool" data-tool="pan" aria-pressed="false" title="平移 (H · 或右键拖动)"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>平移 <kbd>H</kbd></button>
     </div>
     <div class="vast-mergehint muted" id="an-merge-hint" hidden></div>
     <div class="field" style="margin-top:8px"><label>画笔半径 <span class="mono" id="an-brush-v">4</span> px <span class="muted">[ ]</span></label><input id="an-brush" type="range" min="0" max="60" value="4"></div>
 
     <div class="vast-sec">当前标签</div>
     <div class="vast-cur"><span class="sw" id="an-cur-sw"></span><span class="mono" id="an-cur-id">未选择</span></div>
-    <div class="actions" style="margin-top:6px"><button id="an-newid" class="primary" title="新建标签 (N)">新建标签 <kbd>N</kbd></button><button id="an-neighbour-pick" title="L：本片这块是空的时候，取最近一张有标签的邻片在光标处的颜色">邻片取色 <kbd>L</kbd></button><button id="an-gap" title="把当前标签设为「细胞间隙」。快捷键 I：光标放在一块空白上按 I，直接把那一块填为间隙（连成大网的会改为切到画笔）。它只会落在没有标签的像素上，不会盖掉任何细胞">细胞间隙 <kbd>I</kbd></button></div>
-    <div class="muted" id="an-gap-warn" role="status" style="font-size:12px;margin-top:6px;color:#b45309" hidden></div>
+    <div class="actions" style="margin-top:6px"><button id="an-newid" class="primary" title="新建标签 (N)">新建标签 <kbd>N</kbd></button><button id="an-neighbour-pick" title="L：本片这块是空的时候，取最近一张有标签的邻片在光标处的颜色">邻片取色 <kbd>L</kbd></button></div>
     <div class="vast-list" id="an-neighbour-list" style="margin-top:6px;max-height:150px" hidden></div>
 
     <div class="vast-sec">SAM</div>
@@ -105,9 +104,15 @@
     <label class="vast-layer"><input type="checkbox" id="an-outline"> 只画边界 <span class="muted">(O)</span></label>
     <label class="vast-layer"><input type="checkbox" id="an-hover" checked> 悬停高亮</label>
 
-    <div class="vast-sec">本片分段 <span class="muted mono" id="an-nseg"></span></div>
+    <div class="vast-sec">本片分段 <span class="muted mono" id="an-nseg"></span><button id="an-bulk" class="vast-sec-btn" aria-pressed="false" title="进入选择模式：勾选本片上要删除的标签，再确认">批量删除</button></div>
     <input id="an-search" class="text mono" placeholder="搜索标签…" style="width:100%">
+    <div class="an-bulk-bar" id="an-bulk-bar" hidden><span id="an-bulk-n" class="muted">点标签行勾选</span><button id="an-bulk-go" class="danger" disabled>删除所选…</button><button id="an-bulk-cancel">取消</button></div>
     <div class="vast-list" id="an-segs"></div>
+    <dialog id="an-bulk-confirm" class="an-confirm">
+      <h3>确认批量删除？</h3>
+      <p id="an-bulk-msg"></p>
+      <div class="actions"><button id="an-bulk-no" autofocus>取消</button><button id="an-bulk-yes" class="danger">确认删除</button></div>
+    </dialog>
 
     <div class="vast-sec">本片改动</div>
     <div class="vast-list vast-edits" id="an-edits"></div>
@@ -124,8 +129,8 @@
       <div class="kbd-row"><kbd>V</kbd> 叠加 ⇄ 并排 · <kbd>C</kbd> 对比滑块</div>
       <div class="kbd-row"><kbd>Tab</kbd> 按住隐藏分割 · <kbd>G</kbd> 透明度渐变 · <kbd>,</kbd> <kbd>.</kbd> 步进</div>
       <div class="kbd-row"><kbd>O</kbd> 只画边界</div>
+      <div class="kbd-row"><kbd>P</kbd> 拾取 · <kbd>B</kbd> 画笔 · <kbd>F</kbd> 填充 · <kbd>E</kbd> 橡皮 · <kbd>M</kbd> 合并 · <kbd>H</kbd> 平移</div>
       <div class="kbd-row"><kbd>L</kbd> 邻片取色 <span class="muted">本片漏标时，取最近一张有标签的邻片在光标处的颜色</span></div>
-      <div class="kbd-row"><kbd>I</kbd> 细胞间隙 <span class="muted">光标在空白上按：直接填那一块（大网则切到画笔）；否则只选颜色。永不盖细胞</span></div>
       <div class="kbd-row"><kbd>U</kbd> 查看光标处 3D · 再按取消</div>
     </section>
     <section><h3>改标签</h3>

@@ -129,7 +129,6 @@ def test_fill_is_copy_on_write_and_undoable(client, ann_root, workdir):
 @pytest.mark.parametrize("new_id", [42, BIG + 17])
 def test_brush_only_fills_background_and_eraser_still_works(tmp_path, monkeypatch, new_id):
     from fastapi.testclient import TestClient
-    from emqc.annotate.labels import GAP_ID
     from emqc.annotate.store import Block
     from emqc.api.app import app
     from emqc.api.routers import annotate
@@ -138,7 +137,7 @@ def test_brush_only_fills_background_and_eraser_still_works(tmp_path, monkeypatc
     source.mkdir()
     original = np.zeros((12, 7, 2), np.uint64)
     original[:3] = BIG
-    original[5:7] = GAP_ID
+    original[5:7] = 2**63  # Historical gap labels remain protected as ordinary nonzero ids.
     original[10:] = new_id  # Even the selected label is left untouched.
     np.save(source / "em.npy", np.zeros(original.shape, np.uint8))
     np.save(source / "seg.npy", original)

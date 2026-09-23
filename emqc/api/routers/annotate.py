@@ -370,6 +370,24 @@ def _edit_response(b, rec):
     return {"edit": rec, "n_edits": len(b.edits()), "max_id": str(b.max_id())}
 
 
+class ClearLabelsIn(BaseModel):
+    z: int = Field(ge=0)
+    ids: list[str | int] = Field(min_length=1, max_length=5000)
+
+
+@router.post("/blocks/{block_id}/clear-labels")
+def clear_labels(block_id: str, body: ClearLabelsIn):
+    """批量删除: clear every pixel of the given ids on section z, as one undoable edit."""
+    b = _block(block_id)
+    if not 0 <= body.z < b.shape_zyx[0]:
+        raise HTTPException(404, "z outside the block")
+    try:
+        rec = b.clear_labels(body.z, [_int_id(i) for i in body.ids])
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return _edit_response(b, rec)
+
+
 @router.post("/blocks/{block_id}/fill")
 def fill(block_id: str, body: FillIn):
     b = _block(block_id)

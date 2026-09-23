@@ -14,7 +14,7 @@
   const $ = id => document.getElementById(id);
   const S = {
     block: null, info: null, W: 0, H: 0, z: Math.max(0, parseInt(new URLSearchParams(location.search).get("z"), 10) || 0),
-    tool: "pick", brush: 4, cur: "0", createdIds: [],
+    tool: "pick", brush: 4, cur: "0", createdIds: [], bulk: null,
     view: "overlay", rightSegOnly: false, curtain: false, curtainX: 0, blink: false, fade: false, fadeMax: 0.45, fadeRaf: 0,
     opacity: 0.45, outline: false, showEm: true, showSeg: true, hover: true,
     zoom: 1, tx: 0, ty: 0,
@@ -39,26 +39,8 @@
 
   // ------------------------------------------------------------------ colours: stable per id, everywhere
   const colorCache = new Map();
-  // 平台保留的「细胞间隙」标签：固定 id、固定颜色，在每个数据块里都一样（与 emqc/annotate/labels.py 一致）
-  const GAP_ID = "9223372036854775808", GAP_NAME = "细胞间隙", GAP_COLOR = [255, 255, 255], GAP_COLOR_MIN_DISTANCE = 80;
-  const labelName = id => id === GAP_ID ? GAP_NAME : id;
-  // 某个细胞的颜色离白色太近，会和「细胞间隙」混——与 emqc/annotate/labels.py 的 looks_like_gap 同一判据
-  const looksLikeGap = rgb => rgb.reduce((s, v, i) => s + (v - GAP_COLOR[i]) ** 2, 0) < GAP_COLOR_MIN_DISTANCE ** 2;
-  // 本片（含已新建的标签）里和白色混的 id；有则在「当前标签」下方提示，并在标签列表里打标记
-  function gapConflicts() {
-    const e = S.cache.get(S.z), ids = new Set([...(e?.ids || []), ...S.createdIds]);
-    return [...ids].filter(id => id !== "0" && id !== GAP_ID && looksLikeGap(colorOf(id)));
-  }
-  function gapWarn() {
-    const el = $("an-gap-warn"); if (!el) return;
-    const bad = gapConflicts();
-    el.hidden = !bad.length;
-    el.innerHTML = bad.length ? `⚠ 本片有 ${bad.length} 个标签的颜色接近白色，会和「${GAP_NAME}」混淆：`
-      + bad.slice(0, 6).map(id => `<span class="mono">${id}</span>`).join("、") + (bad.length > 6 ? " …" : "") : "";
-  }
   function colorOf(id) {
     if (id === "0") return [0, 0, 0];
-    if (id === GAP_ID) return GAP_COLOR;
     let c = colorCache.get(id);
     if (c) return c;
     let h = 2166136261;                                   // FNV-1a over the id string
@@ -311,10 +293,10 @@
     S.tool = t; mergeArm(null);
     if ((t === "merge" || t === "ng" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     document.querySelectorAll(".tool").forEach(b => { const active = b.dataset.tool === t; b.classList.toggle("active", active); b.setAttribute("aria-pressed", String(active)); });
-    for (const p of P) p.stage.classList.toggle("pan", t === "pan");
+    for (const p of P) { p.stage.classList.toggle("pan", t === "pan"); p.stage.dataset.tool = t; }   // 光标跟着工具走（见 style.css）
     renderHi();
   }
-  function setCur(id) { S.cur = String(id); $("an-cur-id").textContent = S.cur === "0" ? "未选择" : labelName(S.cur); $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur)); status(); segList(); samButtons(); }
+  function setCur(id) { S.cur = String(id); $("an-cur-id").textContent = S.cur === "0" ? "未选择" : S.cur; $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur)); status(); segList(); samButtons(); }
   function pick(x, y) { const id = idAt(x, y); if (id == null || id === "0") return; setCur(id); if (S.tool === "merge") mergeArm({ id, xy: [x, y], z: S.z }); }
 
   function floodLocal(e, x, y, newIdx) {           // scanline flood fill on the index map, 4-connectivity
@@ -781,7 +763,6 @@
     else if (k === "Tab") { ev.preventDefault(); if (!S.blink) { S.blink = true; render(); } }
     else if (k === "n") newId();
     else if (k === "l") neighbourPick();
-    else if (k === "i") pickGap(true);
     else if (k === "0") fit(); else if (k === "1") { S.zoom = 1; applyView(); }
     else if (k === "+" || k === "=") { const r = P[0].stage.getBoundingClientRect(); zoomAt(1.25, r.width / 2, r.height / 2); }
     else if (k === "-") { const r = P[0].stage.getBoundingClientRect(); zoomAt(0.8, r.width / 2, r.height / 2); }
@@ -803,14 +784,57 @@
     $("an-nseg").textContent = `${ids.length} 个`;
     const group = (key, title, labels) => `<section class="vast-label-group" data-label-group="${key}" aria-labelledby="an-labels-${key}">`
       + `<div class="vast-list-heading" id="an-labels-${key}"><span>${title}</span><span class="muted mono">${labels.length}</span></div>`
-      + labels.slice(0, 400).map(([id, n, k]) => `<div class="row ${id === S.cur ? "cur" : ""}" data-id="${id}" data-k="${k}"><span class="sw" style="background:${css(colorOf(id))}"></span><span class="id" title="${id}">${labelName(id)}${id !== GAP_ID && looksLikeGap(colorOf(id)) ? ' <span class="muted" title="颜色接近白色，会和细胞间隙混淆">⚠近白</span>' : ""}</span><span class="n">${n || "未使用"}</span></div>`).join("")
+      + labels.slice(0, 400).map(([id, n, k]) => `<div class="row ${id === S.cur ? "cur" : ""}${S.bulk?.has(id) ? " bulk-on" : ""}" data-id="${id}" data-k="${k}">${S.bulk ? `<input type="checkbox" class="bulk-box" ${S.bulk.has(id) ? "checked" : ""} tabindex="-1">` : ""}<span class="sw" style="background:${css(colorOf(id))}"></span><span class="id" title="${id}">${id}</span><span class="n">${n || "未使用"}</span></div>`).join("")
       + (!labels.length ? `<div class="vast-list-note">${q ? "无匹配标签" : "暂无"}</div>` : "")
       + (labels.length > 400 ? `<div class="vast-list-note">还有 ${labels.length - 400} 个，请搜索</div>` : "") + `</section>`;
     box.innerHTML = group("created", "新建标签", rows.filter(([id]) => created.has(id)))
       + group("existing", "已有标签", rows.filter(([id]) => !created.has(id)));
-    gapWarn();
   }
-  $("an-segs").addEventListener("click", ev => { const r = ev.target.closest(".row[data-id]"); if (r) setCur(r.dataset.id); });
+  $("an-segs").addEventListener("click", ev => {
+    const r = ev.target.closest(".row[data-id]"); if (!r) return;
+    if (S.bulk) { const id = r.dataset.id; S.bulk.has(id) ? S.bulk.delete(id) : S.bulk.add(id); segList(); bulkBar(); return; }
+    setCur(r.dataset.id);
+  });
+  // ---------------------------------------------------------------- 批量删除（只动本片）
+  // 高频误触点，所以：先进入选择模式勾标签，再点「删除所选」，再在对话框里确认——三步，最后一步才写数据；
+  // 写成一笔，Ctrl/⌘+Z 一次撤回。
+  function bulkBar() {
+    const bar = $("an-bulk-bar"); if (!bar) return;
+    bar.hidden = !S.bulk;
+    if (S.bulk) { const n = S.bulk.size; $("an-bulk-n").textContent = n ? `已选 ${n} 个` : "点标签行勾选"; $("an-bulk-go").disabled = !n; }
+    $("an-bulk").setAttribute("aria-pressed", S.bulk ? "true" : "false");
+  }
+  function bulkToggle() { S.bulk = S.bulk ? null : new Set(); segList(); bulkBar(); }
+  function bulkPixels() {
+    const e = S.cache.get(S.z); if (!e || !S.bulk) return 0;
+    let n = 0; e.ids.forEach((id, k) => { if (S.bulk.has(id)) n += e.counts[k] || 0; }); return n;
+  }
+  function bulkAsk() {
+    if (!S.bulk?.size) return;
+    const ids = [...S.bulk], px = bulkPixels();
+    $("an-bulk-msg").innerHTML = `将把 <b>z ${S.z}</b> 这一片上选中的 <b>${ids.length}</b> 个标签、共 <b>${px.toLocaleString("zh-CN")}</b> 个像素清为背景。`
+      + `<br>只影响本片，其他切片不动；完成后可 Ctrl/⌘+Z 一次撤销。`
+      + `<div class="an-bulk-ids mono">${ids.slice(0, 12).join("、")}${ids.length > 12 ? ` …等 ${ids.length} 个` : ""}</div>`;
+    $("an-bulk-confirm").showModal();
+  }
+  async function bulkRun() {
+    const dlg = $("an-bulk-confirm"); dlg.close();
+    if (!S.bulk?.size || S.mergeBusy) return;
+    const z = S.z, ids = [...S.bulk];
+    mergeBusy(true);
+    try {
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/clear-labels`, { z, ids });
+      await afterEdit(r, z);
+      flash(r.edit ? `已删除 ${ids.length} 个标签、${r.edit.n_px.toLocaleString("zh-CN")} 像素（本片），Ctrl/⌘+Z 可撤销` : "所选标签在本片上没有像素");
+      S.bulk = null; segList(); bulkBar();
+    } catch (err) { flash("批量删除失败：" + err.message, true); }
+    finally { mergeBusy(false); renderHi(); }
+  }
+  $("an-bulk").addEventListener("click", bulkToggle);
+  $("an-bulk-cancel").addEventListener("click", () => { S.bulk = null; segList(); bulkBar(); });
+  $("an-bulk-go").addEventListener("click", bulkAsk);
+  $("an-bulk-no").addEventListener("click", () => $("an-bulk-confirm").close());
+  $("an-bulk-yes").addEventListener("click", bulkRun);
   $("an-search").addEventListener("input", segList);
 
   async function editList() {
@@ -821,7 +845,7 @@
       const r = await getJSON(`${API}/blocks/${encodeURIComponent(block)}/edits?z=${z}&limit=30`);
       if (block !== S.block || z !== S.z || sequence !== S.historySequence) return;
       $("an-nedit").textContent = `${r.n} 次改动`;
-      const label = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "修补·插值" : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
+      const label = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "修补·插值" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
       // A repair writes a different id per pixel, so its new_id is the text "N 个 id" — there is no one colour for it.
       const swatch = e => /^\d+$/.test(String(e.new_id)) && e.new_id !== "0" ? css(colorOf(e.new_id)) : "transparent";
       $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${swatch(e)}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${e.new_id}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">本片还没有改动</span></div>`;
@@ -836,39 +860,6 @@
   document.querySelectorAll(".tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
   $("an-brush").addEventListener("input", ev => setBrush(+ev.target.value));
   $("an-newid").addEventListener("click", newId);
-  // I 键：选好「细胞间隙」之后，按光标下的情况做对的事——
-  //   光标在一块空白上：直接填这一块。封闭的小洞一键填满；连成大网的会被服务端拒绝，那就切到画笔并提示扫过去。
-  //   光标在细胞上或不在图上：只选颜色。
-  // 走接口而不走 fill() 的乐观渲染：对着大网按一下不该先把整片闪成白再回退。
-  async function gapFillAt(x, y) {
-    if (S.mergeBusy || !S.info?.has_seg) return false;
-    const z = S.z;
-    let refused = false;
-    mergeBusy(true);
-    try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/fill`, { z, x, y, new_id: GAP_ID, whole_slice: false });
-      await afterEdit(r, z);
-      flash(r.edit ? `已把这块空白填为${GAP_NAME}（${r.edit.n_px} 像素，Ctrl/⌘+Z 撤销）` : "这里已经是细胞间隙");
-      return true;
-    } catch (err) {
-      refused = true;
-      flash(`这片空白连成一片，不适合一键填 —— 已切到画笔（B），沿着缝扫过去即可，笔只会落在空白像素上，不会碰到细胞`, true);
-      return false;
-    } finally {
-      mergeBusy(false);
-      if (refused) setTool("brush");         // setTool() 在 busy 期间是空操作，所以必须放在解除 busy 之后
-      renderHi();
-    }
-  }
-  async function pickGap(fromKey = false) {
-    setCur(GAP_ID);
-    const bad = gapConflicts();
-    if (bad.length) { flash(`当前标签：${GAP_NAME}。注意：本片有 ${bad.length} 个标签颜色接近白色，见左栏提示`, true); return; }
-    const p = S.hoverXY;
-    if (fromKey && p && idAt(p[0], p[1]) === "0") { await gapFillAt(p[0], p[1]); return; }
-    flash(`当前标签：${GAP_NAME}——只会填到没有标签的像素上，不会盖掉任何细胞` + (fromKey ? "。把光标放在一块空白上再按 I，会直接填那一块" : ""));
-  }
-  $("an-gap").addEventListener("click", () => pickGap(false));
   $("an-prev").addEventListener("click", () => goZ(S.z - 1));
   $("an-next").addEventListener("click", () => goZ(S.z + 1));
   $("an-z").addEventListener("change", ev => goZ(+ev.target.value));

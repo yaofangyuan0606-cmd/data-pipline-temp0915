@@ -246,19 +246,18 @@ def test_hover_and_independent_merge_pairs_in_browser(browser):
 
 @pytest.mark.parametrize("view,outline", [("overlay", False), ("overlay", True), ("side", False), ("side", True)])
 def test_brush_preview_and_saved_stroke_preserve_existing_labels(browser, view, outline):
-    from emqc.annotate.labels import GAP_ID
-
     page, data, original = browser
     work = data.parent.parent / "work" / "pairs"
-    # Put a gap label in the stroke's path through the UI, before switching to a cell colour.
-    page.evaluate("""{ document.getElementById('an-gap').click();
-        document.querySelector('[data-tool=brush]').click();
+    # Paint another label into the stroke's path through the UI before switching colours.
+    page.move(POINTS[0], click=True)
+    page.wait(f"document.getElementById('an-cur-id').textContent === '{IDS[0]}'")
+    page.evaluate("""{ document.querySelector('[data-tool=brush]').click();
         const radius = document.getElementById('an-brush');
         radius.value = 0; radius.dispatchEvent(new Event('input')); }""")
     page.move((12, 4), click=True)
     page.edits(1)
     before = original.copy()
-    before[12, 4, 0] = GAP_ID
+    before[12, 4, 0] = IDS[0]
     assert np.array_equal(np.load(work / "seg_edit.npy"), before)
     page.evaluate("document.querySelector('[data-tool=pick]').click()")
     page.move(POINTS[2], click=True)

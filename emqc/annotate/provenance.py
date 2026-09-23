@@ -31,7 +31,7 @@ def source_for_edit(record: dict) -> str:
     # Retired tools remain identifiable when reading existing edit logs.
     if kind == "smartfill":
         return "assisted"
-    if kind in {"paint", "fill", "merge", "split"}:
+    if kind in {"paint", "fill", "merge", "split", "clear"}:
         return "manual"
     return "unknown"
 

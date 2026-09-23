@@ -412,9 +412,9 @@ def test_notices_do_not_cover_image_and_history_follows_slice(tmp_path):
     with browser_for(tmp_path, data) as (adapter, page):
         page.wait_for_function("document.getElementById('an-nedit').textContent === '0 次改动'")
         before = page.locator('#an-stage').bounding_box()
-        page.locator('#an-gap').click()
+        page.locator('#an-neighbour-pick').click()          # 光标不在图上 → 只弹一条提示，不改任何数据
         assert page.locator('#an-notices #flash').is_visible()
-        assert '细胞间隙' in page.locator('#flash').inner_text()
+        assert '取色' in page.locator('#flash').inner_text()
         assert page.locator('#an-stage').bounding_box() == before
         note = page.locator('#flash').bounding_box()
         assert note['x'] >= before['x'] + before['width']
@@ -422,7 +422,7 @@ def test_notices_do_not_cover_image_and_history_follows_slice(tmp_path):
         assert not page.locator('#flash').is_visible()
         # Also check the stacked, narrow layout: the note is after the image.
         page.set_viewport_size({'width': 900, 'height': 1000})
-        page.locator('#an-gap').click()
+        page.locator('#an-neighbour-pick').click()
         note, stage = page.locator('#flash').bounding_box(), page.locator('#an-stage').bounding_box()
         assert note['y'] >= stage['y'] + stage['height']
         page.locator('#an-notice-close').click()
