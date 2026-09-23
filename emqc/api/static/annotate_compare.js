@@ -8,8 +8,8 @@
   const wraps = canvases.map(c => c.parentElement);
   let layout = null;
   const image = url => new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => reject(new Error("图片读取失败")); im.src = url; });
-  async function json(url, signal) {
-    const r = await fetch(url, {signal, cache: "no-store"});
+  async function json(url, signal, body) {
+    const r = await fetch(url, body ? {signal, cache: "no-store", method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)} : {signal, cache: "no-store"});
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(typeof e.detail === "string" ? e.detail : `请求失败 (${r.status})`); }
     return r.json();
   }
@@ -45,7 +45,8 @@
     // are the embedded public viewer (EM, and EM + c3) beside it.
     const alpha = 0.5, sourceMode = $("mode").value === "sources";
     $("after-caption").textContent = sourceMode ? "当前结果 · 按来源着色" : "当前编辑结果";
-    const sourceColors = data.report.source_legend.map(s => s.color.match(/\w\w/g).map(v => parseInt(v, 16)));
+    const sourceColors = (data.report.source_legend || []).map(s => s.color.match(/\w\w/g).map(v => parseInt(v, 16)));
+    const canSource = sourceMode && sources && sourceColors.length;                  // 轻量帧没有来源数据，按标签色画
     canvases.forEach(canvas => {
       const side = 1;                                                    // always the "after" picture
       canvas.width = em.width; canvas.height = em.height;
@@ -53,8 +54,8 @@
       const overlay = g.createImageData(em.width, em.height), pixels = overlay.data;
       const ids = data.after.ids, palette = ids.map(color), idx = indices[side];
       for (let i = 0; i < idx.length; i++) {
-        const c = side && sourceMode ? sourceColors[sources[i]] : palette[idx[i]];
-        if (ids[idx[i]] !== "0" || (side && sourceMode && changes[i])) {
+        const c = canSource ? sourceColors[sources[i]] : palette[idx[i]];
+        if (ids[idx[i]] !== "0" || (canSource && changes[i])) {
           pixels.set(c, i*4); pixels[i*4+3] = Math.round(alpha*255);
         }
       }
@@ -171,6 +172,8 @@
   }
   async function load(z = state.z, force = false) {
     const block = state.blocks.find(b => b.block_id === $("block").value); if (!block) return;
+    if (play.timer && !play.internal) stopPlay(false);           // 手动翻页/换块/刷新：先停播
+    if (force || state.block !== block.block_id) frames.clear();  // 刷新或换块后旧帧作废
     const nextZ = Math.max(0, Math.min(block.nz-1, Math.trunc(Number(z)) || 0));
     $("z").value = nextZ;
     // Navigation to the current (or already requested) slice is a no-op. Only Refresh retries it.
@@ -196,7 +199,10 @@
       const [em, before, after, sources, changes] = await Promise.all([data.em_png, data.before.png, data.after.png, data.sources_png, data.changes_png].map(image));
       if (serial !== state.serial) return;
       state.snapshot = data; state.images = {em, indices:[decode(before, true), decode(after, true)], sources:decode(sources), changes:decode(changes)};
+      frames.set(frameKey(state.block, state.z), {snapshot: data, images: state.images});
+      trimFrames();
       draw(); renderReport(); renderChanges();
+      $("play").disabled = false;
       for (const id of ["images", "report", "summary"]) $(id).hidden = false;
       ngSync();
       downloadButtons();
@@ -253,7 +259,9 @@
       const x = Math.floor((event.clientX-rect.left)*canvas.width/rect.width), y = Math.floor((event.clientY-rect.top)*canvas.height/rect.height);
       if (x<0 || y<0 || x>=canvas.width || y>=canvas.height) return;
       const i = y*canvas.width+x, {indices, sources} = state.images, data = state.snapshot;
-      $("pixel").textContent = `X ${x} · Y ${y} · Z ${state.z}    原始 ${data.before.ids[indices[0][i]]} → 当前 ${data.after.ids[indices[1][i]]}    来源：${data.report.source_legend[sources[i]].name}`;
+      const src = sources && data.report.source_legend?.[sources[i]] ? `    来源：${data.report.source_legend[sources[i]].name}` : "";
+      const orig = indices[0] && data.before ? `原始 ${data.before.ids[indices[0][i]]} → ` : "";
+      $("pixel").textContent = `X ${x} · Y ${y} · Z ${state.z}    ${orig}当前 ${data.after.ids[indices[1][i]]}${src}`;
       ngHover(x, y);
       document.querySelectorAll(".cmp-cursor").forEach(c => { c.hidden = false; c.style.left = `${(x+.5)/canvas.width*100}%`; c.style.top = `${(y+.5)/canvas.height*100}%`; });
     });
@@ -352,6 +360,83 @@
       } catch (e) { if (serial === ngSerial) { note.hidden = false; note.textContent = "加载失败：" + e.message; } }
     }));
   }
+  // ---------------------------------------------------------------- 动态：当前片上下各 10 片来回播放
+  // 逐帧走完整的 load() 太慢（每片要拉图 + 算溯源），所以先把 21 片都取好、解码好放进 frames，播放时只换
+  // 画布内容；表格、URL、溯源等到停下来落在哪一片再更新。两个 Neuroglancer 栏改 URL 片段代价大（查看器
+  // 重新应用整份状态），播放中每 250ms 跟一次，停下时精确对齐。
+  const frames = new Map(), FRAME_CAP = 30, PLAY_RADIUS = 10;
+  const frameKey = (block, z) => `${block}:${z}`;
+  function trimFrames() { while (frames.size > FRAME_CAP) frames.delete(frames.keys().next().value); }
+  async function fetchFrame(z, signal) {
+    const key = frameKey(state.block, z);
+    if (frames.has(key)) return frames.get(key);
+    const data = await json(`${API}/${encodeURIComponent(state.block)}/compare/${z}?light=1`, signal);   // 只要图，不算溯源
+    const [em, after, changes] = await Promise.all([data.em_png, data.after.png, data.changes_png].map(image));
+    const frame = {snapshot: data, images: {em, indices: [null, decode(after, true)], sources: null, changes: decode(changes)}};
+    frames.set(key, frame); trimFrames();
+    return frame;
+  }
+  const play = {timer: null, tick: null, internal: false, dir: 1, lo: 0, hi: 0, controller: null, ngAt: 0};
+  function showFrame(z) {
+    const frame = frames.get(frameKey(state.block, z)); if (!frame) return false;
+    state.z = z; state.snapshot = frame.snapshot; state.images = frame.images;
+    draw();
+    $("z").value = z;
+    $("status").textContent = `${state.block} · Z ${z} · 动态播放 ${play.lo}–${play.hi}（空格或再点一次停止）`;
+    const now = performance.now();
+    if (ngCorner && now - play.ngAt > 250) {                     // 查看器栏低频跟随
+      play.ngAt = now;
+      for (const key of ["em", "seg"]) {
+        if (!ngBase[key]) continue;
+        const v = ngView[key]; if (!v) continue;
+        const pt = [v.pos[0], v.pos[1], ngCorner[2] + z + .5];
+        $(`ng-${key}-frame`).src = ngWithPosition(ngBase[key], pt);
+      }
+    }
+    return true;
+  }
+  async function startPlay() {
+    if (play.timer || !state.block || !state.images) return;
+    const block = state.blocks.find(b => b.block_id === state.block); if (!block) return;
+    const centre = state.z;
+    play.lo = Math.max(0, centre - PLAY_RADIUS); play.hi = Math.min(block.nz - 1, centre + PLAY_RADIUS);
+    play.controller = new AbortController();
+    const btn = $("play"), info = $("play-info");
+    btn.setAttribute("aria-pressed", "true"); btn.textContent = "■ 停止";
+    // 预载：先中间再向两边，这样最先要播的帧最先到
+    const order = [centre]; for (let d = 1; d <= PLAY_RADIUS; d++) { if (centre + d <= play.hi) order.push(centre + d); if (centre - d >= play.lo) order.push(centre - d); }
+    let done = 0;
+    try {
+      info.textContent = "预热…";                                   // 一次读完这段 z 的两份体数据，比逐片读快一个量级
+      await json(`${API}/${encodeURIComponent(state.block)}/compare/warm`, play.controller.signal, {z0: play.lo, z1: play.hi});
+      // 4 路并发预载，顺序仍是先中间再两边
+      const queue = order.slice();
+      const worker = async () => { while (queue.length) { if (play.controller.signal.aborted) return; const z = queue.shift(); await fetchFrame(z, play.controller.signal); done++; info.textContent = `预载 ${done}/${order.length}`; } };
+      await Promise.all([0, 1, 2, 3].map(worker));
+      if (play.controller.signal.aborted) return;
+    } catch (e) { if (e.name !== "AbortError") { info.textContent = "预载失败：" + e.message; stopPlay(false); } return; }
+    info.textContent = `Z ${play.lo}–${play.hi}`;
+    let z = centre; play.dir = 1; play.ngAt = 0;
+    play.tick = () => {                                            // 乒乓：到头就掉头
+      z += play.dir;
+      if (z > play.hi) { z = play.hi - 1; play.dir = -1; }
+      if (z < play.lo) { z = play.lo + 1; play.dir = 1; }
+      z = Math.max(play.lo, Math.min(play.hi, z));
+      showFrame(z);
+    };
+    play.timer = setInterval(play.tick, Math.round(1000 / (+$("fps").value || 8)));
+  }
+  function stopPlay(settle = true) {
+    play.controller?.abort(); play.controller = null;
+    if (play.timer) { clearInterval(play.timer); play.timer = null; }
+    const btn = $("play"); btn.setAttribute("aria-pressed", "false"); btn.textContent = "▶ 动态 ±10"; $("play-info").textContent = "";
+    if (settle) { play.internal = true; load(state.z, true).finally(() => { play.internal = false; }); }   // 停在哪片就把那片完整加载：表格、URL、查看器对齐
+  }
+  $("play").addEventListener("click", () => play.timer || play.controller ? stopPlay() : startPlay());
+  $("fps").addEventListener("change", () => {                  // 播放中改速度：换个节拍继续，不重新预载
+    if (play.timer) { clearInterval(play.timer); play.timer = setInterval(play.tick, Math.round(1000 / (+$("fps").value || 8))); }
+  });
+
   // ---------------------------------------------------------------- 缩放 / 滚轮翻 z / 拖动平移，和标注页一个习惯
   function layoutImages(reset = false) {
     if ($("images").hidden) return;
@@ -425,6 +510,7 @@
       e.preventDefault();
       if (!e.repeat) load(state.z+(e.key === "ArrowLeft" ? -1 : 1));
     }
+    if (e.key === " " && !e.repeat) { e.preventDefault(); play.timer || play.controller ? stopPlay() : startPlay(); }
   });
   async function init() {
     $("page").setAttribute("aria-busy", "true");

@@ -106,6 +106,9 @@ class Block:
         self._max_id: int | None = None
         self._png_cache: OrderedDict[tuple, bytes] = OrderedDict()
         self._label_cache: OrderedDict[int, tuple[np.ndarray, np.ndarray]] = OrderedDict()
+        # same thing for the DELIVERED labels: never invalidated (seg.npy is read-only), used by the compare page
+        # to rebuild a baseline plane with a 5 ms gather instead of a 250 ms strided read of the whole file
+        self._label_cache_ro: OrderedDict[int, tuple[np.ndarray, np.ndarray]] = OrderedDict()
 
     def _find_visual_em(self) -> Path | None:
         """`visual/slices_em/z0000.png` next to em.npy: the delivery's reference rendering of each section.
@@ -235,14 +238,11 @@ class Block:
         # can no longer be served verbatim, so the EM layer is always rendered from em.npy.
         return self._cached(("em", z), lambda: _png(Image.fromarray(self.em_slice(z), mode="L")))
 
-    def labels(self, z: int) -> tuple[np.ndarray, np.ndarray]:
-        """(idx16 (y, x), ids) — idx 0 is always id 0 / background, even when the slice has no background."""
-        self._check_z(z)
-        with self.lock:
-            if z in self._label_cache:
-                self._label_cache.move_to_end(z)
-                return self._label_cache[z]
-        s = self.seg_slice(z)
+    LABEL_CACHE_SIZE = 48          # the compare page's ±10 playback holds 21 sections of both caches at once
+
+    @staticmethod
+    def _index(s: np.ndarray, z: int) -> tuple[np.ndarray, np.ndarray]:
+        """(idx16, ids) for one displayed plane: idx 0 is always id 0 / background. `ids[idx]` rebuilds the plane."""
         # `np.unique(..., return_inverse=True)` argsorts every pixel; we only need "value -> position in ids",
         # and searchsorted on the (already sorted) ids gives exactly that, 6x faster on a 1024² section.
         ids = np.unique(s)
@@ -250,12 +250,58 @@ class Block:
             ids = np.concatenate([np.zeros(1, dtype=ids.dtype), ids])
         if ids.size > MAX_LABELS_PER_SLICE:
             raise ValueError(f"slice {z} has {ids.size} labels; the uint16 index map holds at most {MAX_LABELS_PER_SLICE}")
-        idx = np.searchsorted(ids, s).astype(np.uint16)
+        return np.searchsorted(ids, s).astype(np.uint16), ids
+
+    def _labels_cached(self, cache: OrderedDict, z: int, plane) -> tuple[np.ndarray, np.ndarray]:
         with self.lock:
-            self._label_cache[z] = (idx, ids)
-            while len(self._label_cache) > 16:
-                self._label_cache.popitem(last=False)
-        return idx, ids
+            if z in cache:
+                cache.move_to_end(z)
+                return cache[z]
+        got = self._index(plane(), z)
+        with self.lock:
+            cache[z] = got
+            while len(cache) > self.LABEL_CACHE_SIZE:
+                cache.popitem(last=False)
+        return got
+
+    def labels(self, z: int) -> tuple[np.ndarray, np.ndarray]:
+        """(idx16 (y, x), ids) of the CURRENT labels — idx 0 is always id 0 / background."""
+        self._check_z(z)
+        return self._labels_cached(self._label_cache, z, lambda: self.seg_slice(z))
+
+    def labels_baseline(self, z: int) -> tuple[np.ndarray, np.ndarray]:
+        """Same for the DELIVERED labels (seg.npy). Cached for good — the delivery never changes."""
+        self._check_z(z)
+        return self._labels_cached(self._label_cache_ro, z, lambda: np.ascontiguousarray(self._seg_ro[:, :, z].T))
+
+    def warm_labels(self, z0: int, z1: int) -> dict:
+        """Fill both label caches for sections z0..z1 in ONE pass over each volume.
+
+        On disk the arrays are (X, Y, Z) with Z fastest, so a single section is a 1M-element gather 800 bytes
+        apart that pages through the whole file (~250 ms on a 1024² block) — but 21 sections touch the same
+        pages as one, so reading the slab once costs about the same as one section. That is the difference
+        between the ±10 playback taking 10 s to start and taking 1 s."""
+        z0, z1 = max(0, int(z0)), min(self.shape_zyx[0] - 1, int(z1))
+        if z1 < z0:
+            raise ValueError("z1 must be >= z0")
+        todo_rw = [z for z in range(z0, z1 + 1) if z not in self._label_cache]
+        todo_ro = [z for z in range(z0, z1 + 1) if z not in self._label_cache_ro] if self.has_seg else []
+        started = time.perf_counter()
+        for todo, vol, cache in ((todo_ro, (lambda: self._seg_ro), self._label_cache_ro),
+                                 (todo_rw, (lambda: self._seg()), self._label_cache)):
+            if not todo or not self.has_seg:
+                continue
+            lo, hi = min(todo), max(todo) + 1
+            slab = np.ascontiguousarray(vol()[:, :, lo:hi])          # one pass over the pages
+            for z in todo:
+                got = self._index(np.ascontiguousarray(slab[:, :, z - lo].T), z)
+                with self.lock:
+                    cache[z] = got
+                    cache.move_to_end(z)
+                    while len(cache) > self.LABEL_CACHE_SIZE:
+                        cache.popitem(last=False)
+        return {"z0": z0, "z1": z1, "warmed_current": len(todo_rw), "warmed_baseline": len(todo_ro),
+                "seconds": round(time.perf_counter() - started, 3)}
 
     def labels_png(self, z: int) -> bytes:
         def make():

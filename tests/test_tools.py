@@ -149,6 +149,41 @@ def test_neuroglancer_endpoint(client_tools):
 
 
 # ----------------------------------------------------------------------------- 对比页第三栏：嵌入公开查看器
+def test_labels_baseline_and_warm(block):
+    """基线索引重建出的平面 == 交付平面；预热一段 z 后两份缓存都齐，且重建结果与逐片一致。"""
+    seg0 = np.load(block.path / "seg.npy")
+    block.paint(1, [(60, 30)], 3, 9)                                 # 让工作副本和基线不一样
+    idx_b, ids_b = block.labels_baseline(1)
+    assert np.array_equal(ids_b[idx_b], seg0[:, :, 1].T), "基线索引重建 == 交付平面（显示方向）"
+    idx_a, ids_a = block.labels(1)
+    assert np.array_equal(ids_a[idx_a], block.seg_slice(1)), "当前索引重建 == 工作副本平面"
+    assert (ids_a[idx_a] != ids_b[idx_b]).sum() == 29, "改动像素 = 半径 3 的圆盘（29 像素）"
+    r = block.warm_labels(0, 2)
+    assert r["z0"] == 0 and r["z1"] == 2 and 0 <= r["warmed_baseline"] <= 3
+    for z in range(3):
+        assert z in block._label_cache and z in block._label_cache_ro
+        ib, jb = block.labels_baseline(z); assert np.array_equal(jb[ib], seg0[:, :, z].T)
+    block.undo()
+    assert 1 not in block._label_cache and 1 in block._label_cache_ro, "撤销只作废当前缓存，基线缓存永不作废"
+
+
+def test_compare_light_returns_images_only(client_tools):
+    """动态播放要预载 21 片，全量对比每片要走溯源；轻量模式只给图，不算溯源，也不带标签表。"""
+    c, block_id = client_tools
+    full = c.get(f"/api/v1/annotate/blocks/{block_id}/compare/0").json()
+    light = c.get(f"/api/v1/annotate/blocks/{block_id}/compare/0", params={"light": 1}).json()
+    assert "sources_png" in full and "sources_png" not in light and "before" not in light, "轻量帧只带 em / after / changes"
+    assert light["report"]["light"] is True and light["report"]["labels"] == [] and light["report"]["source_legend"] == []
+    assert light["report"]["changed_px"] == full["report"]["changed_px"], "改动像素数两种模式一致"
+    assert light["after"]["ids"] == full["after"]["ids"], "索引表一致（同一套 np.unique 升序）"
+    assert light["changes_png"] == full["changes_png"], "改动掩膜图完全一样"
+    assert light["em_png"].startswith("data:image/png;base64,") and light["after"]["png"].startswith("data:image/png;base64,")
+    assert c.get(f"/api/v1/annotate/blocks/{block_id}/compare/99", params={"light": 1}).status_code == 404
+    w = c.post(f"/api/v1/annotate/blocks/{block_id}/compare/warm", json={"z0": 0, "z1": 2}).json()
+    assert w["z0"] == 0 and w["z1"] == 2 and "seconds" in w
+    assert c.post(f"/api/v1/annotate/blocks/{block_id}/compare/warm", json={"z0": 0, "z1": 90}).status_code == 422
+
+
 def test_embed_state_is_flat_and_shows_every_segment(client_tools):
     from emqc.annotate import neuroglancer as ng
 

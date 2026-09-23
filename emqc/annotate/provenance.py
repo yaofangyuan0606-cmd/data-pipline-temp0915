@@ -264,6 +264,36 @@ def changed_regions(changed, before, after, limit: int = 200) -> dict:
             "hidden_px": int(int(sizes.sum()) - shown)}
 
 
+def comparison_light(block, z: int) -> dict:
+    """Images only, for the compare page's ±10 playback prefetch — no provenance walk, no label table, and no
+    `before` image (playback never shows it).
+
+    Everything but the change mask comes from the annotation store's per-section caches: `em_png` and
+    `labels_png` are the same bytes the workbench serves (index map packed R = high byte, G = low byte, ids as
+    strings), and `labels()` builds that index with a searchsorted that is ~6x faster than the
+    `np.unique(return_inverse=True)` the full comparison uses. Those calls take the block lock themselves, so
+    they are made outside our own `with block.lock` below."""
+    block._check_z(z)
+    em_png = block.em_png(z)                               # cached bytes
+    if block.has_seg:
+        labels_png = block.labels_png(z)
+        idx_a, ids = block.labels(z)                       # current labels, cached index
+        idx_b, ids_b = block.labels_baseline(z)            # delivered labels, cached index
+        before, after = ids_b[idx_b], ids[idx_a]           # two 5 ms gathers instead of two 250 ms strided reads
+    else:
+        labels_png, ids = None, np.zeros(1, dtype=np.uint64)
+        before = after = np.zeros(block.shape_zyx[1:], dtype=np.uint64)
+    changed = before != after
+    b64 = lambda raw: "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+    report = {"schema_version": 1, "block_id": block.id, "z": z, "scope": "slice", "light": True,
+              "has_seg": block.has_seg, "shape_yx": list(before.shape), "total_px": int(before.size),
+              "changed_px": int(changed.sum()), "source_legend": [], "labels": [], "operations": [], "warnings": []}
+    after_img = ({"png": b64(labels_png), "ids": [str(int(i)) for i in ids]} if block.has_seg
+                 else _label_image(after))
+    return {"report": report, "em_png": b64(em_png), "after": after_img,
+            "changes_png": _png_url(changed.astype(np.uint8) * 255)}
+
+
 def comparison(block, z: int) -> dict:
     # A single response binds both images and the report to the same edit state.
     with block.lock:

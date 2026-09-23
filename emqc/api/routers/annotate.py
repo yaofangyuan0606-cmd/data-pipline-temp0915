@@ -179,13 +179,32 @@ def block_info(block_id: str):
     return _block(block_id).info()
 
 
+class WarmIn(BaseModel):
+    z0: int = Field(ge=0)
+    z1: int = Field(ge=0)
+
+
+@router.post("/blocks/{block_id}/compare/warm")
+def compare_warm(block_id: str, body: WarmIn):
+    """Pre-build the label indices for a z-range in one pass, so the ±10 playback's 21 light frames are cheap."""
+    b = _block(block_id, read_only=True)
+    if body.z1 - body.z0 > 60:
+        raise HTTPException(422, "一次最多预热 61 片")
+    try:
+        return b.warm_labels(body.z0, body.z1)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
 @router.get("/blocks/{block_id}/compare/{z}")
-def compare_slice(block_id: str, z: int):
+def compare_slice(block_id: str, z: int, light: bool = False):
+    """`light=1` returns the images only (no provenance) — for the compare page's ±10 playback prefetch."""
     from fastapi.responses import JSONResponse
-    from emqc.annotate.provenance import comparison
+    from emqc.annotate.provenance import comparison, comparison_light
 
     try:
-        return JSONResponse(comparison(_block(block_id, read_only=True), z), headers={"Cache-Control": "no-store"})
+        b = _block(block_id, read_only=True)
+        return JSONResponse((comparison_light if light else comparison)(b, z), headers={"Cache-Control": "no-store"})
     except IndexError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
