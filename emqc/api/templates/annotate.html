@@ -19,7 +19,7 @@
     <div class="vast-toolgrid">
       <button class="tool active" data-tool="pick" aria-pressed="true" title="拾取颜色 (P / Alt+点击)"><svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M13 6l5 5"/></svg>拾取</button>
       <button class="tool" data-tool="fill" aria-pressed="false" title="填充连通区域 (F)；Shift+点击填充本片同标签"><svg viewBox="0 0 24 24"><path d="M7 3l10 10-6 6L3 11z"/><path d="M17 13c1.5 2 2 3.2 2 4a2 2 0 11-4 0c0-.8.5-2 2-4z"/></svg>填充</button>
-      <button class="tool" data-tool="brush" aria-pressed="false" title="画笔 (B)：按半径涂当前标签"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔</button>
+      <button class="tool" data-tool="brush" aria-pressed="false" title="画笔 (B)：只涂没有标签的像素，不覆盖已有标签"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔</button>
       <button class="tool" data-tool="erase" aria-pressed="false" title="橡皮 (E)：按半径涂成背景 0"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮</button>
       <button class="tool" data-tool="merge" aria-pressed="false" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并</button>
       <button class="tool" data-tool="clear" aria-pressed="false" title="清除连通区域；Shift+点击清除本片同标签"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M14 20h6"/></svg>清除</button>
@@ -134,7 +134,7 @@
       <div class="kbd-row">清除：擦除连通区域 · Shift+点击清除本片同标签</div>
       <div class="kbd-row">切片修补：相邻切片插值补标签，预览后应用</div>
       <div class="kbd-row"><kbd>M</kbd> 合并：先点 A，再点 B，B 改为 A 的标签</div>
-      <div class="kbd-row"><kbd>B</kbd> 画笔 · <kbd>E</kbd> 橡皮 · <kbd>[</kbd> <kbd>]</kbd> 半径</div>
+      <div class="kbd-row"><kbd>B</kbd> 画笔（只补空白） · <kbd>E</kbd> 橡皮 · <kbd>[</kbd> <kbd>]</kbd> 半径</div>
       <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>
       <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</div>
     </section>

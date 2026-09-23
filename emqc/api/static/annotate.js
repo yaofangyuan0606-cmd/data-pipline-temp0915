@@ -384,10 +384,29 @@
   function strokeStart(x, y) { if (S.tool === "brush" && S.cur === "0") { flash("请先选择或新建标签"); return; } S.stroke = { pts: [[x, y]], z: S.z, id: S.tool === "erase" ? "0" : S.cur }; strokeDot(x, y); }
   function strokeDot(x, y) {
     const id = S.stroke.id;
+    let ink;
+    if (id !== "0") {
+      const e = S.cache.get(S.stroke.z); if (!e?.idx) return;
+      // Preview the same pixel discs as the server, clipped to background even in outline view.
+      // Canvas transparency alone cannot identify background: labelled interiors may be hidden.
+      ink = new Path2D();
+      for (let row = Math.max(0, y - S.brush); row <= Math.min(S.H - 1, y + S.brush); row++) {
+        const dx = Math.floor(Math.sqrt(S.brush * S.brush - (row - y) ** 2));
+        const end = Math.min(S.W - 1, x + dx);
+        let start = -1;
+        for (let col = Math.max(0, x - dx); col <= end + 1; col++) {
+          const empty = col <= end && e.ids[e.idx[row * S.W + col]] === "0";
+          if (empty && start < 0) start = col;
+          if (!empty && start >= 0) { ink.rect(start, row, col - start, 1); start = -1; }
+        }
+      }
+    }
     for (const p of segPanes()) {
       const g = p.gSeg; g.save(); g.globalCompositeOperation = id === "0" ? "destination-out" : "source-over";
       g.fillStyle = id === "0" ? "#000" : `rgba(${colorOf(id).join(",")},${S.view === "side" ? 1 : S.opacity})`;
-      g.beginPath(); g.arc(x + 0.5, y + 0.5, S.brush + 0.5, 0, Math.PI * 2); g.fill(); g.restore();
+      if (ink) g.fill(ink);
+      else { g.beginPath(); g.arc(x + 0.5, y + 0.5, S.brush + 0.5, 0, Math.PI * 2); g.fill(); }
+      g.restore();
     }
   }
   function strokeMove(x, y) {

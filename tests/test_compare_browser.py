@@ -12,6 +12,7 @@ def test_comparison_in_browser(tmp_path):
     data = tmp_path / "blocks" / "pairs"
     original = write_pairs(data)
     block = Block(data, tmp_path / "work")
+    block.paint(0, [(4, 4)], 0, 0)  # Relabelling with the brush requires erasing first.
     block.paint(0, [(4, 4)], 0, 77)
     mask = np.zeros(block.shape_zyx[1:], bool)
     mask[4, 20] = True
