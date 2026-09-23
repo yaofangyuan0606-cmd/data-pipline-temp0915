@@ -257,7 +257,7 @@
       ngHover(x, y);
       document.querySelectorAll(".cmp-cursor").forEach(c => { c.hidden = false; c.style.left = `${(x+.5)/canvas.width*100}%`; c.style.top = `${(y+.5)/canvas.height*100}%`; });
     });
-    viewport.addEventListener("mouseleave", () => { document.querySelectorAll(".cmp-cursor").forEach(c => { c.hidden = true; }); ngHoverPending = null; ngMark(null); });
+    viewport.addEventListener("mouseleave", () => { document.querySelectorAll(".cmp-cursor").forEach(c => { c.hidden = true; }); ngPending = null; ngPlace(null); });
     // 点一下（不是拖动）：让两个查看器居中到这个体素
     let press = null;
     canvases[side].addEventListener("mousedown", ev => { press = [ev.clientX, ev.clientY]; });
@@ -266,7 +266,7 @@
       press = null;
       const canvas = canvases[side], rect = canvas.getBoundingClientRect();
       const x = Math.floor((ev.clientX-rect.left)*canvas.width/rect.width), y = Math.floor((ev.clientY-rect.top)*canvas.height/rect.height);
-      if (x >= 0 && y >= 0 && x < canvas.width && y < canvas.height) ngMark(x, y, true);
+      if (x >= 0 && y >= 0 && x < canvas.width && y < canvas.height) ngCentre(x, y);
     });
   });
   $("block").addEventListener("change", () => load(0)); $("z").addEventListener("change", () => load($("z").value));
@@ -280,40 +280,50 @@
   // 翻 z 时只改 URL 的 # 片段：Neuroglancer 监听 hashchange 就地更新，不会整页重载。
   // 两栏常驻：EM 原图、EM + c3 分割，各自一个 iframe，同一位置同一切片。
   let ngSerial = 0, ngLast = {block: "", z: -1, px: 0};
-  // 每栏记住基础 URL 和块角点；悬停时在 # 片段里加一个点标注（不改 position，查看器不会跟着平移），点击才居中
-  const ngBase = {em: null, seg: null};
-  let ngCorner = null, ngHoverTimer = null, ngHoverPending = null;
-  function ngWithPoint(url, pt, centre) {
+  // 每栏记住基础 URL、块角点和取景（中心 + 比例）。悬停指针由页面自己画在 iframe 上面：
+  //   iframe 像素 = (体素坐标 - 中心) / 比例 + iframe 中心
+  // 嵌入状态隐藏了查看器的顶部 UI 且 iframe 不接鼠标，所以这个换算是精确的；不再为每次移动改 URL 片段
+  //（那条路要让查看器重新应用整份状态，肉眼可见地卡）。点击居中才改 URL。
+  const ngBase = {em: null, seg: null}, ngView = {em: null, seg: null};
+  let ngCorner = null, ngRaf = null, ngPending = null;
+  function ngParse(url) {
+    try { const st = JSON.parse(decodeURIComponent(url.split("#!")[1])); return {pos: st.position, scale: st.crossSectionScale}; } catch (_) { return null; }
+  }
+  function ngWithPosition(url, pt) {
     try {
       const [head, frag] = url.split("#!"); const st = JSON.parse(decodeURIComponent(frag));
-      const ann = st.layers[st.layers.length - 1];
-      if (ann && ann.type === "annotation") {
-        ann.annotations = ann.annotations.filter(a => a.id !== "hover");
-        if (pt) ann.annotations.push({type: "point", id: "hover", point: pt, description: "标注后图上的光标位置"});
-      }
-      if (centre && pt) st.position = pt;
+      st.position = pt;
       return head + "#!" + encodeURIComponent(JSON.stringify(st));
     } catch (_) { return url; }
   }
-  function ngMark(x, y, centre = false) {
-    if (!ngCorner) return;
-    const pt = x == null ? null : [ngCorner[0] + x + .5, ngCorner[1] + y + .5, ngCorner[2] + state.z + .5];
+  function ngPlace(x, y) {                       // x, y: 标注后画布像素；null = 隐藏
     for (const key of ["em", "seg"]) {
-      const base = ngBase[key]; if (!base) continue;
-      const frame = $(`ng-${key}-frame`), next = ngWithPoint(base, pt, centre);
-      if (frame.getAttribute("src") !== next) frame.src = next;
-      // after a click the new centre becomes the base, so later hovers do not snap the view back
-      if (centre && pt) ngBase[key] = ngWithPoint(ngWithPoint(base, pt, true), null, false);
+      const mark = $(`ng-${key}-mark`), view = ngView[key], frame = $(`ng-${key}-frame`);
+      if (x == null || !view || !ngCorner) { mark.hidden = true; continue; }
+      const w = frame.clientWidth, h = frame.clientHeight;
+      const px = (ngCorner[0] + x + .5 - view.pos[0]) / view.scale + w / 2;
+      const py = (ngCorner[1] + y + .5 - view.pos[1]) / view.scale + h / 2;
+      const inside = px >= 0 && py >= 0 && px <= w && py <= h;
+      mark.hidden = !inside;
+      if (inside) mark.style.transform = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px)`;
     }
   }
-  function ngHover(x, y) {           // ~8 次/秒，够跟手，也不会把查看器淹在 hashchange 里
-    ngHoverPending = [x, y];
-    if (ngHoverTimer) return;
-    ngHoverTimer = setTimeout(() => { ngHoverTimer = null; const p = ngHoverPending; ngHoverPending = null; if (p) ngMark(p[0], p[1]); }, 120);
+  function ngHover(x, y) {                       // 最多每 16ms 一次（约 60 帧），跟手
+    ngPending = [x, y];
+    if (ngRaf) return;
+    ngRaf = setTimeout(() => { ngRaf = null; const p = ngPending; ngPending = null; if (p) ngPlace(p[0], p[1]); }, 16);
   }
-  // 取景尺寸必须用 iframe 的实际宽度：查看器按 "整块正好装进 px 像素" 算比例，读到 0 而退回 600 会让它只显示
-  // 块中心的一半，和左边的整块对不上。首次同步时布局可能还没排出来，所以先向上找有宽度的容器，之后再由
-  // ResizeObserver 在宽度明显变化时重新对齐（片段 URL 变化，查看器就地重取景，不重载）。
+  function ngCentre(x, y) {                      // 点击：两个查看器居中到这个体素（一次 hashchange，可以接受）
+    if (!ngCorner) return;
+    const pt = [ngCorner[0] + x + .5, ngCorner[1] + y + .5, ngCorner[2] + state.z + .5];
+    for (const key of ["em", "seg"]) {
+      if (!ngBase[key]) continue;
+      ngBase[key] = ngWithPosition(ngBase[key], pt); ngView[key] = ngParse(ngBase[key]);
+      $(`ng-${key}-frame`).src = ngBase[key];
+    }
+    ngPlace(x, y);
+  }
+  // 取景尺寸用 iframe 的实际宽度（首次同步时布局可能还没排出来，向上找有宽度的容器兜底）
   function ngWidth(frame) {
     const w = frame.clientWidth || frame.parentElement?.clientWidth || Math.floor($("images").clientWidth / 3) || 600;
     return Math.max(300, Math.round(w));
@@ -325,6 +335,9 @@
     if (ngLast.block === state.block && ngLast.z === state.z && Math.abs(px - ngLast.px) < ngLast.px * 0.15) return;
     ngLast = {block: state.block, z: state.z, px};
     const serial = ++ngSerial;
+    // 首次同步常常发生在 iframe 还没有尺寸的瞬间（读到 0 → 退回 600 → 只显示块中心的一半）。等布局稳定后
+    // 复查一次：真实宽度和这次用的差得多，就按真实宽度重新取景。ngLast 的 15% 守卫保证不会来回震荡。
+    setTimeout(() => { const now = ngWidth($("ng-em-frame")); if (Math.abs(now - px) >= px * 0.15) ngSync(); }, 600);
     const panes = [["em", "em", "公开 H01 · 电镜原图"], ["seg", "em+seg", "公开 H01 · c3 分割叠在电镜上"]];
     await Promise.all(panes.map(async ([key, layers, title]) => {
       const frame = $(`ng-${key}-frame`), note = $(`ng-${key}-note`), open = $(`ng-${key}-open`), cap = $(`ng-${key}-caption`);
@@ -334,7 +347,7 @@
         if (!r.url) { note.hidden = false; note.textContent = r.reason || "无法定位到公开数据集"; frame.removeAttribute("src"); open.removeAttribute("href"); return; }
         note.hidden = true; open.href = r.url;
         cap.textContent = `${title} · Z ${state.z}`;
-        ngBase[key] = r.url; ngCorner = r.corner || ngCorner;
+        ngBase[key] = r.url; ngView[key] = ngParse(r.url); ngCorner = r.corner || ngCorner;
         if (frame.getAttribute("src") !== r.url) frame.src = r.url;     // 只换 # 片段：查看器就地更新，不重载
       } catch (e) { if (serial === ngSerial) { note.hidden = false; note.textContent = "加载失败：" + e.message; } }
     }));
@@ -377,8 +390,7 @@
   new ResizeObserver(() => { clearTimeout(ngResize); ngResize = setTimeout(ngSync, 300); }).observe($("ng-em-frame"));
   window.addEventListener("resize", () => layoutImages());
   let wheelGesture = null;
-  viewports.forEach(viewport => {
-    viewport.addEventListener("wheel", ev => {
+  function onWheel(ev) {
       // Horizontal swipes and zero-delta events are not requests to turn a slice.
       if (!ev.deltaY || Math.abs(ev.deltaX) >= Math.abs(ev.deltaY)) return;
       ev.preventDefault();
@@ -389,7 +401,11 @@
       wheelGesture = setTimeout(() => { wheelGesture = null; }, 250);
       if (ev.ctrlKey || ev.metaKey) { setZoom(state.zoom + (ev.deltaY < 0 ? 25 : -25)); return; }
       if (first) load(state.z + (ev.deltaY > 0 ? 1 : -1));
-    }, {passive: false});
+  }
+  // 查看器栏的 iframe 不接鼠标，滚轮落在外层盒子上：同样翻 z，三栏一起动；拖动只属于我们自己的画布
+  document.querySelectorAll(".cmp-ngbox").forEach(box => box.addEventListener("wheel", onWheel, {passive: false}));
+  viewports.forEach(viewport => {
+    viewport.addEventListener("wheel", onWheel, {passive: false});
     let drag = null;
     viewport.addEventListener("mousedown", ev => { if (ev.button !== 0) return; drag = {x: ev.clientX, y: ev.clientY, l: viewport.scrollLeft, t: viewport.scrollTop}; viewport.classList.add("cmp-dragging"); });
     // 直接写两侧的滚动位置，不依赖 scroll 事件来同步——后台标签页/未合成帧时 scroll 事件可能不发，两边会走散

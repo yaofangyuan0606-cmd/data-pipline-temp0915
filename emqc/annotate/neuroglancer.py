@@ -179,6 +179,11 @@ def embed_state(meta: dict, shape_zyx, z: int, screen_px: int = 600, with_seg: b
     state.pop("projectionDepth", None)
     state["showAxisLines"] = False
     state["showDefaultAnnotations"] = False
+    # No top bars inside the embed: the xy panel then fills the whole iframe, so the page can map a voxel to an
+    # iframe pixel exactly (centre = position, scale = crossSectionScale) and draw its own hover marker on top
+    # instead of pushing a hashchange into the viewer for every mouse move (which was visibly laggy).
+    state["showUIControls"] = False
+    state["showPanelBorders"] = False
     for layer in state["layers"]:
         if layer.get("type") == "segmentation":
             layer["selectedAlpha"] = 0.45
