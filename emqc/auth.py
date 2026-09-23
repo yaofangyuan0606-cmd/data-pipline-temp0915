@@ -157,6 +157,29 @@ def clear_failures(*keys: str) -> None:
             _FAILS.pop(k, None)
 
 
+def open_login(s: Session, typed: str) -> User | None:
+    """试用模式（EMQC_AUTH_OPEN，默认关）：内部同事试用阶段用，填什么名字都能进，不看密码。
+
+    合规的登录名直接用；填的是中文名之类不合规的，就把它当显示名，登录名由它的哈希生成（同一个名字永远对上同一个账号）。
+    账号不存在就自动建成审核员（能改、能撤别人的），密码随机——关掉试用模式时管理员重置一下即可。停用的账号仍然进不来。"""
+    typed = " ".join((typed or "").split())
+    if not typed:
+        return None
+    try:
+        username = normalize_username(typed)
+        display = typed
+    except ValueError:
+        username = "u-" + hashlib.sha1(typed.encode("utf-8")).hexdigest()[:10]
+        display = clean_display_name(typed, username)
+    user = s.scalar(select(User).where(User.username == username))
+    if user is None:
+        user, _ = create_user(s, username, secrets.token_urlsafe(24), display, "reviewer", must_change=False)
+    elif not user.is_active:
+        return None
+    user.must_change_password = False
+    return user
+
+
 def authenticate(s: Session, username: str, password: str) -> User | None:
     """对上了返回用户，否则 None。停用的账号、不存在的账号和密码错误对外一个样子，不泄露哪个存在。"""
     try:

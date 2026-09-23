@@ -30,9 +30,12 @@
   const form = document.getElementById("login-form"), err = document.getElementById("login-error"), errText = document.getElementById("login-error-text");
   const btn = document.getElementById("login-btn"), note = document.getElementById("login-note"), pass = document.getElementById("login-pass"), toggle = document.getElementById("pw-toggle");
   toggle.addEventListener("click", () => { const show = pass.type === "password"; pass.type = show ? "text" : "password"; toggle.textContent = show ? "隐藏" : "显示"; toggle.setAttribute("aria-label", show ? "隐藏密码" : "显示密码"); pass.focus(); });
+  let open = false;
   fetch("/api/v1/auth/status").then(r => r.json()).then(s => {
     if (s.auth_disabled) { location.href = next; return; }
-    if (s.has_users === false) note.textContent = "这个实例还没有任何账号：请在服务器上运行 python -m emqc create-user --role admin 建第一个管理员。";
+    open = !!s.auth_open;
+    if (open) { note.textContent = "试用模式 · 密码暂不校验，填名字即可进入"; note.classList.add("soft"); pass.required = false; }
+    else if (s.has_users === false) note.textContent = "这个实例还没有任何账号：请在服务器上运行 python -m emqc create-user --role admin 建第一个管理员。";
   }).catch(() => {});
   function fail(message) {
     errText.textContent = message; err.hidden = false;
@@ -43,7 +46,7 @@
     ev.preventDefault();
     const username = form.username.value.trim(), password = form.password.value;
     if (!username) { fail("请输入登录名"); form.username.focus(); return; }
-    if (!password) { fail("请输入密码"); return; }
+    if (!password && !open) { fail("请输入密码"); return; }
     err.hidden = true; btn.disabled = true; btn.classList.add("busy");
     try {
       const r = await fetch("/api/v1/auth/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({username, password})});

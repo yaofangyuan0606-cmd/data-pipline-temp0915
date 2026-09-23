@@ -51,4 +51,5 @@
   .login-side { padding: 28px 16px 40px; align-items: start; }
   .login-card { padding: 26px 22px 22px; }
 }
+.login-note.soft { color: var(--muted); text-align: center; }
 @media (prefers-reduced-motion: reduce) { .login-error.shake { animation: none; } .login-btn { transition: none; } }

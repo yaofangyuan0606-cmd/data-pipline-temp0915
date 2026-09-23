@@ -255,3 +255,33 @@ def test_auth_disabled_keeps_the_old_typed_name_flow(monkeypatch, tmp_path):
         assert c.get("/annotate/users").status_code == 404
         r = paint(c, "/api/v1/annotate/blocks/who", 0, 1, "7", annotator="张三")
         assert r.status_code == 200 and r.json()["edit"]["by"] == "张三" and "by_id" not in r.json()["edit"]
+
+
+def test_open_mode_lets_anyone_in_by_name(block_api, monkeypatch):
+    from emqc.config import settings
+
+    app, b, url = block_api
+    monkeypatch.setattr(settings, "auth_open", True)
+    make_user("zhang", display="张三", role="annotator")
+    with TestClient(app) as c, TestClient(app) as d:
+        assert c.get("/api/v1/auth/status").json()["auth_open"] is True
+        r = login(c, "zhang", "totally-wrong")
+        assert r.status_code == 200 and r.json()["user"]["username"] == "zhang", "现有账号：密码不看"
+        r = login(d, "李四", "")
+        assert r.status_code == 200
+        u = r.json()["user"]
+        assert u["display_name"] == "李四" and u["username"].startswith("u-") and u["role"] == "reviewer" and u["must_change_password"] is False, "中文名当显示名，登录名用哈希，自动建成审核员"
+        with TestClient(app) as e:
+            assert login(e, "李四", "another").json()["user"]["id"] == u["id"], "同一个名字永远对上同一个账号"
+        assert paint(d, url, 0, 1, "7").json()["edit"]["by"] == "李四", "改动照样记在名字下"
+        assert d.get("/annotate", follow_redirects=False).status_code == 200
+        with TestClient(app) as e:
+            assert login(e, "   ", "x").status_code == 401
+        with session_scope() as s:
+            s.get(User, u["id"]).is_active = False
+        with TestClient(app) as e:
+            assert login(e, "李四", "").status_code == 401, "停用的账号试用模式也进不来"
+    monkeypatch.setattr(settings, "auth_open", False)
+    with TestClient(app) as c:
+        assert login(c, "zhang", "totally-wrong").status_code == 401, "关掉试用模式立刻恢复校验"
+        assert login(c, "zhang", "").status_code == 401

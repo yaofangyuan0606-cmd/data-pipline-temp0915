@@ -88,28 +88,37 @@ def _set_cookie(response: Response, token: str) -> None:
 # ---------------------------------------------------------------- 登录 / 登出 / 我是谁 / 改密码
 class LoginIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)
-    password: str = Field(min_length=1, max_length=256)
+    password: str = Field(default="", max_length=256)     # 试用模式下可以为空
 
 
 @router.get("/status")
 def status(s: Session = Depends(get_session)):
-    """登录页用：这个实例开了登录没有、有没有任何账号（一个都没有就提示先用命令行建管理员）。"""
-    return {"auth_disabled": settings.auth_disabled, "has_users": (auth.count_users(s) > 0) if not settings.auth_disabled else None}
+    """登录页用：这个实例开了登录没有、是不是试用模式、有没有任何账号（一个都没有就提示先用命令行建管理员）。"""
+    return {"auth_disabled": settings.auth_disabled, "auth_open": settings.auth_open,
+            "has_users": (auth.count_users(s) > 0) if not settings.auth_disabled else None}
 
 
 @router.post("/login")
 def login(body: LoginIn, request: Request, response: Response, s: Session = Depends(get_session)):
     if settings.auth_disabled:
         raise HTTPException(409, {"code": "disabled", "message": "这个实例没有开启登录（EMQC_AUTH_DISABLED=1），直接打开工作台即可"})
-    keys = (f"u:{body.username.strip().lower()}", f"ip:{client_ip(request)}")
-    wait = auth.throttled(*keys)
-    if wait:
-        raise HTTPException(429, {"code": "throttled", "message": f"尝试太频繁，请 {wait} 秒后再试"})
-    user = auth.authenticate(s, body.username, body.password)
-    if user is None:
-        auth.note_failure(*keys)
-        raise HTTPException(401, {"code": "bad_login", "message": "登录名或密码不对"})
-    auth.clear_failures(*keys)
+    if settings.auth_open:
+        # 试用模式：不看密码，账号不存在就建；只有停用的账号进不来
+        user = auth.open_login(s, body.username)
+        if user is None:
+            raise HTTPException(401, {"code": "bad_login", "message": "这个账号已停用，或者名字是空的"})
+    else:
+        if not body.password:
+            raise HTTPException(401, {"code": "bad_login", "message": "登录名或密码不对"})
+        keys = (f"u:{body.username.strip().lower()}", f"ip:{client_ip(request)}")
+        wait = auth.throttled(*keys)
+        if wait:
+            raise HTTPException(429, {"code": "throttled", "message": f"尝试太频繁，请 {wait} 秒后再试"})
+        user = auth.authenticate(s, body.username, body.password)
+        if user is None:
+            auth.note_failure(*keys)
+            raise HTTPException(401, {"code": "bad_login", "message": "登录名或密码不对"})
+        auth.clear_failures(*keys)
     token = auth.open_session(s, user, request.headers.get("user-agent", ""), client_ip(request))
     auth.purge_expired_sessions(s)
     s.commit()
