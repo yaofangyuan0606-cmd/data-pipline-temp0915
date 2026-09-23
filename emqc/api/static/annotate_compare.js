@@ -202,7 +202,7 @@
       frames.set(frameKey(state.block, state.z), {snapshot: data, images: state.images});
       trimFrames();
       draw(); renderReport(); renderChanges();
-      $("play").disabled = false;
+      dirButtons().forEach(b => { b.disabled = false; });
       for (const id of ["images", "report", "summary"]) $(id).hidden = false;
       ngSync();
       downloadButtons();
@@ -376,13 +376,15 @@
     frames.set(key, frame); trimFrames();
     return frame;
   }
-  const play = {timer: null, tick: null, internal: false, dir: 1, lo: 0, hi: 0, controller: null, ngAt: 0};
+  const play = {timer: null, tick: null, internal: false, mode: "fwd", lastMode: "fwd", dir: 1, lo: 0, hi: 0, controller: null, ngAt: 0};
+  const dirButtons = () => [...document.querySelectorAll(".cmp-dir")];
+  function markDir(mode) { dirButtons().forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === mode ? "true" : "false")); }
   function showFrame(z) {
     const frame = frames.get(frameKey(state.block, z)); if (!frame) return false;
     state.z = z; state.snapshot = frame.snapshot; state.images = frame.images;
     draw();
     $("z").value = z;
-    $("status").textContent = `${state.block} · Z ${z} · 动态播放 ${play.lo}–${play.hi}（空格或再点一次停止）`;
+    $("status").textContent = `${state.block} · Z ${z} · 动态播放 ${play.mode === "back" ? "◀ 向后" : play.mode === "fwd" ? "▶ 向前" : "⇄ 来回"} ${play.lo}–${play.hi}（空格或再点一次停止）`;
     const now = performance.now();
     if (ngCorner && now - play.ngAt > 250) {                     // 查看器栏低频跟随
       play.ngAt = now;
@@ -395,14 +397,16 @@
     }
     return true;
   }
-  async function startPlay() {
-    if (play.timer || !state.block || !state.images) return;
+  async function startPlay(mode = play.lastMode) {
+    if (!state.block || !state.images) return;
+    play.mode = play.lastMode = mode;
+    if (play.timer || play.controller) { markDir(mode); play.dir = mode === "back" ? -1 : 1; return; }   // 播放中：只换方向
     const block = state.blocks.find(b => b.block_id === state.block); if (!block) return;
     const centre = state.z;
     play.lo = Math.max(0, centre - PLAY_RADIUS); play.hi = Math.min(block.nz - 1, centre + PLAY_RADIUS);
     play.controller = new AbortController();
-    const btn = $("play"), info = $("play-info");
-    btn.setAttribute("aria-pressed", "true"); btn.textContent = "■ 停止";
+    const info = $("play-info");
+    markDir(mode);
     // 预载：先中间再向两边，这样最先要播的帧最先到
     const order = [centre]; for (let d = 1; d <= PLAY_RADIUS; d++) { if (centre + d <= play.hi) order.push(centre + d); if (centre - d >= play.lo) order.push(centre - d); }
     let done = 0;
@@ -416,11 +420,16 @@
       if (play.controller.signal.aborted) return;
     } catch (e) { if (e.name !== "AbortError") { info.textContent = "预载失败：" + e.message; stopPlay(false); } return; }
     info.textContent = `Z ${play.lo}–${play.hi}`;
-    let z = centre; play.dir = 1; play.ngAt = 0;
-    play.tick = () => {                                            // 乒乓：到头就掉头
+    let z = centre; play.dir = play.mode === "back" ? -1 : 1; play.ngAt = 0;
+    play.tick = () => {
       z += play.dir;
-      if (z > play.hi) { z = play.hi - 1; play.dir = -1; }
-      if (z < play.lo) { z = play.lo + 1; play.dir = 1; }
+      if (play.mode === "pingpong") {                              // 来回：到头掉头
+        if (z > play.hi) { z = play.hi - 1; play.dir = -1; }
+        if (z < play.lo) { z = play.lo + 1; play.dir = 1; }
+      } else {                                                     // 向前 / 向后：到头回到另一端，连续循环
+        if (z > play.hi) z = play.lo;
+        if (z < play.lo) z = play.hi;
+      }
       z = Math.max(play.lo, Math.min(play.hi, z));
       showFrame(z);
     };
@@ -429,10 +438,14 @@
   function stopPlay(settle = true) {
     play.controller?.abort(); play.controller = null;
     if (play.timer) { clearInterval(play.timer); play.timer = null; }
-    const btn = $("play"); btn.setAttribute("aria-pressed", "false"); btn.textContent = "▶ 动态 ±10"; $("play-info").textContent = "";
+    markDir(null); $("play-info").textContent = "";
     if (settle) { play.internal = true; load(state.z, true).finally(() => { play.internal = false; }); }   // 停在哪片就把那片完整加载：表格、URL、查看器对齐
   }
-  $("play").addEventListener("click", () => play.timer || play.controller ? stopPlay() : startPlay());
+  dirButtons().forEach(b => b.addEventListener("click", () => {
+    const active = play.timer || play.controller;
+    if (active && play.mode === b.dataset.mode) stopPlay();       // 点亮着的那个：停
+    else startPlay(b.dataset.mode);                                // 其它：开始，或播放中切方向
+  }));
   $("fps").addEventListener("change", () => {                  // 播放中改速度：换个节拍继续，不重新预载
     if (play.timer) { clearInterval(play.timer); play.timer = setInterval(play.tick, Math.round(1000 / (+$("fps").value || 8))); }
   });
@@ -510,7 +523,7 @@
       e.preventDefault();
       if (!e.repeat) load(state.z+(e.key === "ArrowLeft" ? -1 : 1));
     }
-    if (e.key === " " && !e.repeat) { e.preventDefault(); play.timer || play.controller ? stopPlay() : startPlay(); }
+    if (e.key === " " && !e.repeat) { e.preventDefault(); play.timer || play.controller ? stopPlay() : startPlay(play.lastMode); }
   });
   async function init() {
     $("page").setAttribute("aria-busy", "true");

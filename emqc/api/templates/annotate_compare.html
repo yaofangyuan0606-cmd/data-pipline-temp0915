@@ -5,13 +5,13 @@
 {% block content %}
 <link rel="stylesheet" href="/static/annotate_compare.css?v={{ static_v('annotate_compare.css') }}">
 <section class="cmp-page" id="cmp-page" aria-busy="true">
-  <div class="cmp-heading"><div><h1>前后对比</h1><p class="muted">同一位置同一切片三栏并排：公开 H01 的电镜原图、公开 H01 的 c3 分割、本平台的标注结果（<b>黑白双线描出的区域</b>是与原始分割不同的地方）。前两栏是嵌入的 Neuroglancer（同步显示，缩放平移请点「新窗口」）；「动态 ±10」把当前片上下各 10 片预载后来回播放，看细胞怎么流转；鼠标在标注后图上移动，它们会用<b>黄色圆环</b>实时标出同一位置，点一下则让查看器居中到该点。</p></div><button id="cmp-refresh">刷新</button></div>
+  <div class="cmp-heading"><div><h1>前后对比</h1><p class="muted">同一位置同一切片三栏并排：公开 H01 的电镜原图、公开 H01 的 c3 分割、本平台的标注结果（<b>黑白双线描出的区域</b>是与原始分割不同的地方）。前两栏是嵌入的 Neuroglancer（同步显示，缩放平移请点「新窗口」）；「动态 ±10」把当前片上下各 10 片预载后播放（◀ 向后 / ⇄ 来回 / ▶ 向前，空格开停），看细胞怎么流转；鼠标在标注后图上移动，它们会用<b>黄色圆环</b>实时标出同一位置，点一下则让查看器居中到该点。</p></div><button id="cmp-refresh">刷新</button></div>
   <div class="cmp-controls">
     <label class="cmp-block">数据块<select id="cmp-block" class="text"><option>加载中…</option></select></label>
     <div><label for="cmp-z">切片 Z</label><div class="cmp-z"><button id="cmp-prev" aria-label="上一片">←</button><input id="cmp-z" class="text mono" type="number" min="0" value="0"><span id="cmp-zmax" class="muted">/ —</span><button id="cmp-next" aria-label="下一片">→</button></div></div>
     <label title="100% 完整显示图像；更高比例在此基础上放大">适配缩放 <output id="cmp-zoom-value">100%</output><input id="cmp-zoom" type="range" min="100" max="400" step="25" value="100"></label>
     <button id="cmp-fit" title="恢复完整图像并居中">适合窗口</button>
-    <div class="cmp-play"><button id="cmp-play" title="以当前片为中心，在上下各 10 片之间来回播放（空格）" disabled>▶ 动态 ±10</button><select id="cmp-fps" class="text" aria-label="播放速度"><option value="4">慢 · 4 帧/秒</option><option value="8" selected>中 · 8 帧/秒</option><option value="12">快 · 12 帧/秒</option></select><span id="cmp-play-info" class="muted"></span></div>
+    <div class="cmp-play"><span class="muted">动态 ±10</span><button id="cmp-play-back" class="cmp-dir" data-mode="back" title="从当前片起向后（z 减小）循环播放" disabled>◀ 向后</button><button id="cmp-play-pp" class="cmp-dir" data-mode="pingpong" title="在上下各 10 片之间来回播放" disabled>⇄ 来回</button><button id="cmp-play-fwd" class="cmp-dir" data-mode="fwd" title="从当前片起向前（z 增大）循环播放；空格 = 开始/停止最近用过的方向" disabled>▶ 向前</button><select id="cmp-fps" class="text" aria-label="播放速度"><option value="4">慢 · 4 帧/秒</option><option value="8" selected>中 · 8 帧/秒</option><option value="12">快 · 12 帧/秒</option></select><span id="cmp-play-info" class="muted"></span></div>
   </div>
   <p id="cmp-status" class="muted" role="status" aria-live="polite">正在加载数据块…</p>
   <div class="cmp-images" id="cmp-images" hidden>
