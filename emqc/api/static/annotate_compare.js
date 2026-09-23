@@ -241,15 +241,24 @@
   // 才有意义——能缩放、能开关图层、能开 3D。位置由服务端按 meta.geometry 算好（和「看这一点」同一套换算）。
   // 翻 z 时只改 URL 的 # 片段：Neuroglancer 监听 hashchange 就地更新，不会整页重载。
   // 两栏常驻：EM 原图、EM + c3 分割，各自一个 iframe，同一位置同一切片。
-  let ngSerial = 0;
+  let ngSerial = 0, ngLast = {block: "", z: -1, px: 0};
+  // 取景尺寸必须用 iframe 的实际宽度：查看器按 "整块正好装进 px 像素" 算比例，读到 0 而退回 600 会让它只显示
+  // 块中心的一半，和左边的整块对不上。首次同步时布局可能还没排出来，所以先向上找有宽度的容器，之后再由
+  // ResizeObserver 在宽度明显变化时重新对齐（片段 URL 变化，查看器就地重取景，不重载）。
+  function ngWidth(frame) {
+    const w = frame.clientWidth || frame.parentElement?.clientWidth || Math.floor($("images").clientWidth / 3) || 600;
+    return Math.max(300, Math.round(w));
+  }
   async function ngSync() {
     layoutImages();
     if (!state.block) return;
+    const px = ngWidth($("ng-em-frame"));
+    if (ngLast.block === state.block && ngLast.z === state.z && Math.abs(px - ngLast.px) < ngLast.px * 0.15) return;
+    ngLast = {block: state.block, z: state.z, px};
     const serial = ++ngSerial;
     const panes = [["em", "em", "公开 H01 · 电镜原图"], ["seg", "em+seg", "公开 H01 · c3 分割叠在电镜上"]];
     await Promise.all(panes.map(async ([key, layers, title]) => {
       const frame = $(`ng-${key}-frame`), note = $(`ng-${key}-note`), open = $(`ng-${key}-open`), cap = $(`ng-${key}-caption`);
-      const px = Math.max(300, Math.round(frame.clientWidth || 600));
       try {
         const r = await json(`${API}/${encodeURIComponent(state.block)}/neuroglancer/embed?z=${state.z}&px=${px}&layers=${encodeURIComponent(layers)}`);
         if (serial !== ngSerial) return;
@@ -293,6 +302,8 @@
   $("zoom").addEventListener("input", ev => setZoom(+ev.target.value));
   $("fit").addEventListener("click", () => { state.zoom = 100; layoutImages(true); });
   new ResizeObserver(() => layoutImages()).observe($("images"));
+  let ngResize = null;
+  new ResizeObserver(() => { clearTimeout(ngResize); ngResize = setTimeout(ngSync, 300); }).observe($("ng-em-frame"));
   window.addEventListener("resize", () => layoutImages());
   let wheelGesture = null;
   viewports.forEach(viewport => {
