@@ -41,6 +41,7 @@
   <dl class="kv">
     <dt>数据目录</dt><dd><b>只读。</b>由 <span class="mono">EMQC_ANNOTATE_ROOT</span> 指定，<span class="mono">EMQC_ANNOTATE_EXTRA_ROOTS</span> 可用分号追加更多根目录；每个含 <span class="mono">em.npy</span> 的子目录是一个块。交付目录里不会多出一个字节。</dd>
     <dt>工作目录</dt><dd><span class="mono">{{ workdir }}/&lt;block&gt;/</span>：第一次改动时把 <span class="mono">seg.npy</span> 复制成 <span class="mono">seg_edit.npy</span>（写时复制），之后每次改动写一个 <span class="mono">edits/&lt;n&gt;.npz</span>，<span class="mono">edits.jsonl</span> 是摘要。修好的标签就是 <span class="mono">seg_edit.npy</span>，形状与 dtype 同原始。</dd>
+    <dt>对比页接入 Neuroglancer</dt><dd>前后对比页勾上「接入 Neuroglancer」，会出现第三栏：嵌入的公开 H01 查看器，按本数据块的 <span class="mono">meta.geometry</span> 定位到同一位置同一切片，EM 底图叠 c3 分割（不选中任何分段即全部渲染）。翻 z 时第三栏跟着走；查看器内可自行缩放、开关图层、切 3D，「新窗口打开」可放大看。我们的 EM/seg 与公开 c3 已逐像素验证一致，所以这一栏是权威参照，不是数据的另一份拷贝。</dd>
     <dt>批量删除</dt><dd>「本片分段」右上角的「批量删除」进入选择模式，点标签行勾选，再点「删除所选…」，<b>会先弹出确认框</b>，列出这一片将清掉的标签数与像素数，确认后才写入。只动当前切片；整笔一次撤销。</dd>
     <dt>显示方向</dt><dd>与源数据集一致：屏幕横轴是体数据的 X、纵轴是 Y，和 Neuroglancer 里的同一块画面完全重合，所以「看这一点」跳过去不会错位。磁盘上的数组是 (X, Y, z)，页面显示的是它的转置，<b>原始 <span class="mono">em.npy</span> / <span class="mono">seg.npy</span> 没有改动</b>，改的只是怎么画。因此交付目录的 <span class="mono">visual/slices_em/</span> 与屏幕差一个转置，EM 底图一律现渲染。<span class="mono">visual/slices_seg_color/</span> 是掺了 EM 灰度的彩色图，不能当标签，标签只来自 <span class="mono">seg.npy</span>。</dd>
     <dt>颜色</dt><dd>页面上的颜色由 id 哈希生成，同一个 id 在任何片、任何块都是同一个颜色；合并后 B 变成 A 的颜色就是因为它拿到了 A 的 id。</dd>

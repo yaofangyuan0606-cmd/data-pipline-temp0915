@@ -10,11 +10,13 @@
     <label class="cmp-block">数据块<select id="cmp-block" class="text"><option>加载中…</option></select></label>
     <div><label for="cmp-z">切片 Z</label><div class="cmp-z"><button id="cmp-prev" aria-label="上一片">←</button><input id="cmp-z" class="text mono" type="number" min="0" value="0"><span id="cmp-zmax" class="muted">/ —</span><button id="cmp-next" aria-label="下一片">→</button></div></div>
     <label>缩放 <output id="cmp-zoom-value">100%</output><input id="cmp-zoom" type="range" min="100" max="400" step="25" value="100"></label>
+    <label class="cmp-check"><input id="cmp-ng" type="checkbox"> 接入 Neuroglancer <span class="muted">第三栏：公开 H01 的 EM + c3 分割</span></label>
   </div>
   <p id="cmp-status" class="muted" role="status" aria-live="polite">正在加载数据块…</p>
   <div class="cmp-images" id="cmp-images" hidden>
     <figure><figcaption><b>标注前</b><select id="cmp-left-mode" class="text" aria-label="左图内容"><option value="em">原图 · 无任何标注</option><option value="seg">原始分割 · 交付基线</option></select></figcaption><div class="cmp-viewport" tabindex="0" aria-label="原始分割图，可滚动查看"><div class="cmp-canvas-wrap"><canvas id="cmp-before" aria-label="原始分割叠加电镜切片"></canvas><i class="cmp-cursor" hidden></i><i class="cmp-ring" hidden></i></div></div></figure>
     <figure><figcaption><b>标注后</b><span id="cmp-after-caption">当前编辑结果</span></figcaption><div class="cmp-viewport" tabindex="0" aria-label="当前标注图，可滚动查看"><div class="cmp-canvas-wrap"><canvas id="cmp-after" aria-label="当前标注叠加电镜切片"></canvas><i class="cmp-cursor" hidden></i><i class="cmp-ring" hidden></i></div></div></figure>
+    <figure id="cmp-ng-pane" hidden><figcaption><b>Neuroglancer</b><span id="cmp-ng-caption">公开 H01 · EM + c3 分割 · 同一位置同一切片</span><a id="cmp-ng-open" class="btn" target="_blank" rel="noopener" href="#">新窗口打开</a></figcaption><div class="cmp-ngbox"><iframe id="cmp-ng-frame" title="公开 H01 Neuroglancer，同一数据块同一切片" allow="fullscreen"></iframe><div id="cmp-ng-note" class="muted" hidden></div></div></figure>
   </div>
   <p id="cmp-pixel" class="cmp-pixel mono muted">滚轮翻 z · Ctrl/⌘+滚轮缩放 · 拖动平移（两侧同步） · 移动鼠标查看同一像素的标签与来源</p>
 

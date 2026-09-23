@@ -2,7 +2,7 @@
 (() => {
   const $ = id => document.getElementById(`cmp-${id}`), API = "/api/v1/annotate/blocks";
   const fmt = n => Number(n).toLocaleString("zh-CN"), esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]));
-  const state = {blocks: [], block: "", z: 0, snapshot: null, images: null, serial: 0, controller: null, page: 0, downloads: new Set(), zoom: 100};
+  const state = {blocks: [], block: "", z: 0, snapshot: null, images: null, serial: 0, controller: null, page: 0, downloads: new Set(), zoom: 100, ng: false, ngBase: ""};
   const canvases = [$("before"), $("after")], viewports = [...document.querySelectorAll(".cmp-viewport")];
   const image = url => new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => reject(new Error("图片读取失败")); im.src = url; });
   async function json(url, signal) {
@@ -164,6 +164,7 @@
       state.snapshot = data; state.images = {em, indices:[decode(before, true), decode(after, true)], sources:decode(sources), changes:decode(changes)};
       draw(); renderReport(); renderChanges();
       for (const id of ["images", "report", "summary"]) $(id).hidden = false;
+      ngSync();
       downloadButtons();
       const r = data.report;
       $("status").textContent = `${state.block} · Z ${state.z} · ${em.width} × ${em.height} · ${!r.has_seg ? "此数据块没有分割标签，两侧均显示原始电镜图" : r.changed_px ? `${fmt(r.changed_px)} 像素与原始分割不同` : "当前结果与原始分割一致"}`;
@@ -219,6 +220,29 @@
   $("refresh").addEventListener("click", () => state.blocks.length ? load() : init());
   $("mode").addEventListener("input", draw);
   $("left-mode").addEventListener("input", draw);
+  // ---------------------------------------------------------------- 第三栏：嵌入公开的 H01 Neuroglancer
+  // 我们的 EM/seg 与公开 c3 已逐像素验证一致，所以把它的图拉下来画成静态图会和左图一模一样；嵌活的查看器
+  // 才有意义——能缩放、能开关图层、能开 3D。位置由服务端按 meta.geometry 算好（和「看这一点」同一套换算）。
+  // 翻 z 时只改 URL 的 # 片段：Neuroglancer 监听 hashchange 就地更新，不会整页重载。
+  let ngSerial = 0;
+  async function ngSync() {
+    const pane = $("ng-pane"), frame = $("ng-frame"), note = $("ng-note");
+    $("images").classList.toggle("with-ng", state.ng);
+    pane.hidden = !state.ng;
+    if (!state.ng || !state.block) return;
+    const serial = ++ngSerial, px = Math.max(300, Math.round($("ng-frame").clientWidth || 600));
+    try {
+      const r = await json(`${API}/${encodeURIComponent(state.block)}/neuroglancer/embed?z=${state.z}&px=${px}`);
+      if (serial !== ngSerial) return;
+      if (!r.url) { note.hidden = false; note.textContent = r.reason || "无法定位到公开数据集"; frame.removeAttribute("src"); $("ng-open").removeAttribute("href"); return; }
+      note.hidden = true;
+      $("ng-open").href = r.url;
+      $("ng-caption").textContent = `公开 H01 · EM + c3 分割 · Z ${state.z} · 中心 ${r.center.join(", ")}`;
+      if (frame.getAttribute("src") !== r.url) frame.src = r.url;
+    } catch (e) { if (serial === ngSerial) { note.hidden = false; note.textContent = "加载失败：" + e.message; } }
+  }
+  $("ng").addEventListener("change", ev => { state.ng = ev.target.checked; try { localStorage.setItem("cmp-ng", state.ng ? "1" : "0"); } catch (_) {} ngSync(); });
+  try { if (localStorage.getItem("cmp-ng") === "1") { state.ng = true; $("ng").checked = true; } } catch (_) {}
   // ---------------------------------------------------------------- 缩放 / 滚轮翻 z / 拖动平移，和标注页一个习惯
   function setZoom(v) {
     state.zoom = Math.max(100, Math.min(400, Math.round(v / 25) * 25));
