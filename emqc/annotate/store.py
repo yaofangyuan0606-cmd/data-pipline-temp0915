@@ -45,8 +45,6 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from emqc.annotate.labels import GAP_COLOR, GAP_ID, GAP_NAME, looks_like_gap
-
 SEG_EDIT = "seg_edit.npy"
 EDIT_DIR = "edits"
 EDIT_LOG = "edits.jsonl"
@@ -58,8 +56,6 @@ _BLOCK_LOCKS_GUARD = threading.Lock()
 
 def label_color(label: int) -> tuple[int, int, int]:
     """Match the browser's FNV-1a/HSL palette, including Math.round rounding."""
-    if int(label) == GAP_ID:
-        return GAP_COLOR                     # 细胞间隙是固定色，不走哈希——它要在每个块里都长一样
     h = 2166136261
     for c in str(label):
         h = ((h ^ ord(c)) * 16777619) & 0xffffffff
@@ -158,8 +154,6 @@ class Block:
             "n_edits": len(self.edits()), "has_working_copy": (self.work / SEG_EDIT).exists(),
             "working_copy": str(self.work / SEG_EDIT), "workdir": str(self.work), "em_source": "em.npy",
             "em_version": "3-transposed",  # bump when the EM rendering changes; the viewer keys its image URLs on it
-            # the one reserved label, so the page and the server agree on it without a second copy of the number
-            "gap_id": str(GAP_ID), "gap_name": GAP_NAME, "gap_color": list(GAP_COLOR),
         }
 
     # ------------------------------------------------------------------ label volume access
@@ -293,9 +287,7 @@ class Block:
             seg = self._seg()
             m = 0
             for k in range(seg.shape[2]):  # one section at a time: a full-volume max would page in 800 MB
-                plane = seg[:, :, k]
-                # the reserved gap id is 2**63; counting it would make every new id start above it
-                m = max(m, int(plane[plane != GAP_ID].max(initial=0)))
+                m = max(m, int(seg[:, :, k].max()))
             self._max_id = m
         return self._max_id
 
@@ -313,10 +305,9 @@ class Block:
             created = self.created_ids()
             used = {label_color(int(i)) for i in self.labels(z)[1] if i != 0}
             used.update(label_color(int(i)) for i in created)
-            used.add(GAP_COLOR)                  # a new cell must never be mistaken for 细胞间隙
             label = max(self.max_id(), max(map(int, created), default=0)) + 1
             limit = np.iinfo(self._seg_ro.dtype).max
-            while label <= limit and (label_color(label) in used or looks_like_gap(label_color(label))):
+            while label <= limit and label_color(label) in used:
                 label += 1
             if label > limit:
                 raise ValueError("标签编号已用尽")
@@ -383,9 +374,7 @@ class Block:
         with open(self.work / EDIT_LOG, "a") as f:
             f.write(json.dumps(rec) + "\n")
         if self._max_id is not None:
-            top = int(np.max(np.asarray(new_id)[np.asarray(new_id) != GAP_ID], initial=0)) if many else int(new_id)
-            if top != GAP_ID:
-                self._max_id = max(self._max_id, top)
+            self._max_id = max(self._max_id, int(np.max(new_id)) if many else int(new_id))
         return rec
 
     def _check_id(self, new_id: int) -> int:
@@ -405,10 +394,7 @@ class Block:
             limits = np.iinfo(self._seg_ro.dtype)
             if not 0 <= new_id <= limits.max:
                 raise ValueError("label id is outside the segmentation dtype range")
-            plane = self._plane_ro(z)
-            changed = mask & (plane != new_id)
-            if new_id == GAP_ID:
-                changed &= plane == 0            # 细胞间隙只落在没标签的像素上，永远不盖细胞
+            changed = mask & (self._plane_ro(z) != new_id)
             xs, ys = self._disk_idx(changed)
             if not xs.size:
                 return None
@@ -442,7 +428,6 @@ class Block:
                 raise ValueError("label id is outside the segmentation dtype range")
             plane = self._plane_ro(z)
             changed = where & (labels != plane) & (labels != 0)      # 0 = unclaimed, so leave the pixel alone
-            changed &= ~((labels == GAP_ID) & (plane != 0))          # and 细胞间隙 never overwrites a cell
             xs, ys = self._disk_idx(changed)
             if not xs.size:
                 return None
@@ -467,25 +452,10 @@ class Block:
             old = int(plane[y, x])
             if old == new_id:
                 return None
-            if new_id == GAP_ID and old != 0:
-                raise ValueError(f"{GAP_NAME}只能填在没有标签的区域；这里已经是标签 {old}，要清掉它请先用清除")
             mask = plane == old
             if not whole_slice:
                 lab, _ = ndimage.label(mask)
                 mask = lab == lab[y, x]
-                if new_id == GAP_ID:
-                    # 空白在这种数据里常常是一张连通的大网：实测一片 512² 上 97% 的 0 像素连成一块、贯穿全片。
-                    # 对着一条缝点填充，本意是涂那条缝，不是涂掉全片 22% 的像素。所以太大的空白块拒绝整块填，
-                    # 让人用画笔扫（只落在 0 像素上，可以放心大笔扫）或明确地用整片填充。
-                    n_px = int(mask.sum())
-                    ys_, xs_ = np.nonzero(mask)
-                    span_y, span_x = ys_.max() - ys_.min() + 1, xs_.max() - xs_.min() + 1
-                    H, W = plane.shape
-                    if n_px >= 0.02 * mask.size or span_x >= 0.5 * W or span_y >= 0.5 * H:
-                        raise ValueError(f"这片空白连成一片，共 {n_px:,} 像素（占全片 {100 * n_px / mask.size:.0f}%，"
-                                         f"跨 {span_x}×{span_y}）。一次填掉不像是本意：要涂这一段请用画笔扫过去"
-                                         f"（{GAP_NAME}只落在空白像素上，笔再大也不会碰到细胞）；"
-                                         f"确实要把本片全部空白都标成{GAP_NAME}，请用整片填充（Shift+点击）。")
             xs, ys = self._disk_idx(mask)
             plane[mask] = new_id
             seg.flush()
@@ -518,8 +488,6 @@ class Block:
                     continue
                 mask[r0:r1, c0:c1] |= disc[r0 - (y - radius):r1 - (y - radius), c0 - (x - radius):c1 - (x - radius)]
             mask &= plane != new_id
-            if new_id == GAP_ID:
-                mask &= plane == 0               # 画笔扫过细胞也不会盖掉它
             xs, ys = self._disk_idx(mask)
             if xs.size == 0:
                 return None
@@ -547,8 +515,6 @@ class Block:
             to_id, from_id = int(plane[fy, fx]), int(plane[sy, sx])
             if not to_id or not from_id:
                 raise ValueError("请选择两个非背景色块")
-            if GAP_ID in (to_id, from_id):
-                raise ValueError(f"{GAP_NAME}不能参与合并：并进去会删掉一个细胞，并出来会把整片间隙染成一个细胞")
             if from_id == to_id:
                 return None
             components, _ = ndimage.label(plane == from_id)
@@ -565,8 +531,6 @@ class Block:
         scope "block": all sections; "slice": only section z. Returns the edit record, or None if nothing changed."""
         if from_id == to_id:
             return None
-        if GAP_ID in (int(from_id), int(to_id)):
-            raise ValueError(f"{GAP_NAME}不能参与合并：并进去会删掉一个细胞，并出来会把整片间隙染成一个细胞")
         with self.lock:
             seg = self._seg_writable()
             ks = [int(z)] if scope == "slice" else range(seg.shape[2])
