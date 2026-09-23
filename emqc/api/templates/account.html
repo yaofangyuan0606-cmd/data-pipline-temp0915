@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}账号{% endblock %}
+{% block crumbs %}<a href="/annotate">切片标注</a> › <b>账号</b>{% endblock %}
+{% block topright %}<a class="btn" href="/annotate">返回工作台</a>{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>账号</h1><p class="sub">{{ user.display_name or user.username }} · 登录名 <span class="mono">{{ user.username }}</span> · {{ role_names.get(user.role, user.role) }}</p></div></div>
+{% if force %}<div class="card notice-force"><b>请先修改初始密码。</b>管理员给你的密码只用来第一次登录，改成自己的之后才能进工作台。</div>{% endif %}
+<div class="card" style="max-width:520px">
+  <h2 style="margin-top:0">修改密码</h2>
+  <form id="pw-form" autocomplete="on">
+    <div class="field"><label for="pw-old">原密码</label><input id="pw-old" class="text" type="password" autocomplete="current-password" required></div>
+    <div class="field"><label for="pw-new">新密码 <span class="muted">至少 8 位</span></label><input id="pw-new" class="text" type="password" autocomplete="new-password" required minlength="8"></div>
+    <div class="field"><label for="pw-new2">再输一次</label><input id="pw-new2" class="text" type="password" autocomplete="new-password" required minlength="8"></div>
+    <p class="muted" id="pw-msg" role="status"></p>
+    <div class="actions"><button type="submit" class="primary">保存新密码</button></div>
+  </form>
+  <p class="muted" style="font-size:12px;margin-top:12px">改完密码后，你在其它浏览器里的登录会全部退出；这里的保持登录。</p>
+</div>
+<script>
+  const f = document.getElementById("pw-form"), msg = document.getElementById("pw-msg");
+  const next = new URLSearchParams(location.search).get("next") || "/annotate";
+  f.addEventListener("submit", async ev => {
+    ev.preventDefault();
+    if (f["pw-new"].value !== f["pw-new2"].value) { msg.textContent = "两次输入的新密码不一样"; return; }
+    msg.textContent = "正在保存…";
+    try {
+      const r = await fetch("/api/v1/auth/password", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({old_password: f["pw-old"].value, new_password: f["pw-new"].value})});
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { const d = body.detail; throw new Error(typeof d === "string" ? d : d?.message || `失败 (${r.status})`); }
+      msg.textContent = "已保存，正在进入工作台…";
+      setTimeout(() => { location.href = next.startsWith("/") && !next.startsWith("//") ? next : "/annotate"; }, 600);
+    } catch (e) { msg.textContent = e.message; }
+  });
+</script>
+{% endblock %}

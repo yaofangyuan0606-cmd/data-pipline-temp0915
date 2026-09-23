@@ -5,11 +5,12 @@ from collections import Counter
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from emqc.auth import ROLE_NAMES
 from emqc.config import settings
 from emqc.db.base import get_session
 from emqc.db.models import AgentTrace, Block, Dataset, ETLMetric, ExportJob, QCBlock, QCFinding, QCRun, QCSlice, ServeLog, StreamSession
@@ -17,6 +18,7 @@ from emqc.db.models import AgentTrace, Block, Dataset, ETLMetric, ExportJob, QCB
 from emqc.qc import catalog
 
 from ..serializers import block_to_dict, dataset_to_dict, export_job_to_dict, finding_to_dict, qcblock_to_dict, qcslice_to_dict, run_to_dict, stream_to_dict, trace_to_dict
+from .auth import current_user, page_user, safe_next
 from .qc import pipeline_status, run_graph, run_summary
 
 router = APIRouter(tags=["dashboard"], include_in_schema=False)
@@ -62,10 +64,12 @@ templates.env.filters["fmt"] = _fmt
 templates.env.filters["pct"] = _pct
 templates.env.filters["bytes"] = _bytes
 templates.env.globals["settings"] = settings
+templates.env.globals["role_names"] = ROLE_NAMES
 
 
 def _render(name: str, request: Request, **ctx):
     ctx.setdefault("workspace", "qc")  # which side of the shell the page belongs to: "qc" (cleaning) or "annotate"
+    ctx.setdefault("user", current_user(request))  # 顶栏的用户菜单；没登录或没开登录时是 None
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -255,12 +259,12 @@ def crawl_page(request: Request, s: Session = Depends(get_session)):
 
 
 @router.get("/annotate", response_class=HTMLResponse)
-def annotate_page(request: Request, block: str | None = None):
+def annotate_page(request: Request, block: str | None = None, user=Depends(page_user)):
     return _render("annotate.html", request, preselect=block, active="workbench", workspace="annotate")
 
 
 @router.get("/annotate/blocks", response_class=HTMLResponse)
-def annotate_blocks_page(request: Request):
+def annotate_blocks_page(request: Request, user=Depends(page_user)):
     from emqc.api.routers.annotate import get_store
 
     st = get_store()
@@ -274,10 +278,36 @@ def annotate_blocks_page(request: Request):
 
 
 @router.get("/annotate/compare", response_class=HTMLResponse)
-def annotate_compare_page(request: Request):
+def annotate_compare_page(request: Request, user=Depends(page_user)):
     return _render("annotate_compare.html", request, active="compare", workspace="annotate")
 
 
 @router.get("/annotate/guide", response_class=HTMLResponse)
-def annotate_guide_page(request: Request):
+def annotate_guide_page(request: Request, user=Depends(page_user)):
     return _render("annotate_guide.html", request, workdir=str(settings.annotate_workdir), sam_dir=str(settings.sam_blocks_dir), active="guide", workspace="annotate")
+
+
+# ----------------------------------------------------------------------------- 登录 / 账号 / 用户管理
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, next: str = "/annotate"):
+    if settings.auth_disabled:
+        return RedirectResponse(safe_next(next), status_code=303)
+    if current_user(request) is not None:
+        return RedirectResponse(safe_next(next), status_code=303)
+    return templates.TemplateResponse(request, "login.html", {"next": safe_next(next)})
+
+
+@router.get("/account", response_class=HTMLResponse)
+def account_page(request: Request, force: int = 0, user=Depends(page_user)):
+    if settings.auth_disabled:
+        return RedirectResponse("/annotate", status_code=303)
+    return _render("account.html", request, force=bool(force), active="account", workspace="annotate")
+
+
+@router.get("/annotate/users", response_class=HTMLResponse)
+def users_page(request: Request, user=Depends(page_user)):
+    if settings.auth_disabled:
+        raise HTTPException(404, "这个实例没有开启登录（EMQC_AUTH_DISABLED=1），没有账号可管")
+    if user.role != "admin":
+        raise HTTPException(403, "只有管理员能管理账号")
+    return _render("users.html", request, active="users", workspace="annotate")

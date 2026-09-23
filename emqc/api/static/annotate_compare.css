@@ -104,3 +104,7 @@
 .cmp-play span { font-size: 12px; white-space: nowrap; }
 .cmp-dir[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-line); }
 .cmp-play .cmp-dir { padding: 7px 10px; }
+
+/* 操作流水里的撤销行 */
+.cmp-undo td { color: var(--muted); }
+.cmp-undo td:nth-child(4) { color: var(--critical); }

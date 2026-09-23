@@ -59,6 +59,14 @@ class Settings(BaseSettings):
     # where the viewer keeps its working copies (seg_edit.npy, edits/) — never inside the data directory
     annotate_workdir: Path = PROJECT_ROOT / "var" / "annotate"
     annotate_extra_roots: str = ""  # more block roots, semicolon separated (e.g. where SAM pre-labels are written)
+    # 没开登录（auth_disabled）时的兜底：拒绝不带标注人的写入（工作台总是带；脚本要传 annotator）
+    annotate_require_annotator: bool = False
+
+    # 登录系统（切片标注工作区）。默认开：/annotate 页面和 /api/v1/annotate 接口都要先登录，
+    # 每一笔改动记在登录用户名下。EMQC_AUTH_DISABLED=1 关掉（本地开发、测试），退回页面里自报姓名的方式。
+    auth_disabled: bool = False
+    session_days: int = 14              # 会话有效期，活跃则滑动续期
+    cookie_secure: bool = False         # 走 https 反代时置 1，Cookie 只在 https 下发送
     sam_blocks_dir: Path = PROJECT_ROOT / "var" / "sam_blocks"  # blocks produced by scripts/sam_label.py (em + SAM seg)
 
     sam_checkpoint: Path = PROJECT_ROOT / "var" / "models" / "sam2.1_hiera_large.pt"

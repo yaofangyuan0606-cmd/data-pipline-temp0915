@@ -55,7 +55,13 @@ def _read_arrays(block, z):
 
 
 def _sources(block, z, before, after, records):
+    """Per pixel: which kind of write it last came from (`sources`) and who made that write (`who`).
+
+    `who` is an index into `who_names` plus one; 0 = no surviving record for this pixel (baseline, or unknown).
+    Only pixels whose current value still matches the record are attributed — a later unrecorded change is nobody's."""
     sources = np.zeros(before.shape, dtype=np.uint8)
+    who = np.zeros(before.shape, dtype=np.uint16)
+    who_names: list = []
     warnings = []
     if isinstance(block.meta.get("sam"), dict) and block.meta["sam"]:
         sources[before != 0] = SOURCES.index("sam")
@@ -126,11 +132,15 @@ def _sources(block, z, before, after, records):
             sources[y[latest], x[latest]] = SOURCES.index("unknown")
             confirmed = latest & matches
             sources[y[confirmed], x[confirmed]] = SOURCES.index(source)
+            by = rec.get("by") if isinstance(rec.get("by"), str) else None
+            if by not in who_names:
+                who_names.append(by)
+            who[y[confirmed], x[confirmed]] = who_names.index(by) + 1
             seen[y, x] = True
             if np.any(latest & ~matches):
                 warnings.append(f"编辑 #{n} " + ("为旧切割记录，缺少逐像素新标签，对应像素记为来源不明。" if ambiguous_cut
                                               else "与当前标签不一致，对应像素记为来源不明。"))
-            operations.append({"n": n, "kind": rec.get("kind"), "source": source, "z": rec.get("z"),
+            operations.append({"n": n, "kind": rec.get("kind"), "source": source, "z": rec.get("z"), "by": by,
                                "ts": rec.get("ts") if isinstance(rec.get("ts"), str) else None, "n_px_in_slice": int(x.size),
                                "current_px": int(confirmed.sum()),
                                "model": rec.get("model") if isinstance(rec.get("model"), str) else None,
@@ -141,7 +151,7 @@ def _sources(block, z, before, after, records):
             sources[~seen] = SOURCES.index("unknown")
             seen[:] = True
             warnings.append(f"编辑 #{rec.get('n', '?')} 的像素记录缺失或损坏，无法完整溯源。")
-    return sources, list(reversed(operations)), warnings
+    return sources, list(reversed(operations)), warnings, who, who_names
 
 
 def _snapshot(block, z):
@@ -149,9 +159,10 @@ def _snapshot(block, z):
     before, after = _read_arrays(block, z)
     try:
         records = block.edits()
-        sources, operations, warnings = _sources(block, z, before, after, records)
+        sources, operations, warnings, who, who_names = _sources(block, z, before, after, records)
     except (ValueError, OSError):
         sources = np.full(before.shape, SOURCES.index("unknown"), dtype=np.uint8)
+        who, who_names = np.zeros(before.shape, dtype=np.uint16), []
         operations, warnings = [], ["编辑日志无法读取，当前切片记为来源不明。"]
     changed = before != after
     ids = np.union1d(before, after)
@@ -160,10 +171,18 @@ def _snapshot(block, z):
     counts = np.bincount((after_idx * len(SOURCES) + sources).ravel(),
                          minlength=len(ids) * len(SOURCES)).reshape(len(ids), len(SOURCES))
     changed_counts = np.bincount(after_idx[changed], minlength=len(ids))
+    # who wrote how much of each label: the same bincount trick, over (label, editor) instead of (label, source)
+    n_who = len(who_names) + 1
+    who_counts = np.bincount((after_idx.astype(np.int64) * n_who + who).ravel(),
+                             minlength=len(ids) * n_who).reshape(len(ids), n_who)
     labels = [{"id": str(int(label)), "before_px": int(before_counts[i]),
                "current_px": int(counts[i].sum()), "changed_px": int(changed_counts[i]),
                "sources": {s: int(counts[i, k]) for k, s in enumerate(SOURCES)},
+               "editors": [{"by": who_names[k - 1], "px": int(who_counts[i, k])} for k in range(1, n_who) if who_counts[i, k]],
                "mixed": int(np.count_nonzero(counts[i])) > 1} for i, label in enumerate(ids)]
+    editors = [{"by": name, "pixels": int((who == k).sum()), "label_pixels": int(((who == k) & (after != 0)).sum()),
+                "operations": sum(1 for o in operations if o.get("by") == name)}
+               for k, name in enumerate(who_names, start=1)]
     summary = {s: {"pixels": int((sources == k).sum()),
                    "label_pixels": int(((sources == k) & (after != 0)).sum()),
                    "background_pixels": int(((sources == k) & (after == 0)).sum())}
@@ -176,8 +195,10 @@ def _snapshot(block, z):
               "added_px": int(((before == 0) & (after != 0)).sum()),
               "removed_px": int(((before != 0) & (after == 0)).sum()),
               "relabeled_px": int(((before != 0) & (after != 0) & changed).sum()),
-              "sources": summary, "labels": labels, "operations": operations, "warnings": warnings}
-    return report, before, after, sources, changed
+              "sources": summary, "labels": labels, "operations": operations, "warnings": warnings,
+              # 谁改的：按仍然有效的像素归属统计；by 为 None 是没记名字的旧记录
+              "editors": editors}
+    return report, before, after, sources, changed, who, who_names
 
 
 def report(block, z: int | None = None) -> dict:
@@ -185,12 +206,12 @@ def report(block, z: int | None = None) -> dict:
         if z is not None:
             return _snapshot(block, z)[0]
         # Slice at a time: never copy an entire uint64 volume into memory.
-        combined, labels, slices, warnings = None, {}, [], set()
+        combined, labels, slices, warnings, editors = None, {}, [], set(), {}
         for section in range(block.nz):
             part = _snapshot(block, section)[0]
             if combined is None:
                 combined = {**part, "scope": "block", "z": None, "shape_zyx": list(block.shape_zyx)}
-                for key in ("revision", "shape_yx", "operations"):
+                for key in ("revision", "shape_yx", "operations", "editors"):
                     combined.pop(key)
                 for key in ("total_px", "changed_px", "added_px", "removed_px", "relabeled_px"):
                     combined[key] = 0
@@ -200,18 +221,26 @@ def report(block, z: int | None = None) -> dict:
             for s in SOURCES:
                 for key, value in part["sources"][s].items():
                     combined["sources"][s][key] += value
+            for e in part["editors"]:
+                d = editors.setdefault(e["by"], {"by": e["by"], "pixels": 0, "label_pixels": 0, "operations": 0})
+                for key in ("pixels", "label_pixels", "operations"):
+                    d[key] += e[key]
             for row in part["labels"]:
                 dest = labels.setdefault(row["id"], {"id": row["id"], "before_px": 0, "current_px": 0,
-                                                    "changed_px": 0, "sources": dict.fromkeys(SOURCES, 0)})
+                                                    "changed_px": 0, "sources": dict.fromkeys(SOURCES, 0), "_editors": {}})
                 for key in ("before_px", "current_px", "changed_px"):
                     dest[key] += row[key]
                 for s in SOURCES:
                     dest["sources"][s] += row["sources"][s]
+                for e in row.get("editors", []):
+                    dest["_editors"][e["by"]] = dest["_editors"].get(e["by"], 0) + e["px"]
             slices.append({k: part[k] for k in ("z", "revision", "changed_px", "operations", "warnings")})
             warnings.update(part["warnings"])
         for row in labels.values():
             row["mixed"] = sum(v > 0 for v in row["sources"].values()) > 1
-        combined.update(labels=sorted(labels.values(), key=lambda r: int(r["id"])), slices=slices, warnings=sorted(warnings))
+            row["editors"] = [{"by": by, "px": px} for by, px in sorted(row.pop("_editors").items(), key=lambda kv: -kv[1])]
+        combined.update(labels=sorted(labels.values(), key=lambda r: int(r["id"])), slices=slices, warnings=sorted(warnings),
+                        editors=sorted(editors.values(), key=lambda e: -e["pixels"]))
         return combined
 
 
@@ -231,7 +260,7 @@ def _label_image(plane):
     return {"png": _png_url(rgb), "ids": [str(int(i)) for i in ids]}
 
 
-def changed_regions(changed, before, after, limit: int = 200) -> dict:
+def changed_regions(changed, before, after, limit: int = 200, who=None, who_names=None) -> dict:
     """The connected patches of change, largest first — "which places changed", as a list you can walk.
 
     The highlight overlay answers this visually, but on a 512x512 section a few scattered brush strokes are easy to
@@ -255,7 +284,13 @@ def changed_regions(changed, before, after, limit: int = 200) -> dict:
         def top(arr):
             v, c = np.unique(arr[sl][m], return_counts=True)
             return str(int(v[int(np.argmax(c))]))
-        regions.append({"px": int(sizes[k]), "from_id": top(before), "to_id": top(after),
+        by = None
+        if who is not None and who_names:
+            v, c = np.unique(who[sl][m], return_counts=True)
+            named = [(int(cnt), int(idx)) for idx, cnt in zip(v, c) if idx]   # the editor who wrote most of this patch
+            if named:
+                by = who_names[max(named)[1] - 1]
+        regions.append({"px": int(sizes[k]), "from_id": top(before), "to_id": top(after), "by": by,
                         "x0": int(sl[1].start), "y0": int(sl[0].start),
                         "x1": int(sl[1].stop), "y1": int(sl[0].stop),
                         "cx": int(sl[1].start + xs.mean()), "cy": int(sl[0].start + ys.mean())})
@@ -297,22 +332,25 @@ def comparison_light(block, z: int) -> dict:
 def comparison(block, z: int) -> dict:
     # A single response binds both images and the report to the same edit state.
     with block.lock:
-        data, before, after, sources, changed = _snapshot(block, z)
+        data, before, after, sources, changed, who, who_names = _snapshot(block, z)
         return {"report": data, "em_png": _png_url(block.em_slice(z)),
                 "before": _label_image(before), "after": _label_image(after),
                 "sources_png": _png_url(sources), "changes_png": _png_url(changed.astype(np.uint8) * 255),
-                "changes": changed_regions(changed, before, after)}
+                # 每个像素最后是谁写的：索引图（0 = 无记录，k = editors[k-1]）；超过 255 个改动人时后面的并入 255
+                "editors_png": _png_url(np.minimum(who, 255).astype(np.uint8)), "editors": who_names,
+                "changes": changed_regions(changed, before, after, who=who, who_names=who_names)}
 
 
 def csv_report(data):
     out = io.StringIO(newline="")
     writer = csv.writer(out)
-    writer.writerow(["block_id", "z", "label_id", "before_px", "current_px", "changed_px", *SOURCES, "mixed"])
+    writer.writerow(["block_id", "z", "label_id", "before_px", "current_px", "changed_px", *SOURCES, "mixed", "editors"])
     # Guard user-supplied names against spreadsheet formulas. Label ids remain exact decimal strings.
-    block_id = data["block_id"]
-    if block_id.startswith(("=", "+", "-", "@", "\t", "\r", "\n")):
-        block_id = "'" + block_id
+    def guard(text):
+        return "'" + text if text.startswith(("=", "+", "-", "@", "\t", "\r", "\n")) else text
+    block_id = guard(data["block_id"])
     for row in data["labels"]:
+        editors = ";".join(f"{e['by'] if e['by'] is not None else '未署名'}:{e['px']}" for e in row.get("editors", []))
         writer.writerow([block_id, data["z"] if data["z"] is not None else "all", row["id"], row["before_px"],
-                         row["current_px"], row["changed_px"], *[row["sources"][s] for s in SOURCES], row["mixed"]])
+                         row["current_px"], row["changed_px"], *[row["sources"][s] for s in SOURCES], row["mixed"], guard(editors)])
     return "\ufeff" + out.getvalue()

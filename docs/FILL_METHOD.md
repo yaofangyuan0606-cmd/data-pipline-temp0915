@@ -166,7 +166,7 @@ var/annotate/<block_id>/edits/*.npz       ← 逐次改动的像素级记录
 var/annotate/<block_id>/edits.jsonl       ← 改动摘要（谁、什么操作、多少像素、什么时候）
 ```
 
-`edits.jsonl` 每行一条，字段固定：`n` 序号、`kind` 操作类型、`z` 切片（整块操作为 null）、`n_px` 像素数、`old_id` / `new_id`、`ts` 时间。审计和统计工作量都读它。
+`edits.jsonl` 每行一条，字段固定：`n` 序号、`kind` 操作类型、`z` 切片（整块操作为 null）、`n_px` 像素数、`old_id` / `new_id`、`ts` 时间、`by` 标注人显示名（登录用户；另有 `by_user` 登录名、`by_id` 用户 id；脚本写入时为 null）。统计工作量读它；追溯"谁在几点撤了谁的"读旁边只追加的 `audit.jsonl`（见 docs/ANNOTATE.md「谁改的」）。
 
 ### id 空间
 

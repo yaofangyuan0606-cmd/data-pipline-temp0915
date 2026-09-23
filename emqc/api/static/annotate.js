@@ -23,7 +23,10 @@
     samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null, samRequest: null, samSequence: 0,
     samNeighbour: null, repair: null, repairMask: null,
     historySequence: 0, ngMode: null, ngRequest: null, ngSequence: 0, ngWindow: null, ngTimer: null,
+    who: "", hbTimer: null, revs: new Map(), undoTarget: null,
   };
+  // 登录用户（服务端按会话记标注人；这里只用于显示和"是不是我"的判断）。没开登录的实例是 null → 页面里填名字。
+  const ME = window.EMQC_USER || null;
   function mkPane(id) {
     const stage = $(id), cv = stage.querySelector(".vast-canvas"), [em, seg, hi] = cv.querySelectorAll("canvas");
     return { stage, cv, em, seg, hi, gEm: em.getContext("2d"), gSeg: seg.getContext("2d"), gHi: hi.getContext("2d") };
@@ -54,10 +57,23 @@
     return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
   }
   const css = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+  const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
   // ------------------------------------------------------------------ data
   async function getJSON(u) { const r = await fetch(u); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); return r.json(); }
-  async function postJSON(u, body, signal) { const r = await fetch(u, { signal, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText); return r.json(); }
+  async function postJSON(u, body, signal) {
+    const r = await fetch(u, { signal, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    if (!r.ok) {
+      // 409 的 detail 是个对象：{code, message, latest, rev}——把 code 挂在错误上，调用方按它决定怎么办
+      const d = (await r.json().catch(() => ({}))).detail;
+      const err = new Error(typeof d === "string" ? d : d?.message || r.statusText);
+      err.status = r.status;
+      if (d && typeof d === "object") { err.code = d.code; err.info = d; }
+      if (r.status === 401) { location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`; }   // 会话过期：回登录页
+      throw err;
+    }
+    return r.json();
+  }
   const loadImg = url => new Promise((ok, bad) => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => bad(new Error("image " + url)); im.src = url; });
 
   function decodeIdx(img) {
@@ -73,13 +89,17 @@
     if (S.cache.has(z)) return Promise.resolve(S.cache.get(z));
     if (S.loading.has(z)) return S.loading.get(z);
     const b = encodeURIComponent(S.block), ver = S.info?.n_edits || 0, version = S.cacheVersion;
-    const p = Promise.all([
-      loadImg(`${API}/blocks/${b}/em/${z}.png?v=${encodeURIComponent(S.info.em_version || "1")}`),
-      S.info.has_seg ? loadImg(`${API}/blocks/${b}/labels/${z}.png?v=${ver}`) : null,
-      S.info.has_seg ? getJSON(`${API}/blocks/${b}/labels/${z}.json?v=${ver}`) : null,
-    ]).then(([em, lab, tab]) => {
-      if (tab && version === S.cacheVersion) S.createdIds = tab.created_ids || [];
-      const e = { em, idx: lab ? decodeIdx(lab) : null, ids: tab ? tab.ids : ["0"], counts: tab ? tab.counts : [], segImgs: new Map() };
+    // 先取标签表（带这一片的版本号 rev），再取索引图：图至少和 rev 一样新。反过来（图旧、rev 新）会让页面拿着
+    // 新版本号去改旧画面，服务端就查不出别人刚做的改动了。图的 URL 带上 rev，撤销再重做（改动数不变）也不会命中旧缓存。
+    const p = (async () => {
+      const emP = loadImg(`${API}/blocks/${b}/em/${z}.png?v=${encodeURIComponent(S.info.em_version || "1")}`);
+      const tab = S.info.has_seg ? await getJSON(`${API}/blocks/${b}/labels/${z}.json?v=${ver}`) : null;
+      const lab = S.info.has_seg ? await loadImg(`${API}/blocks/${b}/labels/${z}.png?v=${ver}&r=${tab?.rev ?? 0}`) : null;
+      return [await emP, lab, tab];
+    })().then(([em, lab, tab]) => {
+      if (tab && version === S.cacheVersion) { S.createdIds = tab.created_ids || []; if (tab.rev != null) S.revs.set(z, tab.rev); }
+      // rev：这一片的版本号；改标签时随请求带回去，服务端据此知道我看到的是不是最新的
+      const e = { em, idx: lab ? decodeIdx(lab) : null, ids: tab ? tab.ids : ["0"], counts: tab ? tab.counts : [], rev: tab && tab.rev != null ? tab.rev : null, segImgs: new Map() };
       if (version !== S.cacheVersion || S.loading.get(z) !== p) return e;
       S.cache.set(z, e); S.loading.delete(z);
       while (S.cache.size > 24) { const k = S.cache.keys().next().value; if (k !== S.z) S.cache.delete(k); else break; }
@@ -91,6 +111,84 @@
   function prefetch() { for (const d of [1, -1, 2, -2, 3, -3]) { const z = S.z + d; if (z >= 0 && z < S.info.shape_zyx[0]) fetchZ(z).catch(() => {}); } }
   function invalidate(z) { S.cache.delete(z); S.loading.delete(z); if (z === S.z) clearRegions(); }
   function dropAll() { S.cacheVersion++; S.cache.clear(); S.loading.clear(); clearRegions(); }
+
+  // ------------------------------------------------------------------ 标注人：每一笔改动记在谁名下
+  // 平台没有账号，"谁"就是标注员在右上角填的名字：存在本机浏览器里，每次写入随请求带给服务端，写进每条记录。
+  const WHO_KEY = "emqc.annotator";
+  const when = ts => typeof ts === "string" && ts.length >= 16 ? ts.slice(11, 16) : "刚才";
+  const editLabel = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "修补·插值" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
+  function cleanWho(v) { return String(v || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64); }
+  function setWho(v, save = true) {
+    S.who = cleanWho(v);
+    if ($("an-who")) $("an-who").value = S.who;
+    if (save) { try { localStorage.setItem(WHO_KEY, S.who); } catch (_) {} }
+    heartbeat();
+  }
+  if (ME) S.who = ME.name;
+  else { try { S.who = cleanWho(localStorage.getItem(WHO_KEY)); } catch (_) { S.who = ""; } }
+  if ($("an-who")) {
+    $("an-who").value = S.who;
+    $("an-who").addEventListener("change", ev => { setWho(ev.target.value); if (S.who) flash(`之后的改动记在「${S.who}」名下`); });
+  }
+  const isMine = e => !!e && (ME?.user ? e.by_user === ME.user : (!!S.who && e.by === S.who));
+  // 没填名字就想改标签：先问（只在没开登录的实例上；登录了名字来自会话）。看图不需要名字，改动需要。
+  function ensureWho() {
+    if (ME || S.who) return true;
+    const dlg = $("an-who-dialog");
+    if (!dlg.open) { $("an-who-input").value = ""; dlg.showModal(); $("an-who-input").focus(); }
+    return false;
+  }
+  $("an-who-ok").addEventListener("click", () => {
+    const v = cleanWho($("an-who-input").value);
+    if (!v) { $("an-who-input").focus(); return; }
+    setWho(v); $("an-who-dialog").close(); flash(`之后的改动记在「${v}」名下，可以开始改了`);
+  });
+  $("an-who-later").addEventListener("click", () => $("an-who-dialog").close());
+  $("an-who-input").addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); $("an-who-ok").click(); } });
+  for (const id of ["an-who-dialog", "an-undo-confirm"]) $(id).addEventListener("keydown", ev => ev.stopPropagation());   // 对话框里的按键不落到画布快捷键上
+  // 写入请求的公共字段：谁在改，以及我看到的是这一片的哪个版本（服务端据此判断有没有别人在我之后动过它）
+  function editBody(z, body) { return { ...body, annotator: ME ? undefined : (S.who || undefined), expect_rev: z != null && S.revs.has(z) ? S.revs.get(z) : undefined }; }
+  // 服务端说"别人在你之后改过这一片"（409 stale）：重载这一片，把话转给标注员。返回 true 表示已处理完
+  async function stale(err, z) {
+    if (err.code !== "stale") return false;
+    flash(err.message, true); invalidate(z);
+    if (z === S.z) await goZ(z, true, true);              // 已经翻到别的片就只作废缓存，不把人拽回去
+    return true;
+  }
+  // SAM 应用 / 修补应用被拒（409：这一片在预览之后变了）：同样刷新这一片，让人看到最新画面再决定
+  function refreshIfConflict(err, z) { if (err.status === 409) { invalidate(z); if (z === S.z) goZ(z, true, true); } }
+  // 撤销撞上别人的改动（409 not_yours）：说清楚是谁几点改的，确认了才带 force 再撤
+  function undoAsk(latest) {
+    S.undoTarget = latest?.n ?? null;                    // 钉住确认的那一笔：中间要是又多了一笔，服务端会拒绝而不是撤错
+    $("an-undo-msg").innerHTML = `本片最近一次改动是 <b>${esc(latest?.by ?? "未署名")}</b> 在 ${esc(when(latest?.ts))} 做的（${esc(editLabel(latest || {}))}，${Number(latest?.n_px || 0).toLocaleString("zh-CN")} 像素）。`
+      + `<br>撤销别人的改动会记入操作流水（撤销人、被撤销人）。确定要撤销吗？`;
+    $("an-undo-confirm").showModal();
+  }
+  $("an-undo-no").addEventListener("click", () => $("an-undo-confirm").close());
+  $("an-undo-yes").addEventListener("click", () => { $("an-undo-confirm").close(); undo(true, S.undoTarget); });
+
+  // ------------------------------------------------------------------ 多人：同块还有谁在线、别人改了我正在看的这一片
+  // 每 15 秒向服务端报一次"我在这块的第 z 片"，换回同块的其他人；同时比对这一片的版本号：
+  // 变了而且最后一笔不是我 → 重载这一片并提示。翻片后 1.5 秒也报一次，让"也在本片"的提示跟得上。
+  async function heartbeat() {
+    if (!S.block || !S.info || document.visibilityState !== "visible") return;
+    const z = S.z, block = S.block;
+    let r;
+    try { r = await postJSON(`${API}/blocks/${encodeURIComponent(block)}/presence`, { z, annotator: S.who || undefined }); } catch (_) { return; }
+    if (block !== S.block || z !== S.z) return;
+    const el = $("an-presence"), same = r.others.filter(o => o.same_slice);
+    el.hidden = !r.others.length;
+    el.classList.toggle("same", same.length > 0);
+    el.innerHTML = r.others.length ? `同块在线：${r.others.map(o => `<b>${esc(o.by)}</b>${o.same_slice ? "（也在本片！）" : `（z ${o.z}）`}`).join(" · ")}` : "";
+    const mineRev = S.revs.get(z);
+    if (S.cache.has(z) && mineRev != null && r.rev != null && r.rev > mineRev && !S.stroke && !S.mergeBusy && !S.drag) {
+      const l = r.latest, mine = isMine(l);
+      invalidate(z); await goZ(z, true, true);
+      if (!mine && l) flash(`${l.by || "未署名的操作"} 在 ${when(l.ts)} ${l.action === "undo" ? "撤销了本片的一次改动" : `改了本片 ${Number(l.n_px || 0).toLocaleString("zh-CN")} 像素`}，已刷新`);
+    }
+  }
+  setInterval(heartbeat, 15000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") heartbeat(); });
 
   // ------------------------------------------------------------------ rendering
   function segCanvas(e, outline) {
@@ -267,7 +365,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) { if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); clearRepair(); clearNeighbourList("an-neighbour-list"); }
+    if (z !== S.z) { if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); clearRepair(); clearNeighbourList("an-neighbour-list"); clearTimeout(S.hbTimer); S.hbTimer = setTimeout(heartbeat, 1500); }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     $("an-compare").href = `/annotate/compare?block=${encodeURIComponent(S.block)}&z=${z}`;
@@ -322,15 +420,16 @@
   async function fill(x, y, whole) {
     const e = S.cache.get(S.z); if (!e || !e.idx) return;
     if (S.cur === "0" && S.tool !== "clear") { flash("请先选择或新建标签"); return; }
+    if (!ensureWho()) return;
     const old = idAt(x, y); if (old === S.cur) return;
     const k = ensureIdx(e, S.cur), z = S.z;
     if (whole) { const t = e.idx[y * S.W + x]; for (let i = 0; i < e.idx.length; i++) if (e.idx[i] === t) e.idx[i] = k; }
     else floodLocal(e, x, y, k);
     e.segImgs.clear(); clearRegions(); render();               // optimistic: show it now, reconcile after the server answers
     try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/fill`, { z, x, y, new_id: S.cur, whole_slice: !!whole });
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/fill`, editBody(z, { z, x, y, new_id: S.cur, whole_slice: !!whole }));
       afterEdit(r, z);
-    } catch (err) { flash("填充失败: " + err.message, true); invalidate(z); goZ(z, true); }
+    } catch (err) { if (await stale(err, z)) return; flash("填充失败: " + err.message, true); invalidate(z); goZ(z, true); }
   }
 
   // Each pair is independent: A then B -> B takes A's colour; C then D -> D takes C's.
@@ -349,24 +448,25 @@
     $("an-rp-apply").disabled = on || !S.repair?.n_px;
   }
   async function mergeInto(x, y) {
-    if (S.mergeBusy) return;
+    if (S.mergeBusy || !ensureWho()) return;
     const clicked = idAt(x, y); if (clicked == null) return;
     if (clicked === "0") { flash("请选择色块，背景不参与合并"); return; }
     if (!S.mergeFirst) { mergeArm({ id: clicked, xy: [x, y], z: S.z }); setCur(clicked); return; }
     const first = S.mergeFirst, z = S.z;
     mergeBusy(true); mergeArm(null);                         // consume the pair before sending; repeated clicks cannot reuse it
     try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/merge-pair`, { z, first: first.xy, second: [x, y] });
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/merge-pair`, editBody(z, { z, first: first.xy, second: [x, y] }));
       await afterEdit(r, z);
       setCur(r.edit ? r.edit.new_id : first.id);
       flash(r.edit ? "已合并，可选择下一对" : "标签相同，可选择下一对");
     } catch (err) {
+      if (await stale(err, z)) return;
       flash("合并失败：" + err.message, true);
       invalidate(z); await goZ(z, true, true);
     } finally { mergeBusy(false); mergeArm(null); }
   }
 
-  function strokeStart(x, y) { if (S.tool === "brush" && S.cur === "0") { flash("请先选择或新建标签"); return; } S.stroke = { pts: [[x, y]], z: S.z, id: S.tool === "erase" ? "0" : S.cur }; strokeDot(x, y); }
+  function strokeStart(x, y) { if (!ensureWho()) return; if (S.tool === "brush" && S.cur === "0") { flash("请先选择或新建标签"); return; } S.stroke = { pts: [[x, y]], z: S.z, id: S.tool === "erase" ? "0" : S.cur }; strokeDot(x, y); }
   function strokeDot(x, y) {
     const id = S.stroke.id;
     let ink;
@@ -403,29 +503,39 @@
   async function strokeEnd() {
     const st = S.stroke; S.stroke = null; if (!st) return;
     try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/paint`, { z: st.z, points: st.pts, radius: S.brush, new_id: st.id });
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/paint`, editBody(st.z, { z: st.z, points: st.pts, radius: S.brush, new_id: st.id }));
       afterEdit(r, st.z);
-    } catch (err) { flash("涂抹失败: " + err.message, true); invalidate(st.z); goZ(st.z, true); }
+    } catch (err) { if (await stale(err, st.z)) return; flash("涂抹失败: " + err.message, true); invalidate(st.z); goZ(st.z, true); }
   }
   async function afterEdit(r, z) {
     clearSAM();
     S.info.n_edits = r.n_edits;
+    if (r.rev != null) S.revs.set(z, r.rev);
     invalidate(z); if (z === S.z) await goZ(z, true, true);
   }
-  async function undo() {
-    if (S.mergeBusy) return;
+  async function undo(force = false, n = null) {
+    if (S.mergeBusy || !ensureWho()) return;
     const z = S.z;
     clearSAM();
     mergeBusy(true);
     mergeArm(null);
     $("an-merge-hint").textContent = "正在撤销，请稍候…";
     try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/undo?z=${z}`);
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/undo?z=${z}`, editBody(z, { force: !!force, n: n ?? undefined }));
       if (!r.undone) { flash("本片没有可撤销的改动"); await editList(); return; }
       S.info.n_edits = r.n_edits;
+      if (r.rev != null) S.revs.set(z, r.rev);
       invalidate(z);
       await goZ(z, true, true);
-    } catch (err) { flash("撤销失败: " + err.message, true); }
+      if (force && r.undone.by && !isMine(r.undone)) flash(`已撤销 ${r.undone.by} 的改动（已记入操作流水）`);
+    } catch (err) {
+      if (await stale(err, z)) return;
+      if (err.code === "not_yours") {
+        if (err.info?.can_override === false) { flash(`本片最近一次改动是 ${err.info.latest?.by ?? "别人"} 做的；只有审核员或管理员能撤销别人的改动`, true); return; }
+        undoAsk(err.info?.latest); return;
+      }
+      flash("撤销失败: " + err.message, true);
+    }
     finally { mergeBusy(false); mergeArm(null); }
   }
   async function reserveLabel() {
@@ -471,14 +581,14 @@
     finally { renderHi(); }
   }
   async function repairApply() {
-    if (!S.repair || S.mergeBusy) return;
+    if (!S.repair || S.mergeBusy || !ensureWho()) return;
     const z = S.z, token = S.repair.token;
     mergeBusy(true);
     try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/repair/apply`, { token });
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/repair/apply`, editBody(z, { token }));
       await afterEdit(r, z);
       flash(r.edit ? `已补 ${r.edit.n_px} 像素的标签（插值，可 Ctrl+Z 撤销）` : "没有需要改动的像素");
-    } catch (err) { flash("修补失败：" + err.message, true); }
+    } catch (err) { flash("修补失败：" + err.message, true); refreshIfConflict(err, z); }
     finally { S.repair = null; S.repairMask = null; $("an-rp-apply").disabled = true; mergeBusy(false); renderHi(); }
   }
   $("an-rp-scan").addEventListener("click", repairScan);
@@ -665,16 +775,17 @@
     if (S.mergeBusy || !S.samPreview?.n_px) return;
     if (mode === "cur" && S.cur === "0") { flash("请先选择标签"); return; }
     if (mode === "neighbour" && !S.samNeighbour?.found) { flash("邻片在这块区域也没有标签", true); return; }
+    if (!ensureWho()) return;
     const z = S.z, token = S.samPreview.token, from = S.samNeighbour;
     mergeBusy(true);
     try {
       const id = mode === "new" ? await reserveLabel() : mode === "neighbour" ? from.id : S.cur;
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/sam/apply`, {token, new_id: id});
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/sam/apply`, editBody(z, {token, new_id: id}));
       await afterEdit(r, z); setCur(id);
       $("an-sam-result").textContent = mode === "neighbour"
         ? `已用 z${from.z_src} 的颜色 ${id} 填了 ${r.edit?.n_px || 0} 像素 · Ctrl/⌘+Z 撤销`
         : `已填 ${r.edit?.n_px || 0} 像素 · Ctrl/⌘+Z 撤销`;
-    } catch (err) { discardSAMPreview(); $("an-sam-result").textContent = "应用失败：" + err.message; }
+    } catch (err) { discardSAMPreview(); $("an-sam-result").textContent = "应用失败：" + err.message; refreshIfConflict(err, z); }
     finally { mergeBusy(false); renderHi(); }
   }
   $("an-sam-clear").addEventListener("click", clearSAM);
@@ -813,7 +924,7 @@
     let n = 0; e.ids.forEach((id, k) => { if (S.bulk.has(id)) n += e.counts[k] || 0; }); return n;
   }
   function bulkAsk() {
-    if (!S.bulk?.size) return;
+    if (!S.bulk?.size || !ensureWho()) return;
     const ids = [...S.bulk], px = bulkPixels();
     $("an-bulk-msg").innerHTML = `将把 <b>z ${S.z}</b> 这一片上选中的 <b>${ids.length}</b> 个标签、共 <b>${px.toLocaleString("zh-CN")}</b> 个像素清为背景。`
       + `<br>只影响本片，其他切片不动；完成后可 Ctrl/⌘+Z 一次撤销。`
@@ -826,11 +937,11 @@
     const z = S.z, ids = [...S.bulk];
     mergeBusy(true);
     try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/clear-labels`, { z, ids });
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/clear-labels`, editBody(z, { z, ids }));
       await afterEdit(r, z);
       flash(r.edit ? `已删除 ${ids.length} 个标签、${r.edit.n_px.toLocaleString("zh-CN")} 像素（本片），Ctrl/⌘+Z 可撤销` : "所选标签在本片上没有像素");
       S.bulk = null; segList(); bulkBar();
-    } catch (err) { flash("批量删除失败：" + err.message, true); }
+    } catch (err) { if (await stale(err, z)) return; flash("批量删除失败：" + err.message, true); }
     finally { mergeBusy(false); renderHi(); }
   }
   $("an-bulk").addEventListener("click", bulkToggle);
@@ -848,13 +959,14 @@
       const r = await getJSON(`${API}/blocks/${encodeURIComponent(block)}/edits?z=${z}&limit=30`);
       if (block !== S.block || z !== S.z || sequence !== S.historySequence) return;
       $("an-nedit").textContent = `${r.n} 次改动`;
-      const label = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "修补·插值" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
+      const label = editLabel;
       // A repair writes a different id per pixel, so its new_id is the text "N 个 id" — there is no one colour for it.
       const swatch = e => /^\d+$/.test(String(e.new_id)) && e.new_id !== "0" ? css(colorOf(e.new_id)) : "transparent";
-      $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${swatch(e)}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${e.new_id}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">本片还没有改动</span></div>`;
+      $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${swatch(e)}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${esc(e.new_id)}${e.by ? ` <span class="by">· ${esc(e.by)}</span>` : ""}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">本片还没有改动</span></div>`;
+      $("an-editors").textContent = r.editors?.length ? "改动人：" + r.editors.map(x => `${x.by || "未署名"} ×${x.n}`).join(" · ") : "";
     } catch (_) {
       if (block !== S.block || z !== S.z || sequence !== S.historySequence) return;
-      $("an-nedit").textContent = "—"; $("an-edits").textContent = "历史加载失败，请重试";
+      $("an-nedit").textContent = "—"; $("an-edits").textContent = "历史加载失败，请重试"; $("an-editors").textContent = "";
     }
   }
 
@@ -867,7 +979,7 @@
   $("an-next").addEventListener("click", () => goZ(S.z + 1));
   $("an-z").addEventListener("change", ev => goZ(+ev.target.value));
   $("an-zr").addEventListener("input", ev => goZ(+ev.target.value, true));
-  $("an-undo").addEventListener("click", undo);
+  $("an-undo").addEventListener("click", () => undo());
   $("an-play").addEventListener("click", () => {
     if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; return; }
     const fps = Math.max(1, Math.min(60, +$("an-fps").value || 8));
@@ -893,7 +1005,9 @@
     if (S.ngMode) setTool("pick");
     clearSAM(); clearRepair();
     if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
-    S.block = id; S.createdIds = []; dropAll(); S.hoverXY = null; mergeArm(null);
+    S.block = id; S.createdIds = []; dropAll(); S.revs.clear(); S.hoverXY = null; mergeArm(null);
+    const pr = $("an-presence"); pr.hidden = true; pr.innerHTML = ""; pr.classList.remove("same");
+    clearTimeout(S.hbTimer); S.hbTimer = setTimeout(heartbeat, 1500);
     S.info = await getJSON(`${API}/blocks/${encodeURIComponent(id)}`);
     const [nz, H, W] = S.info.shape_zyx; S.W = W; S.H = H; S.curtainX = W >> 1;
     for (const p of P) { for (const c of [p.em, p.seg, p.hi]) { c.width = W; c.height = H; } p.cv.style.width = W + "px"; p.cv.style.height = H + "px"; }
@@ -919,6 +1033,8 @@
     const pre = window.AN_PRESELECT && r.blocks.some(b => b.block_id === window.AN_PRESELECT) ? window.AN_PRESELECT : r.blocks.find(b => !b.error)?.block_id;
     sel.value = pre; sel.addEventListener("change", () => selectBlock(sel.value));
     await selectBlock(pre);
+    heartbeat();
+    if (!ME && !S.who) ensureWho();     // 没开登录的实例：一进来就问名字；"先看看"可以跳过，改标签时会再问
   }
   init().catch(err => { $("an-status").textContent = "初始化失败: " + err.message; });
 })();

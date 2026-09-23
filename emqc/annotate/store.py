@@ -32,12 +32,16 @@ strings because H01 ids exceed 2^53 and would lose precision as JSON numbers.
 """
 from __future__ import annotations
 
+import fcntl
 import io
 import json
+import logging
+import os
 import shutil
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 from weakref import WeakValueDictionary
 
@@ -49,9 +53,94 @@ SEG_EDIT = "seg_edit.npy"
 EDIT_DIR = "edits"
 EDIT_LOG = "edits.jsonl"
 CREATED_LABELS = "created_labels.json"
+# 操作流水，只追加：每一笔写入和每一次撤销，带标注人。edits.jsonl 是"当前有效"的记录，被撤销的会从里面消失，
+# 而"谁在几点撤销了谁的改动"正是追溯时要问的，所以另记一份。
+AUDIT_LOG = "audit.jsonl"
+WORKDIR_LOCK = ".server.lock"
 MAX_LABELS_PER_SLICE = 65535
 _BLOCK_LOCKS = WeakValueDictionary()
 _BLOCK_LOCKS_GUARD = threading.Lock()
+_HELD_WORKDIRS: dict[str, object] = {}
+_HELD_GUARD = threading.Lock()
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Actor:
+    """谁在操作。`name` 是给人看的（记录里的 by）；登录用户另带账号名和用户 id，改名后旧记录仍能对上人。
+    没有登录系统时（EMQC_AUTH_DISABLED）只有 name——页面里填的名字。"""
+    name: str
+    user: str | None = None
+    id: int | None = None
+
+    @classmethod
+    def coerce(cls, by) -> "Actor | None":
+        if by is None or isinstance(by, Actor):
+            return by
+        return cls(str(by))
+
+    def stamp(self) -> dict:
+        d: dict = {"by": self.name}
+        if self.user is not None:
+            d["by_user"] = self.user
+        if self.id is not None:
+            d["by_id"] = self.id
+        return d
+
+
+def same_actor(entry: dict, actor: Actor | None) -> bool:
+    """这条记录（edits.jsonl 或 audit.jsonl 里的一行）是不是 actor 做的。有用户 id 就比 id，其次比账号名，最后比显示名。"""
+    if actor is None:
+        return False
+    if entry.get("by_id") is not None and actor.id is not None:
+        return entry["by_id"] == actor.id
+    if isinstance(entry.get("by_user"), str) and actor.user is not None:
+        return entry["by_user"] == actor.user
+    return entry.get("by") == actor.name
+
+
+class UndoForbidden(ValueError):
+    """本片最近一次改动是别人做的：撤销要么撤自己的，要么明确说"我就是要撤他的"（force）。"""
+
+    def __init__(self, record: dict):
+        super().__init__(f"本片最近一次改动是 {record.get('by')} 做的，不能撤销别人的改动")
+        self.record = record
+
+
+class UndoMismatch(ValueError):
+    """撤销时钉住的记录号已经不是本片最近一笔：中间有人又改了，界面上确认的那一笔不是现在会被撤掉的那一笔。"""
+
+    def __init__(self, record: dict, expected: int):
+        super().__init__(f"本片最近一笔已是 #{record.get('n')}（不是确认时的 #{expected}），请刷新后再撤销")
+        self.record = record
+
+
+def hold_workdir(root: Path) -> None:
+    """把工作目录（所有块的 seg_edit / edits 都在它下面）占住，直到本进程退出。
+
+    两个服务进程写同一个工作目录会怎样：edits.jsonl 的追加互相穿插、撤销时整文件重写把对方刚写的行冲掉、
+    各自的缓存又都看不见对方的改动——悄无声息地坏。flock 把这变成第一次写入时的一句明确报错。
+    进程退出（包括崩溃）时内核自动释放，不会留下死锁文件。不支持 flock 的文件系统上退回到只靠进程内的锁。"""
+    key = str(root.resolve())
+    with _HELD_GUARD:
+        if key in _HELD_WORKDIRS:
+            return
+        root.mkdir(parents=True, exist_ok=True)
+        fh = open(root / WORKDIR_LOCK, "a+")
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fh.close()
+            raise ValueError(f"标注工作目录 {root} 正被另一个服务进程使用。同一个工作目录只能由一个服务写入："
+                             "多人标注请都连到那个服务；确实要再起一个服务，就给它另一个 EMQC_ANNOTATE_WORKDIR")
+        except OSError:
+            fh.close()
+            return
+        fh.seek(0)
+        fh.truncate()
+        fh.write(f"{os.getpid()}\n")
+        fh.flush()
+        _HELD_WORKDIRS[key] = fh
 
 
 def label_color(label: int) -> tuple[int, int, int]:
@@ -104,6 +193,7 @@ class Block:
             with self.lock:
                 self._migrate_legacy()
         self._max_id: int | None = None
+        self._audit: list[dict] | None = None   # audit.jsonl 的内存副本，只有写入方缓存（见 audit_entries）
         self._png_cache: OrderedDict[tuple, bytes] = OrderedDict()
         self._label_cache: OrderedDict[int, tuple[np.ndarray, np.ndarray]] = OrderedDict()
         # same thing for the DELIVERED labels: never invalidated (seg.npy is read-only), used by the compare page
@@ -154,7 +244,8 @@ class Block:
             "shape_zyx": list(self.shape_zyx), "dtype_em": str(self.em.dtype),
             "dtype_seg": str(self._seg_ro.dtype) if self.has_seg else None,
             "voxel_size_nm": g.get("voxel_size_nm"), "origin": g.get("origin"), "dataset": self.meta.get("dataset", {}).get("id"),
-            "n_edits": len(self.edits()), "has_working_copy": (self.work / SEG_EDIT).exists(),
+            "n_edits": len(log := self.edits()), "editors": [r["by"] for r in self.editors(records=log)],
+            "last_edit": self.last_edit(log), "has_working_copy": (self.work / SEG_EDIT).exists(),
             "working_copy": str(self.work / SEG_EDIT), "workdir": str(self.work), "em_source": "em.npy",
             "em_version": "3-transposed",  # bump when the EM rendering changes; the viewer keys its image URLs on it
         }
@@ -173,12 +264,20 @@ class Block:
             self._seg_rw = np.load(self.work_path(SEG_EDIT), mmap_mode="r" if self.read_only else "r+")
         return self._seg_rw if self._seg_rw is not None else self._seg_ro
 
+    def _hold(self) -> None:
+        # 旧式无工作目录的调用者直接写在数据目录旁边——那里一个锁文件都不该留
+        if self.work != self.path:
+            hold_workdir(self.work.parent)
+        # 先把审计流水读进来：它要是坏了，就在写任何像素之前失败，而不是像素和 edits.jsonl 都写完了才在追加流水时抛错
+        self.audit_entries()
+
     def _seg_writable(self) -> np.ndarray:
         """Copy-on-write: materialise seg_edit.npy from seg.npy on first edit; seg.npy is never modified."""
         if self.read_only:
             raise ValueError("当前数据块以只读方式打开")
         if not self.has_seg:
             raise ValueError("block has no seg.npy")
+        self._hold()
         p = self.work / SEG_EDIT
         if self._seg_rw is None:
             if not p.exists():
@@ -343,6 +442,7 @@ class Block:
             return json.loads(path.read_text()) if path.exists() else []
 
     def new_id(self, z: int = 0) -> int:
+        self._hold()                     # created_labels.json 也是工作目录里的一笔写入
         """Reserve a reusable block label without changing pixels or edit history."""
         with self.lock:
             if self.read_only:
@@ -368,6 +468,7 @@ class Block:
     def _edit_dir(self) -> Path:
         if self.read_only:
             raise ValueError("当前数据块以只读方式打开")
+        self._hold()
         d = self.work / EDIT_DIR
         d.mkdir(parents=True, exist_ok=True)
         return d
@@ -399,9 +500,11 @@ class Block:
         return records
 
     def _record(self, kind: str, z: int | None, xs: np.ndarray, ys: np.ndarray, old, new_id: int, extra: dict | None = None,
-                zs: np.ndarray | None = None) -> dict:
+                zs: np.ndarray | None = None, by: "str | Actor | None" = None) -> dict:
         """Persist one edit: every changed voxel (x, y, z) and the id it had before. `z` is the section shown in the
-        UI (None for a 3-D edit spanning several sections); `zs` defaults to a constant z."""
+        UI (None for a 3-D edit spanning several sections); `zs` defaults to a constant z. `by` is who did it: the
+        logged-in user (an Actor with account name and id), or just a display name when running without accounts."""
+        actor = Actor.coerce(by)
         log = self.edits()
         n = (log[-1]["n"] + 1) if log else 1
         if zs is None:
@@ -412,16 +515,116 @@ class Block:
         rec = {"n": n, "kind": kind, "z": (None if z is None else int(z)), "n_px": int(xs.size),
                "new_id": (f"{int(np.unique(new_id).size)} 个 id" if many else str(int(new_id))),
                "old_id": (str(int(old)) if np.ndim(old) == 0 else None), "n_slices": int(np.unique(zs).size),
-               "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **(extra or {})}
+               "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "by": None, **(actor.stamp() if actor else {}), **(extra or {})}
         from emqc.annotate.provenance import source_for_edit
         rec["source"] = source_for_edit(rec)
         rec["provenance_version"] = 1
         self.work.mkdir(parents=True, exist_ok=True)
         with open(self.work / EDIT_LOG, "a") as f:
             f.write(json.dumps(rec) + "\n")
+        self._audit_append({"action": "edit", "by": None, **(actor.stamp() if actor else {}), "n": n, "kind": kind, "z": rec["z"],
+                            "n_px": rec["n_px"], "new_id": rec["new_id"], "n_slices": rec["n_slices"]})
         if self._max_id is not None:
             self._max_id = max(self._max_id, int(np.max(new_id)) if many else int(new_id))
         return rec
+
+    # ------------------------------------------------------------------ 谁改的：审计流水、切片版本、改动人
+    def _audit_append(self, entry: dict) -> dict:
+        with self.lock:
+            entries = self.audit_entries()
+            entry = {"seq": (int(entries[-1]["seq"]) + 1) if entries else 1, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **entry}
+            self.work.mkdir(parents=True, exist_ok=True)
+            p = self.work / AUDIT_LOG
+            # 上一次追加要是在半路断了（崩溃、磁盘满），文件末尾是半行：先把那半行切掉（audit_entries 读的时候已经
+            # 忽略了它），再追加，免得它留在文件中间变成一行读不出来的垃圾
+            if p.exists():
+                data = p.read_bytes()
+                if data and not data.endswith(b"\n"):
+                    with open(p, "r+b") as f:
+                        f.truncate(data.rfind(b"\n") + 1)
+            with open(p, "a") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            entries.append(entry)
+            return entry
+
+    def audit_entries(self) -> list[dict]:
+        """每一次写入和撤销，从旧到新。写入方缓存在内存里（本进程是唯一的写入者，见 hold_workdir）；
+        只读句柄（对比页）每次重读文件，才看得到工作台刚做的动作。
+
+        末尾那一行要是残缺的（追加时崩溃），丢掉它继续——这是追加日志唯一合理的损坏方式；
+        中间坏了则说明文件被人改过，拒绝读取，宁可停下也不给出错的"谁改的"。"""
+        cached = self._audit
+        if cached is not None:
+            return cached
+        with self.lock:
+            if self._audit is not None:
+                return self._audit
+            p = self.work_path(AUDIT_LOG)
+            entries: list[dict] = []
+            if p.exists():
+                lines = p.read_text().splitlines()
+                seq = 0
+                for i, line in enumerate(lines):
+                    if not line.strip():
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        if i == len(lines) - 1:
+                            log.warning("%s: 末尾一行残缺（上次追加中断），已忽略", p)
+                            break
+                        raise ValueError("审计日志格式损坏，无法可靠读取操作顺序")
+                    if not isinstance(e, dict) or type(e.get("seq")) is not int or e["seq"] <= seq:
+                        raise ValueError("审计日志格式损坏，无法可靠读取操作顺序")
+                    seq = e["seq"]
+                    entries.append(e)
+            if not self.read_only:
+                self._audit = entries
+            return entries
+
+    def slice_rev(self, z: int) -> int:
+        """第 z 片的版本号：最后一次动过它的操作（写入或撤销）的流水号，没动过是 0。
+
+        用它而不用改动次数，因为改动次数撤销后会退回去——A 看到的是 5，B 撤销一次变成 4，A 再来一笔又是 5，
+        什么都察觉不到。流水号只增不减，客户端拿着它就能问"我看过之后有没有人动过这一片"。"""
+        for e in reversed(self.audit_entries()):
+            if e.get("z") is None or e.get("z") == z:
+                return int(e["seq"])
+        return 0
+
+    def conflicts(self, z: int, since: int, by: "str | Actor | None") -> dict | None:
+        """版本 since 之后，别人（不是 `by`）对第 z 片做的最近一次操作；没有则 None。
+
+        两个人改同一片：各自对着自己加载时的画面下手。B 把一块区域改成了别的颜色，A 还对着旧画面点填充，
+        填的就是 A 没看见的东西。服务端没法替两个人合并意图，只能拒绝（409），让页面重新加载这一片再来。
+        自己的后续操作永远不算冲突：连续几笔涂抹到服务端的速度比页面重载快。"""
+        actor = Actor.coerce(by)
+        for e in reversed(self.audit_entries()):
+            if int(e["seq"]) <= since:
+                break
+            if (e.get("z") is None or e.get("z") == z) and not same_actor(e, actor):
+                return e
+        return None
+
+    def editors(self, z: int | None = None, records: list[dict] | None = None) -> list[dict]:
+        """谁在第 z 片（不给 z 就是整块）上有仍然有效的改动：每人一行，最近改过的排前面。旧记录没名字的归为一行 by=None。"""
+        rows: dict = {}
+        latest: dict = {}
+        for rec in (self.edits(z) if records is None else records):
+            by = rec.get("by") if isinstance(rec.get("by"), str) else None
+            r = rows.setdefault(by, {"by": by, "n": 0, "n_px": 0, "first": rec.get("ts"), "last": rec.get("ts")})
+            r["n"] += 1
+            r["n_px"] += int(rec.get("n_px") or 0)
+            if isinstance(rec.get("ts"), str):
+                r["last"] = rec["ts"]
+            latest[by] = int(rec.get("n") or 0)             # record numbers order edits within the same second too
+        return sorted(rows.values(), key=lambda r: -latest[r["by"]])
+
+    def last_edit(self, records: list[dict] | None = None) -> dict | None:
+        log = self.edits() if records is None else records
+        if not log:
+            return None
+        return {k: log[-1].get(k) for k in ("n", "kind", "z", "n_px", "ts", "by")}
 
     def _check_id(self, new_id: int) -> int:
         new_id = int(new_id)
@@ -429,7 +632,8 @@ class Block:
             raise ValueError("label id is outside the segmentation dtype range")
         return new_id
 
-    def apply_mask(self, z: int, mask: np.ndarray, new_id: int, metadata: dict, kind: str = "sam") -> dict | None:
+    def apply_mask(self, z: int, mask: np.ndarray, new_id: int, metadata: dict, kind: str = "sam",
+                   by: str | None = None) -> dict | None:
         """Apply a previewed mask (SAM) in display (y, x) coordinates; preserve exact undo."""
         self._check_z(z)
         if mask.shape != self.shape_zyx[1:] or mask.dtype != np.bool_:
@@ -446,13 +650,13 @@ class Block:
                 return None
             seg = self._seg_writable()
             old = seg[xs, ys, z].copy()
-            rec = self._record(kind, z, xs, ys, old, new_id, metadata)
+            rec = self._record(kind, z, xs, ys, old, new_id, metadata, by=by)
             seg[xs, ys, z] = new_id
             seg.flush()
             self._invalidate(z)
             return rec
 
-    def apply_labels(self, z: int, labels: np.ndarray, where: np.ndarray, metadata: dict) -> dict | None:
+    def apply_labels(self, z: int, labels: np.ndarray, where: np.ndarray, metadata: dict, by: str | None = None) -> dict | None:
         """Write many different ids at once, inside `where` — what repairing a destroyed section needs.
 
         Unlike every other operation this one has no single new id, so the record keeps the whole array of new ids
@@ -480,13 +684,13 @@ class Block:
             seg = self._seg_writable()
             old = seg[xs, ys, z].copy()
             new = labels.T[xs, ys].astype(seg.dtype)      # labels are in the displayed frame
-            rec = self._record("repair", z, xs, ys, old, new, metadata)
+            rec = self._record("repair", z, xs, ys, old, new, metadata, by=by)
             seg[xs, ys, z] = new
             seg.flush()
             self._invalidate(z)
             return rec
 
-    def clear_labels(self, z: int, ids) -> dict | None:
+    def clear_labels(self, z: int, ids, by: str | None = None) -> dict | None:
         """批量删除：把本片上这几个 id 的像素全部清为背景 0，记成一笔，可整笔撤销。只动第 z 片。"""
         self._check_z(z)
         ids = sorted({int(i) for i in ids} - {0})
@@ -503,9 +707,9 @@ class Block:
             plane[mask] = 0
             seg.flush()
             self._invalidate(z)
-            return self._record("clear", z, xs, ys, old, 0, {"scope": "batch", "ids": [str(i) for i in ids], "n_ids": len(ids)})
+            return self._record("clear", z, xs, ys, old, 0, {"scope": "batch", "ids": [str(i) for i in ids], "n_ids": len(ids)}, by=by)
 
-    def fill(self, z: int, x: int, y: int, new_id: int, whole_slice: bool = False) -> dict | None:
+    def fill(self, z: int, x: int, y: int, new_id: int, whole_slice: bool = False, by: str | None = None) -> dict | None:
         """Bucket fill: relabel the connected component of the clicked pixel (4-connectivity within the slice) to
         `new_id`; with whole_slice, every pixel of that id in the slice. Returns the edit record, or None if the
         clicked pixel already has new_id."""
@@ -525,9 +729,9 @@ class Block:
             plane[mask] = new_id
             seg.flush()
             self._invalidate(z)
-            return self._record("fill", z, xs, ys, old, new_id, {"x": int(x), "y": int(y), "whole_slice": bool(whole_slice)})
+            return self._record("fill", z, xs, ys, old, new_id, {"x": int(x), "y": int(y), "whole_slice": bool(whole_slice)}, by=by)
 
-    def paint(self, z: int, points: list[tuple[int, int]], radius: int, new_id: int) -> dict | None:
+    def paint(self, z: int, points: list[tuple[int, int]], radius: int, new_id: int, by: str | None = None) -> dict | None:
         """Brush: stamp a disc of `radius` at every point of the stroke (points are consecutive, so gaps are
         bridged by interpolation). Nonzero labels only fill background pixels; new_id=0 erases existing labels."""
         self._check_z(z)
@@ -562,9 +766,9 @@ class Block:
             plane[mask] = new_id
             seg.flush()
             self._invalidate(z)
-            return self._record("paint", z, xs, ys, old, new_id, {"radius": radius, "n_points": len(points)})
+            return self._record("paint", z, xs, ys, old, new_id, {"radius": radius, "n_points": len(points)}, by=by)
 
-    def merge_pair(self, z: int, first: tuple[int, int], second: tuple[int, int]) -> dict | None:
+    def merge_pair(self, z: int, first: tuple[int, int], second: tuple[int, int], by: str | None = None) -> dict | None:
         """Relabel only the second clicked 4-connected region using the first's id.
 
         Both ids are read under the edit lock, so stale client-side label tables
@@ -591,9 +795,9 @@ class Block:
             seg.flush()
             self._invalidate(z)
             return self._record("merge", z, xs, ys, from_id, to_id,
-                                {"scope": "component", "first": list(first), "second": list(second)})
+                                {"scope": "component", "first": list(first), "second": list(second)}, by=by)
 
-    def merge(self, from_id: int, to_id: int, scope: str = "block", z: int | None = None) -> dict | None:
+    def merge(self, from_id: int, to_id: int, scope: str = "block", z: int | None = None, by: str | None = None) -> dict | None:
         """Give every voxel of `from_id` the id `to_id` — the two cells become one segment (one colour).
         scope "block": all sections; "slice": only section z. Returns the edit record, or None if nothing changed."""
         if from_id == to_id:
@@ -618,14 +822,24 @@ class Block:
             xs, ys, zs = np.concatenate(xs_all), np.concatenate(ys_all), np.concatenate(zs_all)
             for k in np.unique(zs):
                 self._invalidate(int(k))
-            return self._record("merge", (int(z) if scope == "slice" else None), xs, ys, from_id, to_id, {"scope": scope}, zs=zs)
+            return self._record("merge", (int(z) if scope == "slice" else None), xs, ys, from_id, to_id, {"scope": scope}, zs=zs, by=by)
 
-    def undo(self, z: int | None = None) -> dict | None:
+    def undo(self, z: int | None = None, by: "str | Actor | None" = None, force: bool = False,
+             expect_n: int | None = None) -> dict | None:
         """Undo the latest edit in one slice, or the latest whole operation when z is omitted.
 
         A block-wide record is trimmed when only one of its slices is undone; its remaining
         voxels stay available for undo and provenance. Later edits on other slices are untouched.
+
+        多人时撤销是最危险的一键：撤销永远撤本片**最近**的一笔，而最近的一笔可能是别人刚做的。所以给了名字（by）
+        的撤销只能撤自己的；最近一笔是别人的就抛 UndoForbidden，让界面问清楚了再带 force 来。不给名字的调用
+        （脚本）照旧。为什么不允许"跳过别人的那笔撤我自己上一笔"：那笔记录里存的是改动前的旧值，别人后来在同一些
+        像素上写过的话，回填旧值会把他的改动一起冲掉。
+
+        `expect_n` 把撤销钉在一条记录上：界面确认"撤销 李四 的 #7"之后到请求到达之间，本片可能又多了一笔；
+        钉住了就不会撤错。
         """
+        actor = Actor.coerce(by)
         if z is not None:
             self._check_z(z)
         with self.lock:
@@ -639,6 +853,11 @@ class Block:
             if selected is None:
                 return None
             index, rec, undone = selected
+            if expect_n is not None and int(rec["n"]) != int(expect_n):
+                raise UndoMismatch(undone, int(expect_n))
+            owner = rec.get("by") if isinstance(rec.get("by"), str) else None
+            if actor is not None and owner is not None and not same_actor(rec, actor) and not force:
+                raise UndoForbidden(undone)
             f = self._edit_dir() / f"{rec['n']:06d}.npz"
             with np.load(f, allow_pickle=False) as data:
                 d = {key: data[key] for key in data.files}
@@ -669,6 +888,10 @@ class Block:
             log_path.replace(self.work / EDIT_LOG)
             for k in np.unique(zs[chosen]):
                 self._invalidate(int(k))
+            self._audit_append({"action": "undo", "by": None, **(actor.stamp() if actor else {}), "n": int(rec["n"]),
+                                "kind": rec.get("kind"), "z": (None if z is None else int(z)), "n_px": int(undone.get("n_px") or 0),
+                                "of": owner, "of_user": rec.get("by_user"), "of_id": rec.get("by_id"),
+                                "forced": bool(force and owner is not None and not same_actor(rec, actor))})
             # deliberately NOT resetting _max_id: recomputing it rescans the whole volume (1.2 s on a 1024²x100
             # block) and it is only ever used to hand out an unused id. Staying high is safe — ids just skip —
             # and it also guarantees an undone id is never handed out again while its edit record still exists.
@@ -701,11 +924,14 @@ class AnnotateStore:
             return {"block_id": key, "error": str(b)}
         z, y, x = b.shape_zyx
         try:
-            n_edits, history_error = len(b.edits()), None
+            log = b.edits()
+            n_edits, history_error = len(log), None
+            editors, last = [r["by"] for r in b.editors(records=log)], b.last_edit(log)
         except (OSError, ValueError) as e:
-            n_edits, history_error = None, str(e)
+            n_edits, history_error, editors, last = None, str(e), [], None
         return {"block_id": b.id, "has_seg": b.has_seg, "nz": z, "height": y, "width": x, "dataset": b.meta.get("dataset", {}).get("id"),
-                "n_edits": n_edits, "history_error": history_error, "has_working_copy": b.work_path(SEG_EDIT).exists(), "path": str(b.path),
+                "n_edits": n_edits, "history_error": history_error, "editors": editors, "last_edit": last,
+                "has_working_copy": b.work_path(SEG_EDIT).exists(), "path": str(b.path),
                 # always em.npy: since sections are displayed transposed, the delivery's own PNGs can no longer be
                 # served verbatim, so visual/slices_em is not an EM source any more (see em_png)
                 "em_source": "em.npy", "voxel_size_nm": b.meta.get("geometry", {}).get("voxel_size_nm")}

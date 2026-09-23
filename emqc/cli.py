@@ -10,6 +10,66 @@ from pathlib import Path
 from emqc.config import settings
 
 
+def cmd_create_user(args):
+    """建账号。密码从 --password-stdin 读一行（脚本 / ssh 用，不进 argv 和历史），或交互输入；留空则生成初始密码。"""
+    import getpass
+    import sys
+
+    from emqc import auth
+    from emqc.db import init_db, session_scope
+
+    init_db()
+    if args.password_stdin:
+        pw = sys.stdin.readline().rstrip("\r\n") or None
+    else:
+        pw = getpass.getpass("密码（至少 8 位；留空则生成一个初始密码）：") or None
+    try:
+        with session_scope() as s:
+            u, issued = auth.create_user(s, args.username, pw, args.display, args.role, must_change=args.must_change or None)
+            print(f"已创建 {u.username}（{auth.ROLE_NAMES[u.role]}，显示名 {u.display_name}）")
+            if issued:
+                print(f"初始密码：{issued}   ← 首次登录必须修改")
+    except ValueError as e:
+        print(f"没有创建：{e}")
+        return 1
+    return 0
+
+
+def cmd_users(_):
+    from emqc import auth
+    from emqc.db import init_db, session_scope
+    from emqc.db.models import User
+    from sqlalchemy import select
+
+    init_db()
+    with session_scope() as s:
+        rows = list(s.scalars(select(User).order_by(User.id)))
+        if not rows:
+            print("还没有任何账号：python -m emqc create-user --username <登录名> --role admin --display <显示名>")
+        for u in rows:
+            print(f"{u.id:>4}  {u.username:<20} {u.display_name:<16} {auth.ROLE_NAMES.get(u.role, u.role):<6} "
+                  f"{'可用' if u.is_active else '停用'}  最近登录 {u.last_login_at or '—'}{'  [待改初始密码]' if u.must_change_password else ''}")
+    return 0
+
+
+def cmd_reset_password(args):
+    from emqc import auth
+    from emqc.db import init_db, session_scope
+    from emqc.db.models import User
+    from sqlalchemy import select
+
+    init_db()
+    with session_scope() as s:
+        u = s.scalar(select(User).where(User.username == auth.normalize_username(args.username)))
+        if u is None:
+            print("没有这个账号")
+            return 1
+        temp = auth.temp_password()
+        auth.set_password(s, u, temp, must_change=True)
+        print(f"{u.username} 的初始密码：{temp}   ← 首次登录必须修改；其它已登录会话已全部退出")
+    return 0
+
+
 def cmd_init_db(_):
     from emqc.db import init_db
 
@@ -214,6 +274,17 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="emqc", description="EM Image QC platform v0.1")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init-db", help="create tables").set_defaults(fn=cmd_init_db)
+    cu = sub.add_parser("create-user", help="登录系统：建账号（admin 管理员 / reviewer 审核员 / annotator 标注员）")
+    cu.add_argument("--username", required=True)
+    cu.add_argument("--display", default=None, help="记录里显示的名字，默认同登录名")
+    cu.add_argument("--role", default="annotator", choices=["admin", "reviewer", "annotator"])
+    cu.add_argument("--password-stdin", action="store_true", help="从标准输入读一行密码（不进 argv）")
+    cu.add_argument("--must-change", action="store_true", help="首次登录必须修改密码")
+    cu.set_defaults(fn=cmd_create_user)
+    sub.add_parser("users", help="登录系统：列出账号").set_defaults(fn=cmd_users)
+    rp = sub.add_parser("reset-password", help="登录系统：给某账号发一个新的初始密码")
+    rp.add_argument("--username", required=True)
+    rp.set_defaults(fn=cmd_reset_password)
     sp = sub.add_parser("scan", help="discover datasets under the data root and register them")
     sp.add_argument("--data-root")
     sp.set_defaults(fn=cmd_scan)

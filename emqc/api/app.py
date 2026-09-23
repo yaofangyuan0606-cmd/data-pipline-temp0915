@@ -11,7 +11,7 @@ from emqc import __version__
 from emqc.config import settings
 from emqc.db import init_db, recover_stale_runs
 
-from .routers import crawl, dashboard, data, datasets, delivery, patches, qc, traces, annotate
+from .routers import auth, crawl, dashboard, data, datasets, delivery, patches, qc, traces, annotate
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).resolve().parent
@@ -42,6 +42,7 @@ app.include_router(delivery.exports)
 app.include_router(delivery.streams)
 app.include_router(patches.router)
 app.include_router(crawl.router)
+app.include_router(auth.router)
 app.include_router(annotate.router)
 app.include_router(dashboard.router)
 Path(settings.preview_dir).mkdir(parents=True, exist_ok=True)

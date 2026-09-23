@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}用户管理{% endblock %}
+{% block crumbs %}<a href="/annotate">切片标注</a> › <b>用户管理</b>{% endblock %}
+{% block topright %}<a class="btn" href="/annotate">返回工作台</a>{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>用户管理</h1><p class="sub">账号只停用不删除：旧记录里的标注人还要能对回人。管理员管账号、能撤任何人的改动；审核员能改、能撤别人的改动；标注员能改，只能撤自己的。</p></div></div>
+<div class="card" id="users-create">
+  <h2 style="margin-top:0">新建账号</h2>
+  <form id="new-user" class="users-form">
+    <div class="field"><label>登录名 <span class="muted">小写字母 / 数字 / _ . -</span></label><input class="text mono" name="username" required minlength="2" maxlength="32" autocomplete="off"></div>
+    <div class="field"><label>显示名 <span class="muted">记录里写的名字</span></label><input class="text" name="display_name" maxlength="64" autocomplete="off"></div>
+    <div class="field"><label>角色</label><select class="text" name="role"><option value="annotator">标注员</option><option value="reviewer">审核员</option><option value="admin">管理员</option></select></div>
+    <div class="field"><label>初始密码 <span class="muted">留空则自动生成</span></label><input class="text" name="password" type="text" minlength="8" maxlength="72" autocomplete="off"></div>
+    <div class="actions"><button type="submit" class="primary">创建</button></div>
+  </form>
+  <div class="card temp-pw" id="temp-pw" hidden></div>
+</div>
+<div class="card pad-0" style="margin-top:12px">
+  <table class="dense"><thead><tr><th>#</th><th>登录名</th><th>显示名</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody id="users-rows"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody></table>
+</div>
+<p class="muted" id="users-msg" role="status" style="font-size:12px"></p>
+<script>
+(() => {
+  const $ = id => document.getElementById(id), esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const ME = {{ {'id': user.id, 'username': user.username}|tojson }};
+  const ROLE = {admin: "管理员", reviewer: "审核员", annotator: "标注员"};
+  async function call(url, opts) {
+    const r = await fetch(url, {headers: {"Content-Type": "application/json"}, ...opts});
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) { const d = body.detail; throw new Error(typeof d === "string" ? d : d?.message || `失败 (${r.status})`); }
+    return body;
+  }
+  function showTemp(u, pw) {
+    const box = $("temp-pw"); box.hidden = false;
+    box.innerHTML = `<b>${esc(u.display_name)}</b>（登录名 <span class="mono">${esc(u.username)}</span>）的初始密码：<code class="mono">${esc(pw)}</code><br><span class="muted">只显示这一次，请现在交给本人；首次登录必须修改。</span>`;
+  }
+  async function load() {
+    try {
+      const r = await call("/api/v1/auth/users");
+      $("users-rows").innerHTML = r.users.map(u => `<tr class="${u.is_active ? "" : "user-off"}"><td class="mono">${u.id}</td><td class="mono">${esc(u.username)}</td><td>${esc(u.display_name)}</td>
+        <td><select class="text role" data-id="${u.id}" ${u.id === ME.id ? "disabled" : ""}>${Object.entries(ROLE).map(([k, v]) => `<option value="${k}" ${k === u.role ? "selected" : ""}>${v}</option>`).join("")}</select></td>
+        <td>${u.is_active ? '<span class="pill ok">可用</span>' : '<span class="pill stub">停用</span>'}${u.must_change_password ? ' <span class="pill warn" title="拿着初始密码，还没改">待改密码</span>' : ""}</td>
+        <td class="mono muted">${esc((u.last_login_at || "—").replace("T", " "))}</td>
+        <td class="actions" style="flex-wrap:nowrap"><button data-act="reset" data-id="${u.id}">重置密码</button>${u.id === ME.id ? "" : `<button data-act="${u.is_active ? "off" : "on"}" data-id="${u.id}" class="${u.is_active ? "danger" : ""}">${u.is_active ? "停用" : "启用"}</button>`}</td></tr>`).join("");
+    } catch (e) { $("users-msg").textContent = e.message; }
+  }
+  $("new-user").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const f = ev.target, body = {username: f.username.value.trim(), display_name: f.display_name.value.trim() || null, role: f.role.value, password: f.password.value || null};
+    try {
+      const r = await call("/api/v1/auth/users", {method: "POST", body: JSON.stringify(body)});
+      $("users-msg").textContent = `已创建 ${r.user.display_name}`;
+      if (r.temp_password) showTemp(r.user, r.temp_password); else $("temp-pw").hidden = true;
+      f.reset(); load();
+    } catch (e) { $("users-msg").textContent = e.message; }
+  });
+  $("users-rows").addEventListener("change", async ev => {
+    const sel = ev.target.closest("select.role"); if (!sel) return;
+    try { await call(`/api/v1/auth/users/${sel.dataset.id}`, {method: "PATCH", body: JSON.stringify({role: sel.value})}); $("users-msg").textContent = "角色已更新"; }
+    catch (e) { $("users-msg").textContent = e.message; } finally { load(); }
+  });
+  $("users-rows").addEventListener("click", async ev => {
+    const b = ev.target.closest("button[data-act]"); if (!b) return;
+    const id = b.dataset.id, row = b.closest("tr"), name = row.children[2].textContent;
+    try {
+      if (b.dataset.act === "reset") { if (!confirm(`给 ${name} 发一个新的初始密码？现有登录会全部退出。`)) return; const r = await call(`/api/v1/auth/users/${id}/reset-password`, {method: "POST"}); showTemp(r.user, r.temp_password); }
+      else { const on = b.dataset.act === "on"; if (!on && !confirm(`停用 ${name}？立刻退出其所有登录，历史记录保留。`)) return; await call(`/api/v1/auth/users/${id}`, {method: "PATCH", body: JSON.stringify({is_active: on})}); $("users-msg").textContent = on ? `已启用 ${name}` : `已停用 ${name}`; }
+    } catch (e) { $("users-msg").textContent = e.message; } finally { load(); }
+  });
+  load();
+})();
+</script>
+{% endblock %}

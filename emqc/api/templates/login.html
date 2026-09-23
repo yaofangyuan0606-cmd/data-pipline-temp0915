@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 切片标注</title>
+<link rel="stylesheet" href="/static/style.css?v={{ static_v('style.css') }}">
+</head>
+<body class="ws-annotate login-body">
+<main class="login-wrap">
+  <form class="card login-card" id="login-form" autocomplete="on">
+    <div class="login-brand"><span class="logo">AN</span><div><b>切片标注</b><small>EM 分割标注与溯源</small></div></div>
+    <p class="muted" style="margin:0 0 6px">登录后每一笔改动都会记在你的名字下，前后对比和导出里都能追溯到是谁改的。</p>
+    <div class="field"><label for="login-user">登录名</label><input id="login-user" class="text mono" name="username" autocomplete="username" autofocus required maxlength="64"></div>
+    <div class="field"><label for="login-pass">密码</label><input id="login-pass" class="text" name="password" type="password" autocomplete="current-password" required maxlength="256"></div>
+    <div class="login-error" id="login-error" role="alert" hidden></div>
+    <div class="actions"><button type="submit" class="primary" id="login-btn">登录</button><span class="muted" id="login-note" style="font-size:12px"></span></div>
+  </form>
+</main>
+<script>
+  const next = {{ next|tojson }};
+  const form = document.getElementById("login-form"), err = document.getElementById("login-error"), btn = document.getElementById("login-btn");
+  fetch("/api/v1/auth/status").then(r => r.json()).then(s => {
+    if (s.auth_disabled) { location.href = next; return; }
+    if (s.has_users === false) document.getElementById("login-note").textContent = "还没有任何账号：请在服务器上运行 python -m emqc create-user --role admin 建第一个管理员";
+  }).catch(() => {});
+  form.addEventListener("submit", async ev => {
+    ev.preventDefault();
+    err.hidden = true; btn.disabled = true;
+    try {
+      const r = await fetch("/api/v1/auth/login", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({username: form.username.value.trim(), password: form.password.value})});
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { const d = body.detail; throw new Error(typeof d === "string" ? d : d?.message || `登录失败 (${r.status})`); }
+      location.href = body.user?.must_change_password ? "/account?force=1&next=" + encodeURIComponent(next) : next;
+    } catch (e) { err.textContent = e.message; err.hidden = false; btn.disabled = false; form.password.focus(); form.password.select(); }
+  });
+</script>
+</body>
+</html>

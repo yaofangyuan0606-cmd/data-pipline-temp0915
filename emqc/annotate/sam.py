@@ -108,7 +108,7 @@ class SAMService:
             now = time.monotonic()
             self.proposals = OrderedDict((k, v) for k, v in self.proposals.items() if now - v["created"] < 900)
             self.proposals[token] = {"path": str(block.path.resolve()), "work": str(block.work.resolve()), "z": z, "mask": mask,
-                                     "revision": revision(block), "created": now,
+                                     "revision": revision(block), "slice_rev": block.slice_rev(z), "created": now,
                                      "score": float(scores[best]), "points": points, "labels": labels, "box": box,
                                      "only_background": only_background, "candidate": best,
                                      "snap_boundary": snapped, "boundary_sensitivity": float(boundary_sensitivity)}
@@ -136,7 +136,7 @@ class SAMService:
                 raise ValueError("预览不属于当前数据块")
             return p
 
-    def apply(self, block, token, new_id):
+    def apply(self, block, token, new_id, by=None):
         with block.lock, self.lock:
             p = self.proposals.get(token)
             if p is None or time.monotonic() - p["created"] >= 900:
@@ -145,13 +145,16 @@ class SAMService:
                 raise ValueError("预览不属于当前数据块")
             if p["work"] != str(block.work.resolve()):
                 raise ValueError("标注工作目录已变化，请重新预测")
-            if p["revision"] != revision(block):
-                raise ValueError("标注已变化，请重新预测后应用")
+            # 预览只依赖这一片的图像和标签，所以只看这一片的版本：多人各改各的片时，别人的改动不会让你的预览作废。
+            # 旧式预览（测试里手工造的）没有 slice_rev，退回整块文件指纹。
+            stale = (p["slice_rev"] != block.slice_rev(p["z"])) if p.get("slice_rev") is not None else (p["revision"] != revision(block))
+            if stale:
+                raise ValueError("本片标注已变化，请重新预测后应用")
             rec = block.apply_mask(p["z"], p["mask"], new_id,
                                    {"model": "SAM 2.1", "config": settings.sam_config, "score": p["score"],
                                     "points": p["points"], "labels": p["labels"], "box": p["box"],
                                     "only_background": p["only_background"], "candidate": p["candidate"],
-                                    "snap_boundary": p.get("snap_boundary", False)})
+                                    "snap_boundary": p.get("snap_boundary", False)}, by=by)
             self.proposals.pop(token)
             return rec
 

@@ -359,6 +359,14 @@ button.danger { background: #b42318; color: #fff; border-color: #b42318; }
 button.danger:disabled { opacity: .5; }
 .an-confirm { border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; max-width: 420px; }
 .an-confirm::backdrop { background: rgba(0,0,0,.35); }
+.an-confirm input.text { width: 100%; margin: 6px 0 12px; }
+/* 标注人：顶栏的名字框；本片历史下的"改动人"一行；同块在线提示（有人也在本片时变成警示色） */
+.an-who { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.an-who input { width: 118px; padding: 4px 8px; font-size: 12.5px; }
+.an-editors { font-size: 12px; margin-top: 4px; line-height: 1.5; }
+.an-presence { margin-top: 6px; padding: 5px 8px; border-radius: var(--r-s); background: var(--surface-2); border: 1px solid var(--border); font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.an-presence.same { border-color: var(--medium); background: color-mix(in srgb, var(--medium) 18%, var(--surface)); color: var(--text); }
+.vast-edits .row .by { color: var(--muted); }
 .an-confirm h3 { margin: 0 0 8px; font-size: 15px; }
 .an-confirm p { font-size: 13px; line-height: 1.6; margin: 0 0 12px; }
 .an-confirm .an-bulk-ids { margin-top: 8px; font-size: 11px; color: var(--muted); word-break: break-all; }
@@ -375,3 +383,19 @@ button.danger:disabled { opacity: .5; }
 .vast-stage[data-tool="sam"] { cursor: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2226%22%20height%3D%2226%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cg%20stroke%3D%22%23fff%22%20stroke-width%3D%224.5%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%223%22%2F%3E%3Cpath%20d%3D%22M12%202v5M12%2017v5M2%2012h5M17%2012h5%22%2F%3E%3C%2Fg%3E%3Cg%20stroke%3D%22%23111%22%20stroke-width%3D%222%22%3E%3Ccircle%20cx%3D%2212%22%20cy%3D%2212%22%20r%3D%223%22%2F%3E%3Cpath%20d%3D%22M12%202v5M12%2017v5M2%2012h5M17%2012h5%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E") 12 12, crosshair; }
 .vast-stage[data-tool="sam-box"] { cursor: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2226%22%20height%3D%2226%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cg%20stroke%3D%22%23fff%22%20stroke-width%3D%224.5%22%3E%3Cpath%20d%3D%22M4%204h6M14%204h6M4%204v6M4%2014v6M20%204v6M20%2014v6M4%2020h6M14%2020h6%22%2F%3E%3C%2Fg%3E%3Cg%20stroke%3D%22%23111%22%20stroke-width%3D%222%22%3E%3Cpath%20d%3D%22M4%204h6M14%204h6M4%204v6M4%2014v6M20%204v6M20%2014v6M4%2020h6M14%2020h6%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E") 12 12, crosshair; }
 .vast-stage[data-tool="pan"] { cursor: grab; } .vast-stage.panning { cursor: grabbing; }
+
+/* 登录系统：顶栏用户菜单、登录页、账号页、用户管理 */
+.user-menu { display: inline-flex; align-items: center; gap: 6px; }
+.login-body { display: flex; min-height: 100vh; align-items: center; justify-content: center; background: var(--bg); }
+.login-wrap { width: min(400px, calc(100vw - 32px)); }
+.login-card { padding: 22px 24px; }
+.login-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.login-brand .logo { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: var(--accent); color: #fff; font: 700 13px var(--mono); }
+.login-brand small { display: block; color: var(--muted); font-size: 12px; }
+.login-error { margin: 6px 0 10px; padding: 8px 10px; border-radius: var(--r-s); background: color-mix(in srgb, var(--high) 12%, var(--surface)); color: var(--high); font-size: 13px; }
+.notice-force { margin-bottom: 12px; border-color: var(--medium); background: color-mix(in srgb, var(--medium) 14%, var(--surface)); }
+.users-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 14px; align-items: end; }
+.users-form .actions { margin: 10px 0; }
+.temp-pw { margin-top: 10px; border-color: var(--accent-line); background: var(--accent-soft); font-size: 13px; }
+.temp-pw code { font-size: 15px; padding: 2px 6px; background: var(--surface); border-radius: 4px; }
+tr.user-off td { color: var(--muted); }

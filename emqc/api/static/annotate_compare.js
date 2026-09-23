@@ -131,9 +131,10 @@
   function renderChanges() {
     const changes = state.snapshot.changes || {regions: [], n_total: 0, hidden: 0, hidden_px: 0}, report = state.snapshot.report;
     const regions = changes.regions;
-    $("regions-count").textContent = changes.n_total ? `${fmt(changes.n_total)} 处 · 共 ${fmt(report.changed_px)} 像素` : "";
-    $("regions").innerHTML = regions.map((g, i) => `<tr class="cmp-click" data-region="${i}" tabindex="0"><td class="mono">${g.cx}, ${g.cy}</td><td>${fmt(g.px)}</td><td>${idCell(g.from_id)} → ${idCell(g.to_id)}</td></tr>`).join("")
-      || `<tr><td colspan="3" class="muted">${report.has_seg ? "这一片与原始分割完全一致。" : "此数据块没有分割标签。"}</td></tr>`;
+    const editors = (report.editors || []).filter(e => e.pixels).map(e => e.by ?? "未署名");
+    $("regions-count").textContent = changes.n_total ? `${fmt(changes.n_total)} 处 · 共 ${fmt(report.changed_px)} 像素${editors.length ? ` · 改动人 ${editors.join("、")}` : ""}` : "";
+    $("regions").innerHTML = regions.map((g, i) => `<tr class="cmp-click" data-region="${i}" tabindex="0"><td class="mono">${g.cx}, ${g.cy}</td><td>${fmt(g.px)}</td><td>${idCell(g.from_id)} → ${idCell(g.to_id)}</td><td>${g.by ? esc(g.by) : '<span class="muted">—</span>'}</td></tr>`).join("")
+      || `<tr><td colspan="4" class="muted">${report.has_seg ? "这一片与原始分割完全一致。" : "此数据块没有分割标签。"}</td></tr>`;
     $("regions-more").textContent = changes.hidden ? `另有 ${fmt(changes.hidden)} 处更小的改动，合计 ${fmt(changes.hidden_px)} 像素，未逐条列出。` : "";
     // "新增了哪些标签" in practice means the whole balance sheet: what appeared, what grew, what was merged away.
     // Strictly-new ids are often none — merging and clearing reuse ids that were already in the baseline.
@@ -167,9 +168,27 @@
     $("policy").textContent = r.policy;
     $("warnings").hidden = !r.warnings.length; $("warnings").replaceChildren(...r.warnings.map(w => { const p = document.createElement("p"); p.textContent = w; return p; }));
     const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", split:"切割 / 分离（历史）", sam:"SAM 应用", repair:"插值修补", smartfill:"智能填充（历史）"};
-    $("operations").innerHTML = r.operations.slice().reverse().map(e => `<tr><td>#${e.n} ${esc(kinds[e.kind] || e.kind)}</td><td>${esc(names[e.source])}</td><td>${esc(e.ts || "—")}</td><td>${fmt(e.n_px_in_slice)}</td><td>${fmt(e.current_px)}</td><td>${esc(e.model || (e.source_sections ? `Z ${e.source_sections.join(", ")}` : "—"))}</td></tr>`).join("") || '<tr><td colspan="6">当前切片没有可读取的有效编辑记录。</td></tr>';
+    $("operations").innerHTML = r.operations.slice().reverse().map(e => `<tr><td>#${e.n} ${esc(kinds[e.kind] || e.kind)}</td><td>${esc(e.by ?? "未署名")}</td><td>${esc(names[e.source])}</td><td>${esc(e.ts || "—")}</td><td>${fmt(e.n_px_in_slice)}</td><td>${fmt(e.current_px)}</td><td>${esc(e.model || (e.source_sections ? `Z ${e.source_sections.join(", ")}` : "—"))}</td></tr>`).join("") || '<tr><td colspan="7">当前切片没有可读取的有效编辑记录。</td></tr>';
     rows();
   }
+  // 操作流水（audit.jsonl）：包括被撤销的动作和撤销本身，只在展开时才去取
+  let auditFor = "";
+  async function renderAudit() {
+    const box = $("audit");
+    if (!box || !box.open || !state.block) return;
+    const key = `${state.block}:${state.z}`;
+    if (auditFor === key) return;
+    auditFor = key;
+    $("audit-rows").innerHTML = '<tr><td colspan="6" class="muted">加载中…</td></tr>';
+    try {
+      const r = await json(`${API}/${encodeURIComponent(state.block)}/audit?z=${state.z}&limit=300`);
+      if (auditFor !== key) return;
+      const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", sam:"SAM 应用", repair:"插值修补", clear:"批量删除"};
+      $("audit-rows").innerHTML = r.entries.map(e => `<tr class="${e.action === "undo" ? "cmp-undo" : ""}"><td>${e.seq}</td><td>${esc(e.ts || "—")}</td><td>${esc(e.by ?? "未署名")}</td><td>${e.action === "undo" ? `撤销 #${e.n}${e.forced ? "（强制）" : ""}` : `#${e.n} ${esc(kinds[e.kind] || e.kind || "")}${e.z == null ? " · 整块" : ""}`}</td><td>${fmt(e.n_px ?? 0)}</td><td>${e.action === "undo" ? esc(e.of ?? "未署名") : '<span class="muted">—</span>'}</td></tr>`).join("")
+        || '<tr><td colspan="6" class="muted">这一片还没有任何操作。</td></tr>';
+    } catch (err) { if (auditFor === key) { auditFor = ""; $("audit-rows").innerHTML = `<tr><td colspan="6" class="muted">读取失败：${esc(err.message)}</td></tr>`; } }
+  }
+  $("audit")?.addEventListener("toggle", renderAudit);
   async function load(z = state.z, force = false) {
     const block = state.blocks.find(b => b.block_id === $("block").value); if (!block) return;
     if (play.timer && !play.internal) stopPlay(false);           // 手动翻页/换块/刷新：先停播
@@ -182,7 +201,7 @@
     state.controller?.abort(); state.controller = new AbortController();
     const serial = ++state.serial;
     state.block = block.block_id; state.z = nextZ;
-    state.images = state.snapshot = null; state.page = 0;
+    state.images = state.snapshot = null; state.page = 0; auditFor = "";
     $("page").setAttribute("aria-busy", "true");
     // Keep the existing layout while loading: hiding it collapses the document and resets image pan.
     $("page").classList.remove("cmp-load-failed");
@@ -196,12 +215,13 @@
     history.replaceState(null, "", `/annotate/compare?${params}`); $("edit").href = `/annotate?${params}`;
     try {
       const data = await json(`${API}/${encodeURIComponent(state.block)}/compare/${state.z}`, state.controller.signal);
-      const [em, before, after, sources, changes] = await Promise.all([data.em_png, data.before.png, data.after.png, data.sources_png, data.changes_png].map(image));
+      const [em, before, after, sources, changes, editors] = await Promise.all([data.em_png, data.before.png, data.after.png, data.sources_png, data.changes_png, data.editors_png].map(u => u ? image(u) : null));
       if (serial !== state.serial) return;
-      state.snapshot = data; state.images = {em, indices:[decode(before, true), decode(after, true)], sources:decode(sources), changes:decode(changes)};
+      // editors: 每个像素最后是谁写的（0 = 无记录，k = data.editors[k-1]）
+      state.snapshot = data; state.images = {em, indices:[decode(before, true), decode(after, true)], sources:decode(sources), changes:decode(changes), editors: editors ? decode(editors) : null};
       frames.set(frameKey(state.block, state.z), {snapshot: data, images: state.images});
       trimFrames();
-      draw(); renderReport(); renderChanges();
+      draw(); renderReport(); renderChanges(); renderAudit();
       dirButtons().forEach(b => { b.disabled = false; });
       for (const id of ["images", "report", "summary"]) $(id).hidden = false;
       ngSync();
@@ -229,10 +249,12 @@
       let blob;
       if (scope === "slice" && format === "json") blob = new Blob([JSON.stringify(saved, null, 2)], {type:"application/json"});
       else if (scope === "slice") {
-        const headers = ["block_id", "z", "label_id", "before_px", "current_px", "changed_px", ...saved.source_legend.map(s => s.key), "mixed"];
+        const headers = ["block_id", "z", "label_id", "before_px", "current_px", "changed_px", ...saved.source_legend.map(s => s.key), "mixed", "editors"];
         const csvCell = v => `"${String(v).replace(/"/g, '""')}"`;
-        const safeBlock = /^[=+\-@\t\r\n]/.test(block) ? "'"+block : block;
-        const lines = saved.labels.map(r => [safeBlock,z,r.id,r.before_px,r.current_px,r.changed_px,...saved.source_legend.map(s => r.sources[s.key]),r.mixed].map(csvCell).join(","));
+        const guard = s => /^[=+\-@\t\r\n]/.test(s) ? "'"+s : s;        // 名字也是用户输入，同样防公式注入
+        const safeBlock = guard(block);
+        const editorsOf = r => guard((r.editors || []).map(e => `${e.by ?? "未署名"}:${e.px}`).join(";"));
+        const lines = saved.labels.map(r => [safeBlock,z,r.id,r.before_px,r.current_px,r.changed_px,...saved.source_legend.map(s => r.sources[s.key]),r.mixed,editorsOf(r)].map(csvCell).join(","));
         blob = new Blob(["\ufeff"+headers.join(",")+"\r\n"+lines.join("\r\n")+"\r\n"], {type:"text/csv;charset=utf-8"});
       } else {
         const response = await fetch(`${API}/${encodeURIComponent(block)}/provenance?format=${format}`, {cache:"no-store"});
@@ -260,8 +282,10 @@
       if (x<0 || y<0 || x>=canvas.width || y>=canvas.height) return;
       const i = y*canvas.width+x, {indices, sources} = state.images, data = state.snapshot;
       const src = sources && data.report.source_legend?.[sources[i]] ? `    来源：${data.report.source_legend[sources[i]].name}` : "";
+      const k = state.images.editors ? state.images.editors[i] : 0;
+      const who = k ? `    标注人：${data.editors?.[k - 1] ?? "未署名"}` : "";
       const orig = indices[0] && data.before ? `原始 ${data.before.ids[indices[0][i]]} → ` : "";
-      $("pixel").textContent = `X ${x} · Y ${y} · Z ${state.z}    ${orig}当前 ${data.after.ids[indices[1][i]]}${src}`;
+      $("pixel").textContent = `X ${x} · Y ${y} · Z ${state.z}    ${orig}当前 ${data.after.ids[indices[1][i]]}${src}${who}`;
       ngHover(x, y);
       document.querySelectorAll(".cmp-cursor").forEach(c => { c.hidden = false; c.style.left = `${(x+.5)/canvas.width*100}%`; c.style.top = `${(y+.5)/canvas.height*100}%`; });
     });

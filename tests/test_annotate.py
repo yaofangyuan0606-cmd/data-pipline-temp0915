@@ -362,7 +362,8 @@ def test_slice_history_and_undo_leave_other_slices_untouched(tmp_path, monkeypat
         assert c.post(url + '/undo?z=0').json()['undone']['n'] == 1
         assert b.pick(0, 12, 12) == int(original[12, 12, 0]) and b.pick(1, 12, 12) == 202
         assert c.post(url + '/undo?z=0').json()['undone'] is None
-        assert c.get(url + '/edits?z=0').json() == {'n': 0, 'edits': []}
+        history = c.get(url + '/edits?z=0').json()
+        assert (history['n'], history['edits'], history['editors']) == (0, [], [])
         assert [r['n'] for r in b.edits()] == [2]
         b = Block(data, tmp_path / 'work')
         rec = b.paint(0, [(12, 12)], 0, 404)

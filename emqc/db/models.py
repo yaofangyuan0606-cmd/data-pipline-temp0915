@@ -499,3 +499,35 @@ class CrawlEvent(Base):
     level: Mapped[str] = mapped_column(String(8), default="info")
     message: Mapped[str] = mapped_column(String(512))
     data_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+# ----------------------------------------------------------------------------- 账号与登录（切片标注工作区）
+class User(Base):
+    """一个能登录的人。角色三种：admin 管理员（管账号，什么都能做）、reviewer 审核员（能改、能撤别人的改动）、
+    annotator 标注员（能改，只能撤自己的）。停用（is_active=False）而不是删除：旧记录里的 by_id 还要能对回人。"""
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)   # 登录名，小写
+    display_name: Mapped[str] = mapped_column(String(64), default="")                # 记录里显示的名字（by）
+    password_hash: Mapped[str] = mapped_column(String(128), nullable=False)          # bcrypt
+    role: Mapped[str] = mapped_column(String(16), default="annotator")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)       # 管理员发的初始密码，首次登录要改
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    created_by: Mapped[int | None] = mapped_column(Integer)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class AuthSession(Base):
+    """一次登录。Cookie 里是随机令牌，这里只存它的 SHA-256——库泄露了也拿不到能用的 Cookie。"""
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    user_agent: Mapped[str] = mapped_column(String(255), default="")
+    ip: Mapped[str] = mapped_column(String(64), default="")

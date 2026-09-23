@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
   "numpy", "scipy", "pillow", "tifffile",
   "fastapi", "uvicorn[standard]", "jinja2", "python-multipart",
-  "sqlalchemy>=2.0", "pymysql", "cryptography<45", "pydantic-settings", "psutil", "paramiko",
+  "sqlalchemy>=2.0", "pymysql", "cryptography<45", "pydantic-settings", "psutil", "paramiko", "bcrypt",
 ]
 
 [project.optional-dependencies]

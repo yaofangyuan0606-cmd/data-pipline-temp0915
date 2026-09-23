@@ -16,11 +16,11 @@
 <h2>数据块 <span class="cnt">{{ blocks|length }}</span></h2>
 {% if blocks %}
 <div class="scroll"><table>
-<thead><tr><th>block · 数据目录</th><th>dataset</th><th>形状 z · 行 · 列</th><th>体素 nm</th><th>分割</th><th>EM 来源</th><th class="num">改动</th><th></th></tr></thead>
+<thead><tr><th>block · 数据目录</th><th>dataset</th><th>形状 z · 行 · 列</th><th>体素 nm</th><th>分割</th><th>EM 来源</th><th class="num">改动</th><th>改动人</th><th></th></tr></thead>
 <tbody>
 {% for b in blocks %}<tr>
   {% if b.error %}
-  <td class="mono"><b>{{ b.block_id }}</b></td><td colspan="6"><span class="badge sev-high">无法打开</span> <span class="muted">{{ b.error }}</span></td><td></td>
+  <td class="mono"><b>{{ b.block_id }}</b></td><td colspan="7"><span class="badge sev-high">无法打开</span> <span class="muted">{{ b.error }}</span></td><td></td>
   {% else %}
   <td class="top" style="max-width:420px"><a href="/annotate?block={{ b.block_id|urlencode }}" class="mono"><b>{{ b.block_id }}</b></a><div class="muted mono" style="font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left" title="{{ b.path }}">{{ b.path }}</div></td>
   <td>{{ b.dataset or '–' }}</td>
@@ -29,6 +29,7 @@
   <td>{% if b.has_seg %}<span class="pill on">seg.npy</span>{% else %}<span class="pill stub">无</span>{% endif %}{% if b.has_working_copy %} <span class="pill ok" title="工作目录里已有 seg_edit.npy">有编辑副本</span>{% endif %}</td>
   <td class="mono muted" style="font-size:12px">{{ b.em_source }}</td>
   <td class="num mono">{% if b.history_error %}<span class="badge sev-high" title="编辑记录无法读取，改动数未知">记录异常</span>{% else %}{{ b.n_edits }}{% endif %}</td>
+  <td style="font-size:12px">{% if b.editors %}{% for e in b.editors %}{{ e if e is not none else '未署名' }}{% if not loop.last %}、{% endif %}{% endfor %}{% if b.last_edit and b.last_edit.ts %}<div class="muted">最近 {{ b.last_edit.ts[5:16]|replace('T', ' ') }}{% if b.last_edit.by %} · {{ b.last_edit.by }}{% endif %}</div>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
   <td style="white-space:nowrap">{% if b.history_error %}<a class="btn" href="/annotate/compare?block={{ b.block_id|urlencode }}">查看对比</a>{% else %}<a class="btn" href="/annotate?block={{ b.block_id|urlencode }}">打开</a>{% endif %}</td>
   {% endif %}
 </tr>{% endfor %}
@@ -39,7 +40,7 @@
 <div><h2 style="margin-top:0">工作目录</h2>
 <div class="card"><dl class="kv">
   <dt>路径</dt><dd class="mono">{{ workdir }}</dd>
-  <dt>内容</dt><dd>每个块一个子目录：<span class="mono">seg_edit.npy</span>（第一次改动时从 seg.npy 复制的工作副本）、<span class="mono">edits/&lt;n&gt;.npz</span>（每次改动的像素坐标与新旧 id，可精确撤销）、<span class="mono">edits.jsonl</span>（摘要）。</dd>
+  <dt>内容</dt><dd>每个块一个子目录：<span class="mono">seg_edit.npy</span>（第一次改动时从 seg.npy 复制的工作副本）、<span class="mono">edits/&lt;n&gt;.npz</span>（每次改动的像素坐标与新旧 id，可精确撤销）、<span class="mono">edits.jsonl</span>（摘要，每条带标注人 <span class="mono">by</span>）、<span class="mono">audit.jsonl</span>（只追加的操作流水：每次写入和撤销、谁、几点）。</dd>
   <dt>原则</dt><dd>数据目录一个字节都不写。要拿修好的标签，读工作目录里的 <span class="mono">seg_edit.npy</span>，形状与 dtype 同原始 seg.npy。</dd>
 </dl></div></div>
 <div><h2 style="margin-top:0">SAM 预标注</h2>

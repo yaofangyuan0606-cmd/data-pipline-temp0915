@@ -29,6 +29,7 @@
     <span id="instance" class="pill" hidden></span>
     <span id="live" class="live" title="服务与后台运行状态">连接中…</span>
     {% endblock %}
+    {% if user %}{% include "_user_menu.html" %}{% endif %}
   </div>
   <main class="{% block mainclass %}{% endblock %}">
     <div id="flash" class="flash"></div>

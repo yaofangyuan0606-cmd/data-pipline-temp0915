@@ -389,7 +389,7 @@ class RepairService:
                 "seconds": round(time.perf_counter() - started, 3),
                 "mask_png": overlay_png(res.labels, hole, res.uncertain)}
 
-    def apply(self, block, token: str) -> dict | None:
+    def apply(self, block, token: str, by: str | None = None) -> dict | None:
         from emqc.annotate.sam import revision
 
         with self.lock:
@@ -402,7 +402,7 @@ class RepairService:
             if p["revision"] != revision(block):
                 raise ValueError("标注已变化，请重新检测后应用")
             rec = block.apply_labels(p["z"], p["labels"], p["hole"],
-                                     {"interpolated": True, "source_sections": p["sources"], "dark": p["dark"]})
+                                     {"interpolated": True, "source_sections": p["sources"], "dark": p["dark"]}, by=by)
         with self.lock:
             self.proposals.pop(token, None)
         return rec

@@ -3,6 +3,7 @@
 {% block crumbs %}<a href="/annotate">切片标注</a> › <b>标注工作台</b>{% endblock %}
 {% block topright %}
 <span id="instance" class="pill" hidden></span>
+{% if not user %}<label class="an-who" title="这个实例没开登录：每一笔改动记在这里填的名字下"><span>标注人</span><input id="an-who" class="text mono" maxlength="64" placeholder="填你的名字" autocomplete="off"></label>{% endif %}
 <span class="pill hint" title="交付目录不写入；seg_edit.npy 与 edits/ 都在工作目录">改动自动保存</span>
 <a class="btn" href="/annotate/blocks">数据块</a>
 <a class="btn" id="an-compare" href="/annotate/compare">前后对比</a>
@@ -70,7 +71,9 @@
     <div class="actions" style="margin-top:6px"><button id="an-play">▶ 连播</button><label class="muted" style="font-size:12px">速度 <input id="an-fps" type="number" class="text mono" value="8" min="1" max="60" style="width:54px"> 张/秒</label></div>
 
     <div class="vast-sec">本片历史</div>
-    <div class="actions"><button id="an-undo" title="撤销本片最近一次改动 (Ctrl/⌘+Z)">撤销</button><span class="muted mono" id="an-nedit">0 次改动</span></div>
+    <div class="actions"><button id="an-undo" title="撤销本片最近一次改动 (Ctrl/⌘+Z)；只能撤自己的，撤别人的要确认">撤销</button><span class="muted mono" id="an-nedit">0 次改动</span></div>
+    <div class="muted an-editors" id="an-editors"></div>
+    <div class="an-presence" id="an-presence" hidden></div>
   </aside>
 
   <div class="vast-stages" id="an-stages">
@@ -119,6 +122,17 @@
   </aside>
 </div>
 
+<dialog id="an-who-dialog" class="an-confirm">
+  <h3>你是谁？</h3>
+  <p>改动会记在这个名字下：本片历史、前后对比和导出里都能看到是谁改的。多人一起标注时，也靠它判断该提醒谁、能撤销谁的改动。</p>
+  <input id="an-who-input" class="text mono" maxlength="64" placeholder="填你的名字" autocomplete="off">
+  <div class="actions"><button id="an-who-later">先看看</button><button id="an-who-ok" class="primary">开始标注</button></div>
+</dialog>
+<dialog id="an-undo-confirm" class="an-confirm">
+  <h3>撤销别人的改动？</h3>
+  <p id="an-undo-msg"></p>
+  <div class="actions"><button id="an-undo-no" autofocus>取消</button><button id="an-undo-yes" class="danger">确认撤销</button></div>
+</dialog>
 <dialog id="an-help" class="an-help">
   <div class="an-help-head"><b>快捷键与操作</b><span class="spacer"></span><a href="/annotate/guide">完整说明 ›</a><button id="an-help-close" title="关闭 (Esc)" autofocus>✕</button></div>
   <div class="an-help-grid">
@@ -142,12 +156,15 @@
       <div class="kbd-row"><kbd>B</kbd> 画笔（只补空白） · <kbd>E</kbd> 橡皮 · <kbd>[</kbd> <kbd>]</kbd> 半径</div>
       <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>
       <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</div>
+      <div class="kbd-row">标注人：右上角填名字，每笔改动记下是谁改的 · 有人同时改这一片会提醒并自动刷新 · 只能撤销自己的改动</div>
     </section>
   </div>
   <p class="muted" style="margin:10px 0 0;font-size:12px">应用即保存 · Ctrl/⌘+Z 撤销 · 仅修改当前切片</p>
 </dialog>
 <script>
   window.AN_PRESELECT = {{ (preselect or '')|tojson }};
+  // 登录用户：改动记在谁名下由服务端按会话决定，这里只用来显示和判断"是不是我"。没开登录时是 null。
+  window.EMQC_USER = {{ ({'name': user.display_name or user.username, 'user': user.username, 'role': user.role} if user else none)|tojson }};
   (() => {
     const dlg = document.getElementById("an-help");
     const open = () => { if (!dlg.open) dlg.showModal(); };

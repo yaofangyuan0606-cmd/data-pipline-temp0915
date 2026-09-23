@@ -107,10 +107,66 @@ JSON 中所有标签 ID 均为字符串，CSV 保留完整十进制值；用电�
 逐切片处理以避免加载整块 uint64 数组。`compare` 返回的图片与报表在同一数据块锁下读取，并禁用 HTTP 缓存。
 该锁仅在当前服务进程内有效，沿用现有单进程标注工作流；不提供跨进程的并发编辑保护。
 
+## 登录 · 谁改的 · 多人同时标注
+
+标注工作区有**登录系统**（参照 CVAT / Label Studio 的做法：账号 + 角色 + 服务端会话）。账号和会话存在平台已有的 MySQL 里
+（`users`、`auth_sessions` 两张表，启动时自动建）；密码用 bcrypt 存；Cookie 里是随机会话令牌（HttpOnly、SameSite=Lax），
+库里只存它的哈希，14 天滑动过期（`EMQC_SESSION_DAYS`）。`/annotate*` 页面和 `/api/v1/annotate/*` 接口都要先登录：
+页面跳到 `/login`，接口返回 401 `{"code":"auth"}`。数据清洗工作区不在门里。
+
+角色三种：**管理员** admin（管账号、什么都能做）、**审核员** reviewer（能改、能撤别人的改动）、**标注员** annotator
+（能改，只能撤自己的）。账号只停用不删除——旧记录里的 `by_id` 还要能对回人。第一个管理员在服务器上用命令行建：
+
+```
+python -m emqc create-user --username <登录名> --display <显示名> --role admin      # 交互输密码；留空则生成初始密码
+python -m emqc users                                                             # 列出账号
+python -m emqc reset-password --username <登录名>                                 # 发新的初始密码，踢掉所有登录
+```
+
+之后管理员在页面右上角「用户管理」（`/annotate/users`）建号：可以指定密码，也可以让系统生成**初始密码**（只显示一次），
+拿初始密码登录的人会被先送到「账号」页改密码，改完才能进工作台。改密码后其它浏览器里的登录全部退出。登录连续错 5 次
+（同一登录名或同一来源 IP）要等 60 秒。
+
+**标注人**因此就是登录用户：每一笔写入（填充、画笔、橡皮、合并、批量删除、SAM 应用、插值修补、撤销）由服务端按会话记
+`by`（显示名）、`by_user`（登录名）、`by_id`（用户 id）——页面传什么名字都不认。`EMQC_AUTH_DISABLED=1` 关掉登录时
+（本地开发、测试）退回旧方式：页面右上角填名字、随请求带 `annotator`；这时 `EMQC_ANNOTATE_REQUIRE_ANNOTATOR=1` 可以让不带
+名字的写入返回 422，脚本照旧能用（`by` 记为 null）。
+
+在哪里看得到：工作台「本片改动」每行末尾是谁改的，上方一行「改动人：张三 ×3 · 李四 ×1」；前后对比页「改了哪些地方」每处
+标注人、鼠标读数里当前像素最后是谁写的（`editors_png` 索引图）、有效编辑记录表的标注人列、逐标签导出的 `editors` 列
+（`张三:120;李四:30`）、`/blocks` 列表里每块的 `editors` 与 `last_edit`。
+
+`audit.jsonl` 是**只追加的操作流水**：每一笔写入和每一次撤销，带流水号 `seq`、时间、标注人；撤销行另记 `of`（被撤掉那一笔的
+标注人）和 `forced`。`edits.jsonl` 只保留当前有效的记录，被撤销的会消失，而"谁在几点撤了谁的"正是追溯要问的。对比页
+「操作流水（含已撤销）」读它，接口是 `GET /blocks/{b}/audit?z=`。
+
+**多人同时改同一张图**怎么处理（都在同一个服务进程里完成，写入本身由块级锁串行，不会把文件写坏；要解决的是"对着旧画面下手"）：
+
+1. **切片版本号**。每一片的 `rev` 是最后一次动过它的操作（写入或撤销）的 `seq`，随 `labels/{z}.json` 下发（版本号在标签表之前、
+   同一把锁里取，页面也先取表再取索引图，所以画面至多比版本号新、绝不会比它旧），只增不减
+   （改动次数会在撤销后退回去，察觉不到"B 撤了一笔、A 又补了一笔"）。写入时页面带上自己看到的 `expect_rev`；服务端发现
+   在这之后**别人**动过这一片，就拒绝（409 `stale`），页面自动重载这一片并提示"李四 在 14:02 改了 1,234 像素，请再操作一次"。
+   自己的后续操作不算冲突——连续几笔涂抹到服务端比页面重载快。不带 `expect_rev` 或不带名字的调用（脚本）不检查。
+2. **只能撤销自己的**。撤销永远撤本片最近一笔，多人时最近一笔可能是别人刚做的。撞上别人的记录返回 409 `not_yours`
+   （带 `can_override`）：审核员 / 管理员的页面弹确认框说明是谁几点改的，确认后带 `force` 和确认时看到的记录号 `n` 再撤——
+   中间又多了一笔就 409 `stale`，不会撤错；流水里记 `forced: true`。标注员只能得到提示（带 `force` 返回 403）。
+   不允许"跳过别人那笔撤我上一笔"：记录里存的是改动前的旧值，别人后来在同一些像素上写过的话，回填旧值会把他的改动一起冲掉。
+3. **同块在线**。工作台每 15 秒 `POST /blocks/{b}/presence {z}`，换回同块还有谁、在哪一片（按用户 id 记，只在内存里，
+   60 秒没心跳算离线），右栏「本片历史」下显示「同块在线：李四（也在本片！）· 王五（z 12）」；同时比对这一片的版本号，别人改了
+   就自动重载并提示。SAM 预览的过期判断也改为按片：别人改了别的片，不会让你的预览作废。
+4. **一个工作目录只能一个服务进程写**。第一次写入时用 `flock` 占住 `<workdir>/.server.lock`（进程退出自动释放）；第二个
+   进程写同一目录会得到明确报错，而不是两份进程互相看不见对方的改动、`edits.jsonl` 穿插着写坏。多人标注请都连到同一个服务；
+   确实要再起一个服务，给它另一个 `EMQC_ANNOTATE_WORKDIR`。
+
+建议的分工仍然是按块或按 z 段分，冲突检测是兜底而不是协作方式：两个人真的同时在一片上画，谁后提交谁重来。
+
 ## 接口
 
 ```
-GET  /api/v1/annotate/blocks                          列出数据块
+POST /api/v1/auth/login                                {username,password} → 设置会话 Cookie；/logout；GET /me
+POST /api/v1/auth/password                             {old_password,new_password}
+GET/POST /api/v1/auth/users · PATCH /users/{id} · POST /users/{id}/reset-password   管理员：账号管理
+GET  /api/v1/annotate/blocks                          列出数据块（含 editors、last_edit）；以下接口都要先登录
 GET  /api/v1/annotate/comparison-blocks               只读列出对比数据块，不迁移旧工作文件
 GET  /api/v1/annotate/blocks/{b}                      形状、体素尺寸、改动数
 GET  /api/v1/annotate/blocks/{b}/em/{z}.png           EM 切片
@@ -124,9 +180,12 @@ POST /api/v1/annotate/blocks/{b}/fill                 {z,x,y,new_id,whole_slice}
 POST /api/v1/annotate/blocks/{b}/paint                {z,points,radius,new_id}
 POST /api/v1/annotate/blocks/{b}/merge-pair           {z,first:[x,y],second:[x,y]}
 POST /api/v1/annotate/blocks/{b}/merge                {from_id,to_id,scope:block|slice,z}（脚本接口）
-POST /api/v1/annotate/blocks/{b}/undo
+POST /api/v1/annotate/blocks/{b}/undo?z=0             {expect_rev,force,n}；别人的记录 → 409 not_yours；标注员带 force → 403
 POST /api/v1/annotate/blocks/{b}/new-id?z=0           从最大 id 之后分配，跳过本片重复颜色
-GET  /api/v1/annotate/blocks/{b}/edits
+GET  /api/v1/annotate/blocks/{b}/edits?z=0            本片有效记录 + editors + rev
+GET  /api/v1/annotate/blocks/{b}/audit?z=0            操作流水（含已撤销）
+POST /api/v1/annotate/blocks/{b}/presence             {z} 心跳：同块在线、本片 rev 与最近一次操作
+所有写入接口都接受 expect_rev（看到的切片版本；别人在此之后改过 → 409 stale）；标注人来自登录会话（没开登录时用 annotator 字段）
 GET  /api/v1/annotate/blocks/{b}/neuroglancer?z=&x=&y=  该点在公开 H01 Neuroglancer 中的 3D 链接
 GET  /api/v1/annotate/blocks/{b}/neuroglancer/block     整块在查看器里的链接（画出范围）
 GET  /api/v1/annotate/blocks/{b}/repair/scan            扫描整块，列出图像被毁的切片
@@ -145,7 +204,7 @@ O 只画边界 · V 并排/叠加 · C 对比滑块 · G 透明度渐变 · , . 
 - 页面上的填充、涂抹、合并、清除都是二维的，只改当前这一片。三维分裂（把错并的细胞在整个块里拆开）还没做。
 - 修补损坏切片（`emqc/annotate/interpolate.py`）：黑带或白页上，**图像不恢复也不伪造**，只用上下相邻切片的细胞形状做有符号距离场插值，把标签补回来。改动记为 `repair` 并带 `interpolated` 标记与来源切片号，下游不会误当成观测数据。预览里绿色是补出来的，斜纹处上下两片不一致（把握较低），红色是没有细胞认领的空隙。算法是五种方案实测选出来的（留出集逐细胞 IoU 0.70，基线 0.58），并且是唯一能扛住**连续两片损坏**的——真实黑切常常连片出现，其余四种在那种情况下比直接抄一片还差。
 - 3D：点击“看这一点”后在图像上选位置，或悬停时按 U；“看整块”直接打开块范围。活动按钮高亮，再次点击同一按钮（或再按 U）、Esc、切换工具/切片/数据块会取消并关闭本次打开的查看器；加载中的旧响应也会丢弃。位置换算成数据集体素坐标后交给公开的 H01 Neuroglancer。块的 `meta.json` 里 `geometry.origin` 是 mip1 体素单位，而查看器的默认坐标系正是 8/8/33 nm，所以直接相加即可，象限块再加上 `offset_in_parent`。只有本平台**没有改过号**的 id 才会传给查看器选中——SAM 预填和「新建标签」造的号在公开的 c3 分割里不存在，传过去会选中无关的细胞，所以被挡掉并给出说明。非 H01 数据块不给链接，只说明原因。
-- 没有多人并发控制；同一个块同时开两个页面改，后写的覆盖先写的。
+- 多人并发只到「按切片版本号拒绝对着旧画面的写入 + 只能撤自己的」这一层，服务端不合并两个人的意图：真的同时在一片上画，后提交的重来（见「登录 · 谁改的 · 多人同时标注」）。
 
 ## 回归验证
 
