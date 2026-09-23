@@ -1,4 +1,4 @@
-.cmp-page { max-width: 1600px; margin: auto; }
+.cmp-page { width: 100%; min-width: 0; }
 .cmp-page h1 { margin: 0; font-size: 24px; letter-spacing: -.025em; }
 .cmp-page h2 { margin: 0; font-size: 18px; }
 .cmp-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
@@ -7,10 +7,10 @@
 .cmp-controls label, .cmp-controls > div > label, .cmp-filters label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-2); }
 .cmp-controls label { position: relative; }
 .cmp-controls output { position: absolute; right: 0; top: 0; font: 12px var(--mono); color: var(--muted); }
-.cmp-controls input[type=range] { width: 150px; height: 32px; margin: 0; }
+.cmp-controls input[type=range] { width: 180px; height: 32px; margin: 0; }
 .cmp-block { flex: 1; min-width: 180px; max-width: 430px; }
 .cmp-block select { width: 100%; }
-.cmp-z, .cmp-download, .cmp-pagination { display: flex; align-items: center; gap: 8px; }
+.cmp-z, .cmp-download, .cmp-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .cmp-download button { white-space: nowrap; }
 .cmp-download select { width: auto; }
 .cmp-z input { width: 70px; }
@@ -20,20 +20,21 @@
 .cmp-metrics small { color: var(--muted); display: block; margin-bottom: 5px; }
 .cmp-metrics strong { font: 600 23px var(--mono); }
 .cmp-metrics .cmp-total { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); }
-.cmp-images { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.cmp-images.with-ng { grid-template-columns: 1fr 1fr 1fr; }
-.cmp-ngbox { position: relative; height: clamp(270px, 42vw, 570px); background: #000; }
+.cmp-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; --cmp-view-height: 50vh; }
+.cmp-images.with-ng { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cmp-ngbox { position: relative; height: var(--cmp-view-height); background: #000; }
 .cmp-ngbox iframe { width: 100%; height: 100%; border: 0; display: block; }
 #cmp-ng-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 20px; color: #ddd; font-size: 13px; }
-#cmp-ng-open { font-size: 11px; padding: 2px 8px; }
-.cmp-images figure { min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r); }
+#cmp-ng-open { font-size: 11px; padding: 2px 8px; flex: none; }
+.cmp-images figure { display: grid; grid-template-rows: subgrid; grid-row: span 2; min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r); }
 .cmp-images figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; background: var(--surface); font-size: 13px; }
 .cmp-images figcaption span { color: var(--muted); font-size: 12px; }
-.cmp-viewport { height: clamp(270px, 42vw, 570px); background: #0b0d10; overflow: auto; }
-.cmp-canvas-wrap { position: relative; width: 100%; }
+.cmp-viewport { position: relative; height: 50vh; min-width: 0; display: flex; background: #0b0d10; overflow: auto; overflow-anchor: none; }
+.cmp-canvas-wrap { position: relative; flex: none; margin: auto; }
 .cmp-canvas-wrap canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; cursor: crosshair; }
 .cmp-viewport.cmp-dragging, .cmp-viewport.cmp-dragging canvas { cursor: grabbing; }
-.cmp-images figcaption select { width: auto; font-size: 12px; padding: 2px 6px; }
+.cmp-images figcaption select { width: auto; min-width: 0; font-size: 12px; padding: 2px 6px; }
+.cmp-images figcaption b { flex: none; }
 .cmp-cursor { position: absolute; width: 15px; height: 15px; border: 1px solid #fff; box-shadow: 0 0 0 1px #000; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
 .cmp-pixel { min-height: 20px; font-size: 12px; padding: 2px 0; }
 /* 两块摘要：改了哪些地方 / 标签增减 —— 页面默认只显示这两样 */
@@ -82,7 +83,17 @@
 .cmp-report summary { cursor: pointer; font-size: 13px; }
 #cmp-warnings { background: var(--surface-2); border-left: 3px solid #ed647a; padding: 8px 12px; }
 .cmp-page [hidden] { display: none !important; }
-.cmp-page [aria-busy=true] { opacity: .65; }
+.cmp-page[aria-busy=true] :is(.cmp-images, .cmp-two, .cmp-report) { opacity: .45; }
+.cmp-page.cmp-load-failed :is(.cmp-images, .cmp-two, .cmp-report) { visibility: hidden; }
 @media (max-width: 1000px) { .cmp-heading { flex-wrap: wrap; } .cmp-report { padding: 16px; } }
-@media (max-width: 1100px) { .cmp-images.with-ng { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 700px) { .cmp-images, .cmp-images.with-ng, .cmp-two { grid-template-columns: 1fr; } .cmp-metrics { grid-template-columns: 1fr 1fr; } .cmp-download { flex-wrap: wrap; } }
+@media (max-width: 1100px) {
+  .cmp-images.with-ng { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cmp-images.with-ng #cmp-ng-pane { grid-column: 1 / -1; margin-top: 16px; }
+}
+@media (max-width: 700px) {
+  .cmp-images, .cmp-images.with-ng, .cmp-two { grid-template-columns: minmax(0, 1fr); row-gap: 16px; }
+  .cmp-images figure { grid-template-rows: auto auto; grid-row: auto; }
+  .cmp-images.with-ng #cmp-ng-pane { margin-top: 0; }
+  .cmp-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cmp-block { max-width: 100%; }
+}

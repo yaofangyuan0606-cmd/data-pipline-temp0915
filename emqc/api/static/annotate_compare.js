@@ -4,6 +4,8 @@
   const fmt = n => Number(n).toLocaleString("zh-CN"), esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]));
   const state = {blocks: [], block: "", z: 0, snapshot: null, images: null, serial: 0, controller: null, page: 0, downloads: new Set(), zoom: 100, ng: false, ngBase: ""};
   const canvases = [$("before"), $("after")], viewports = [...document.querySelectorAll(".cmp-viewport")];
+  const wraps = canvases.map(c => c.parentElement);
+  let layout = null;
   const image = url => new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => reject(new Error("图片读取失败")); im.src = url; });
   async function json(url, signal) {
     const r = await fetch(url, {signal, cache: "no-store"});
@@ -87,8 +89,8 @@
   function focusRegion(g) {
     viewports.forEach((viewport, side) => {
       const canvas = canvases[side], scale = canvas.clientWidth / canvas.width;
-      viewport.scrollTo({left: (g.cx + .5) * scale - viewport.clientWidth / 2,
-                         top: (g.cy + .5) * scale - viewport.clientHeight / 2, behavior: "smooth"});
+      viewport.scrollTo({left: wraps[side].offsetLeft + (g.cx + .5) * scale - viewport.clientWidth / 2,
+                         top: wraps[side].offsetTop + (g.cy + .5) * scale - viewport.clientHeight / 2, behavior: "smooth"});
     });
     document.querySelectorAll(".cmp-ring").forEach(ring => {
       ring.hidden = false;
@@ -141,19 +143,25 @@
     $("operations").innerHTML = r.operations.slice().reverse().map(e => `<tr><td>#${e.n} ${esc(kinds[e.kind] || e.kind)}</td><td>${esc(names[e.source])}</td><td>${esc(e.ts || "—")}</td><td>${fmt(e.n_px_in_slice)}</td><td>${fmt(e.current_px)}</td><td>${esc(e.model || (e.source_sections ? `Z ${e.source_sections.join(", ")}` : "—"))}</td></tr>`).join("") || '<tr><td colspan="6">当前切片没有可读取的有效编辑记录。</td></tr>';
     rows();
   }
-  async function load(z = state.z) {
+  async function load(z = state.z, force = false) {
     const block = state.blocks.find(b => b.block_id === $("block").value); if (!block) return;
+    const nextZ = Math.max(0, Math.min(block.nz-1, Math.trunc(Number(z)) || 0));
+    $("z").value = nextZ;
+    // Navigation to the current (or already requested) slice is a no-op. Only Refresh retries it.
+    if (!force && state.serial && state.block === block.block_id && state.z === nextZ) return;
+    const changedBlock = state.block !== block.block_id;
     state.controller?.abort(); state.controller = new AbortController();
     const serial = ++state.serial;
-    state.block = block.block_id; state.z = Math.max(0, Math.min(block.nz-1, Math.trunc(Number(z)) || 0));
+    state.block = block.block_id; state.z = nextZ;
     state.images = state.snapshot = null; state.page = 0;
     $("page").setAttribute("aria-busy", "true");
-    for (const id of ["images", "report", "summary"]) $(id).hidden = true;
+    // Keep the existing layout while loading: hiding it collapses the document and resets image pan.
+    $("page").classList.remove("cmp-load-failed");
     downloadButtons();
     $("z").value = state.z; $("z").max = block.nz-1; $("zmax").textContent = `/ ${block.nz-1}　共 ${block.nz} 片`;
     $("prev").disabled = state.z === 0; $("next").disabled = state.z === block.nz-1;
     $("status").textContent = `正在加载 ${state.block} · Z ${state.z}…`;
-    $("pixel").textContent = "移动鼠标查看两侧同一像素的标签与来源。";
+    $("pixel").textContent = "滚轮翻片（一次手势一片） · Ctrl/⌘+滚轮缩放 · 拖动平移（两侧同步） · 移动鼠标查看标签与来源";
     document.querySelectorAll(".cmp-cursor, .cmp-ring").forEach(c => { c.hidden = true; });
     const params = new URLSearchParams({block:state.block, z:state.z});
     history.replaceState(null, "", `/annotate/compare?${params}`); $("edit").href = `/annotate?${params}`;
@@ -168,8 +176,16 @@
       downloadButtons();
       const r = data.report;
       $("status").textContent = `${state.block} · Z ${state.z} · ${em.width} × ${em.height} · ${!r.has_seg ? "此数据块没有分割标签，两侧均显示原始电镜图" : r.changed_px ? `${fmt(r.changed_px)} 像素与原始分割不同` : "当前结果与原始分割一致"}`;
-    } catch (e) { if (serial === state.serial && e.name !== "AbortError") $("status").textContent = `加载失败：${e.message}。可点击刷新重试。`; }
-    finally { if (serial === state.serial) $("page").setAttribute("aria-busy", "false"); }
+      if (changedBlock) state.zoom = 100;
+      layoutImages(changedBlock);
+    } catch (e) {
+      if (serial === state.serial && e.name !== "AbortError") {
+        $("status").textContent = `加载失败：${e.message}。可点击刷新重试。`;
+        $("page").classList.add("cmp-load-failed");  // Do not present the previous slice as the failed one.
+      }
+    } finally {
+      if (serial === state.serial) { state.controller = null; $("page").setAttribute("aria-busy", "false"); }
+    }
   }
   async function download(format) {
     if (!state.snapshot || state.downloads.has(format)) return;
@@ -216,8 +232,9 @@
     viewport.addEventListener("mouseleave", () => document.querySelectorAll(".cmp-cursor").forEach(c => { c.hidden = true; }));
   });
   $("block").addEventListener("change", () => load(0)); $("z").addEventListener("change", () => load($("z").value));
+  $("z").addEventListener("wheel", ev => ev.preventDefault(), {passive: false});  // No native number-input wheel increments.
   $("prev").addEventListener("click", () => load(state.z-1)); $("next").addEventListener("click", () => load(state.z+1));
-  $("refresh").addEventListener("click", () => state.blocks.length ? load() : init());
+  $("refresh").addEventListener("click", () => state.blocks.length ? load(state.z, true) : init());
   $("mode").addEventListener("input", draw);
   $("left-mode").addEventListener("input", draw);
   // ---------------------------------------------------------------- 第三栏：嵌入公开的 H01 Neuroglancer
@@ -229,6 +246,7 @@
     const pane = $("ng-pane"), frame = $("ng-frame"), note = $("ng-note");
     $("images").classList.toggle("with-ng", state.ng);
     pane.hidden = !state.ng;
+    layoutImages();
     if (!state.ng || !state.block) return;
     const serial = ++ngSerial, px = Math.max(300, Math.round($("ng-frame").clientWidth || 600));
     try {
@@ -244,22 +262,52 @@
   $("ng").addEventListener("change", ev => { state.ng = ev.target.checked; try { localStorage.setItem("cmp-ng", state.ng ? "1" : "0"); } catch (_) {} ngSync(); });
   try { if (localStorage.getItem("cmp-ng") === "1") { state.ng = true; $("ng").checked = true; } } catch (_) {}
   // ---------------------------------------------------------------- 缩放 / 滚轮翻 z / 拖动平移，和标注页一个习惯
+  function layoutImages(reset = false) {
+    if ($("images").hidden) return;
+    const W = canvases[0].width, H = canvases[0].height;
+    const width = Math.min(...viewports.map(v => v.offsetWidth));
+    if (!width || !W || !H) return;
+    // 100% means the whole image fits BOTH dimensions, independent of image aspect ratio.
+    const height = Math.floor(Math.min(width * H / W, Math.max(240, innerHeight * .65)));
+    const key = [W, H, width, height, state.zoom].join(":");
+    if (!reset && layout?.key === key) return; // Slice reloads must keep pan exactly unchanged.
+    const previous = wraps[0].getBoundingClientRect(), viewport = viewports[0].getBoundingClientRect();
+    const center = !reset && layout && layout.W === W && layout.H === H
+      ? [(viewport.left + viewports[0].clientWidth / 2 - previous.left) / previous.width,
+         (viewport.top + viewports[0].clientHeight / 2 - previous.top) / previous.height]
+      : [.5, .5];
+    $("images").style.setProperty("--cmp-view-height", `${height}px`);
+    viewports.forEach(v => { v.style.height = `${height}px`; });
+    const scale = Math.min(width / W, height / H) * state.zoom / 100;
+    wraps.forEach(w => { w.style.width = `${W * scale}px`; w.style.height = `${H * scale}px`; });
+    viewports.forEach((v, i) => {
+      v.scrollLeft = wraps[i].offsetLeft + center[0] * W * scale - v.clientWidth / 2;
+      v.scrollTop = wraps[i].offsetTop + center[1] * H * scale - v.clientHeight / 2;
+    });
+    $("zoom").value = state.zoom; $("zoom-value").textContent = `${state.zoom}%`;
+    layout = {key, W, H};
+  }
   function setZoom(v) {
     state.zoom = Math.max(100, Math.min(400, Math.round(v / 25) * 25));
-    $("zoom").value = state.zoom; $("zoom-value").textContent = `${state.zoom}%`;
-    document.querySelectorAll(".cmp-canvas-wrap").forEach(w => { w.style.width = `${state.zoom}%`; });
-    try { localStorage.setItem("cmp-zoom", String(state.zoom)); } catch (_) {}
+    layoutImages();
   }
   $("zoom").addEventListener("input", ev => setZoom(+ev.target.value));
-  try { const saved = +localStorage.getItem("cmp-zoom"); if (saved) setZoom(saved); } catch (_) {}
-  let wheelBusy = false;
+  $("fit").addEventListener("click", () => { state.zoom = 100; layoutImages(true); });
+  new ResizeObserver(() => layoutImages()).observe($("images"));
+  window.addEventListener("resize", () => layoutImages());
+  let wheelGesture = null;
   viewports.forEach(viewport => {
     viewport.addEventListener("wheel", ev => {
+      // Horizontal swipes and zero-delta events are not requests to turn a slice.
+      if (!ev.deltaY || Math.abs(ev.deltaX) >= Math.abs(ev.deltaY)) return;
       ev.preventDefault();
+      const first = wheelGesture === null;
+      clearTimeout(wheelGesture);
+      // Rearm after the gesture has stopped, not on a repeating timer during its inertia tail.
+      // Zoom shares this guard so releasing Ctrl during a gesture cannot turn a slice.
+      wheelGesture = setTimeout(() => { wheelGesture = null; }, 250);
       if (ev.ctrlKey || ev.metaKey) { setZoom(state.zoom + (ev.deltaY < 0 ? 25 : -25)); return; }
-      if (wheelBusy) return;                                   // 一格滚轮只翻一片，别把一次惯性滚动变成十几片
-      wheelBusy = true; setTimeout(() => { wheelBusy = false; }, 120);
-      load(state.z + (ev.deltaY > 0 ? 1 : -1));
+      if (first) load(state.z + (ev.deltaY > 0 ? 1 : -1));
     }, {passive: false});
     let drag = null;
     viewport.addEventListener("mousedown", ev => { if (ev.button !== 0) return; drag = {x: ev.clientX, y: ev.clientY, l: viewport.scrollLeft, t: viewport.scrollTop}; viewport.classList.add("cmp-dragging"); });
@@ -274,7 +322,13 @@
   for (const id of ["source", "search"]) $(id).addEventListener("input", () => { state.page=0; rows(); });
   $("table-prev").addEventListener("click", () => { state.page--; rows(); }); $("table-next").addEventListener("click", () => { state.page++; rows(); });
   $("csv").addEventListener("click", () => download("csv")); $("json").addEventListener("click", () => download("json"));
-  document.addEventListener("keydown", e => { if (["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(e.target.tagName)) return; if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); load(state.z+(e.key === "ArrowLeft" ? -1 : 1)); } });
+  document.addEventListener("keydown", e => {
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(e.target.tagName)) return;
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      if (!e.repeat) load(state.z+(e.key === "ArrowLeft" ? -1 : 1));
+    }
+  });
   async function init() {
     $("page").setAttribute("aria-busy", "true");
     for (const id of ["block", "z", "prev", "next", "refresh"]) $(id).disabled = true;
@@ -286,7 +340,7 @@
       $("block").disabled = $("z").disabled = false;
       const p = new URLSearchParams(location.search);
       if (state.blocks.some(b => b.block_id === p.get("block"))) $("block").value = p.get("block");
-      await load(p.get("z") || 0);
+      await load(p.get("z") || 0, true);
     } catch (e) { $("status").textContent = `加载失败：${e.message}。可点击刷新重试。`; }
     finally { $("page").setAttribute("aria-busy", "false"); $("refresh").disabled = false; }
   }

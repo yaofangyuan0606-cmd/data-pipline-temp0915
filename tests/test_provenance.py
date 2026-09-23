@@ -58,8 +58,9 @@ def test_pristine_comparison_is_readonly_and_uses_display_axes(block):
 def test_mixed_labels_last_writer_undo_and_interpolation(block):
     rec = block.apply_mask(0, mask(block, (2, 1), (3, 1)), BIG, {"model": "SAM 2.1"})
     assert rec["source"] == "sam" and rec["provenance_version"] == 1
-    block.paint(0, [(2, 1)], 0, 7)
-    block.paint(0, [(2, 1)], 0, BIG)
+    # Recreate historical overwriting brush edits; today's brush only fills background.
+    block.apply_mask(0, mask(block, (2, 1)), 7, {}, kind="paint")
+    block.apply_mask(0, mask(block, (2, 1)), BIG, {}, kind="paint")
     repaired = np.zeros(block.shape_zyx[1:], np.uint64)
     repaired[2, 4], repaired[2, 5] = BIG, 99
     block.apply_labels(0, repaired, mask(block, (4, 2), (5, 2)), {"interpolated": True, "source_sections": [1, 2]})
@@ -205,7 +206,7 @@ def test_cut_multiple_ids_and_missing_older_record(block):
     record["new_ids"] = [51, 52]
     (block.work / "edits.jsonl").write_text(json.dumps(record) + "\n")
     assert report(block, 0)["sources"]["unknown"]["label_pixels"] == 2
-    block.paint(0, [(2, 2)], 0, 70)
+    block.fill(0, 2, 2, 70)
     (block.work / "edits" / "000001.npz").unlink()
     data = report(block, 0)
     assert data["sources"]["manual"]["pixels"] == 1
@@ -221,7 +222,7 @@ def test_merged_sam_baseline_keeps_original_labels_separate(block):
     data = report(block, 0)
     assert data["sources"]["sam"]["label_pixels"] == 2
     assert data["sources"]["baseline"]["label_pixels"] == 10
-    block.paint(0, [(3, 1)], 0, BIG + 3)
+    block.fill(0, 3, 1, BIG + 3)
     assert report(block, 0)["sources"]["manual"]["label_pixels"] == 1
     assert report(block, 0)["sources"]["sam"]["label_pixels"] == 1
 

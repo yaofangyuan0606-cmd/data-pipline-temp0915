@@ -81,17 +81,17 @@
   <dt>inferred</dt><dd class="muted">{{ ds.metadata.extra.inferred_fields|join(', ') if ds.metadata.extra.inferred_fields else 'none · all from dataset.json' }}</dd>
   {% if ds.metadata.extra.open_questions %}<dt>待确认</dt><dd><ul style="margin:0;padding-left:1.2em">{% for q in ds.metadata.extra.open_questions %}<li>{{ q }}</li>{% endfor %}</ul></dd>{% endif %}
 </dl></div></div>
-<div><h2 style="margin-top:0">资产 <span class="cnt">{{ ds.assets|length }}</span></h2><div class="card pad-0"><table style="border:0"><thead><tr><th>类型</th><th>路径</th><th>格式</th><th>版本</th><th class="num">大小</th></tr></thead><tbody>
+<div><h2 style="margin-top:0">资产 <span class="cnt">{{ ds.assets|length }}</span></h2><div class="card pad-0 scroll"><table style="border:0"><thead><tr><th>类型</th><th>路径</th><th>格式</th><th>版本</th><th class="num">大小</th></tr></thead><tbody>
 {% for t, items in assets_by_type.items() %}{% for a in items %}<tr><td>{% if loop.first %}<b>{{ t }}</b>{% endif %}</td><td class="mono">{{ a.path }} {% if not a.exists %}<span class="badge sev-missing">missing</span>{% endif %}</td><td class="muted">{{ a.format }}</td><td class="mono">{{ a.version }}{% if a.model_version %} · {{ a.model_version }}{% endif %}</td><td class="num mono">{{ a.size_bytes|bytes }}</td></tr>{% endfor %}{% endfor %}
 </tbody></table></div></div>
 </div>
 
 <div class="grid c2" style="margin-top:28px">
-<div><h2 style="margin-top:0">运行历史</h2><table class="dense"><thead><tr><th>run</th><th>状态</th><th>等级</th><th class="num">quality</th><th class="num">留存率</th><th>开始</th></tr></thead><tbody>
+<div><h2 style="margin-top:0">运行历史</h2><div class="scroll"><table class="dense"><thead><tr><th>run</th><th>状态</th><th>等级</th><th class="num">quality</th><th class="num">留存率</th><th>开始</th></tr></thead><tbody>
 {% for r in runs %}<tr><td><a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a></td><td><span class="pill {{ 'ok' if r.status == 'done' }}">{{ r.status }}</span></td><td>{% for g, n in r.grade_counts|dictsort %}{{ m.grade(g) }}<span class="muted mono">×{{ n }}</span> {% endfor %}</td><td class="num mono">{{ r.quality_score|fmt(3) }}</td><td class="num mono">{{ r.retention_rate|pct }}</td><td class="muted mono" style="font-size:11px">{{ (r.started_at or '')|replace('T',' ') }}</td></tr>{% endfor %}
-</tbody></table></div>
-<div><h2 style="margin-top:0">agent 执行记录</h2><table class="dense"><thead><tr><th>时间</th><th>agent</th><th>step</th><th>状态</th><th>输出</th></tr></thead><tbody>
+</tbody></table></div></div>
+<div><h2 style="margin-top:0">agent 执行记录</h2><div class="scroll"><table class="dense"><thead><tr><th>时间</th><th>agent</th><th>step</th><th>状态</th><th>输出</th></tr></thead><tbody>
 {% for t in traces %}<tr><td class="muted mono" style="font-size:11px">{{ (t.created_at or '')|replace('T',' ') }}</td><td>{{ t.agent }}</td><td>{{ t.step }}</td><td><span class="pill {{ 'ok' if t.status == 'ok' }}">{{ t.status }}</span></td><td><details><summary>output</summary><pre class="json">{{ t.output|tojson(indent=0) }}</pre></details></td></tr>{% else %}<tr><td colspan="5" class="muted">无</td></tr>{% endfor %}
-</tbody></table></div>
+</tbody></table></div></div>
 </div>
 {% endblock %}

@@ -242,3 +242,51 @@ def test_hover_and_independent_merge_pairs_in_browser(browser):
     page.edits(0)
     assert np.array_equal(np.load(work / "seg_edit.npy"), original)
     assert page.evaluate("document.querySelectorAll('[name=an-dir], [name=an-scope]').length") == 0
+
+
+@pytest.mark.parametrize("view,outline", [("overlay", False), ("overlay", True), ("side", False), ("side", True)])
+def test_brush_preview_and_saved_stroke_preserve_existing_labels(browser, view, outline):
+    page, data, original = browser
+    work = data.parent.parent / "work" / "pairs"
+    # Paint another label into the stroke's path through the UI before switching colours.
+    page.move(POINTS[0], click=True)
+    page.wait(f"document.getElementById('an-cur-id').textContent === '{IDS[0]}'")
+    page.evaluate("""{ document.querySelector('[data-tool=brush]').click();
+        const radius = document.getElementById('an-brush');
+        radius.value = 0; radius.dispatchEvent(new Event('input')); }""")
+    page.move((12, 4), click=True)
+    page.edits(1)
+    before = original.copy()
+    before[12, 4, 0] = IDS[0]
+    assert np.array_equal(np.load(work / "seg_edit.npy"), before)
+    page.evaluate("document.querySelector('[data-tool=pick]').click()")
+    page.move(POINTS[2], click=True)
+    page.wait(f"document.getElementById('an-cur-id').textContent === '{IDS[2]}'")
+    page.evaluate(f"document.querySelector('[name=an-view][value={view}]').click()")
+    if outline:
+        page.evaluate("document.getElementById('an-outline').click()")
+    page.evaluate("""{ document.querySelector('[data-tool=brush]').click();
+        const radius = document.getElementById('an-brush');
+        radius.value = 4; radius.dispatchEvent(new Event('input'));
+        document.getElementById('an-stage').scrollIntoView({block:'center'}); }""")
+    stage = "an-stage2" if view == "side" else "an-stage"
+    pixels = f"Array.from(document.querySelectorAll('#{stage} canvas')[1].getContext('2d').getImageData(0,0,64,32).data)"
+    canvas_before = np.asarray(page.evaluate(pixels)).reshape(32, 64, 4)
+    x, y = page.position(POINTS[0])
+    page.call("Input.dispatchMouseEvent", type="mousePressed", x=x, y=y, button="left", clickCount=1)
+    x, y = page.position(POINTS[1])
+    page.call("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y, buttons=1)
+    preview = np.asarray(page.evaluate(pixels)).reshape(32, 64, 4)
+    occupied = before[:, :, 0].T != 0
+    assert np.array_equal(preview[occupied], canvas_before[occupied]), "preview must not colour any existing label"
+    assert canvas_before[5, 12, 3] == 0 and preview[5, 12, 3] > 0, "background gets an immediate preview"
+    page.call("Input.dispatchMouseEvent", type="mouseReleased", x=x, y=y, button="left", clickCount=1)
+    page.edits(2)
+    edited = np.load(work / "seg_edit.npy")
+    assert np.array_equal(edited[before != 0], before[before != 0])
+    assert edited[12, 5, 0] == IDS[2]
+    assert np.array_equal(edited[:, :, 1], original[:, :, 1])
+    assert np.array_equal(np.load(data / "seg.npy"), original)
+    page.evaluate("document.getElementById('an-undo').click()")
+    page.edits(1)
+    assert np.array_equal(np.load(work / "seg_edit.npy"), before)

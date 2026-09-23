@@ -483,7 +483,7 @@ class Block:
 
     def paint(self, z: int, points: list[tuple[int, int]], radius: int, new_id: int) -> dict | None:
         """Brush: stamp a disc of `radius` at every point of the stroke (points are consecutive, so gaps are
-        bridged by interpolation) and set those pixels to new_id. Pixels already carrying new_id are skipped."""
+        bridged by interpolation). Nonzero labels only fill background pixels; new_id=0 erases existing labels."""
         self._check_z(z)
         new_id = self._check_id(new_id)
         if not points:
@@ -507,6 +507,8 @@ class Block:
                     continue
                 mask[r0:r1, c0:c1] |= disc[r0 - (y - radius):r1 - (y - radius), c0 - (x - radius):c1 - (x - radius)]
             mask &= plane != new_id
+            if new_id != 0:
+                mask &= plane == 0               # 所有画笔颜色都只补空白；橡皮仍可擦除已有标签
             xs, ys = self._disk_idx(mask)
             if xs.size == 0:
                 return None

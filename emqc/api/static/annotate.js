@@ -214,8 +214,11 @@
   }
   function applyView() { const t = `translate(${S.tx}px,${S.ty}px) scale(${S.zoom})`; for (const p of P) p.cv.style.transform = t; status(); }
   function fit() {
-    const r = P[0].stage.getBoundingClientRect(); S.zoom = Math.max(0.05, Math.min(r.width / S.W, r.height / S.H) * 0.98);
-    S.tx = (r.width - S.W * S.zoom) / 2; S.ty = (r.height - S.H * S.zoom) / 2; applyView();
+    const width = Math.min(...panes().map(p => p.stage.clientWidth));
+    const height = Math.min(...panes().map(p => p.stage.clientHeight));
+    if (!S.W || !S.H || !width || !height) return;
+    S.zoom = Math.min(width / S.W, height / S.H) * 0.98;
+    S.tx = (width - S.W * S.zoom) / 2; S.ty = (height - S.H * S.zoom) / 2; applyView();
   }
   function zoomAt(f, cx, cy) {
     const nz = Math.min(64, Math.max(0.05, S.zoom * f));
@@ -366,10 +369,29 @@
   function strokeStart(x, y) { if (S.tool === "brush" && S.cur === "0") { flash("请先选择或新建标签"); return; } S.stroke = { pts: [[x, y]], z: S.z, id: S.tool === "erase" ? "0" : S.cur }; strokeDot(x, y); }
   function strokeDot(x, y) {
     const id = S.stroke.id;
+    let ink;
+    if (id !== "0") {
+      const e = S.cache.get(S.stroke.z); if (!e?.idx) return;
+      // Preview the same pixel discs as the server, clipped to background even in outline view.
+      // Canvas transparency alone cannot identify background: labelled interiors may be hidden.
+      ink = new Path2D();
+      for (let row = Math.max(0, y - S.brush); row <= Math.min(S.H - 1, y + S.brush); row++) {
+        const dx = Math.floor(Math.sqrt(S.brush * S.brush - (row - y) ** 2));
+        const end = Math.min(S.W - 1, x + dx);
+        let start = -1;
+        for (let col = Math.max(0, x - dx); col <= end + 1; col++) {
+          const empty = col <= end && e.ids[e.idx[row * S.W + col]] === "0";
+          if (empty && start < 0) start = col;
+          if (!empty && start >= 0) { ink.rect(start, row, col - start, 1); start = -1; }
+        }
+      }
+    }
     for (const p of segPanes()) {
       const g = p.gSeg; g.save(); g.globalCompositeOperation = id === "0" ? "destination-out" : "source-over";
       g.fillStyle = id === "0" ? "#000" : `rgba(${colorOf(id).join(",")},${S.view === "side" ? 1 : S.opacity})`;
-      g.beginPath(); g.arc(x + 0.5, y + 0.5, S.brush + 0.5, 0, Math.PI * 2); g.fill(); g.restore();
+      if (ink) g.fill(ink);
+      else { g.beginPath(); g.arc(x + 0.5, y + 0.5, S.brush + 0.5, 0, Math.PI * 2); g.fill(); }
+      g.restore();
     }
   }
   function strokeMove(x, y) {
@@ -861,7 +883,9 @@
   $("an-rightseg").addEventListener("change", ev => { S.rightSegOnly = ev.target.checked; render(); });
   $("an-curtain").addEventListener("change", ev => { S.curtain = ev.target.checked; if (S.curtain && !S.curtainX) S.curtainX = S.W >> 1; render(); });
   document.querySelectorAll("input[name=an-view]").forEach(r => r.addEventListener("change", () => setView(r.value)));
-  window.addEventListener("resize", () => { if (S.info) fit(); });
+  // Panels also resize when toolbar text wraps or the view mode changes, without a window resize.
+  const stageResize = new ResizeObserver(() => { if (S.info) fit(); });
+  P.forEach(p => stageResize.observe(p.stage));
 
   // ------------------------------------------------------------------ blocks
   async function selectBlock(id) {

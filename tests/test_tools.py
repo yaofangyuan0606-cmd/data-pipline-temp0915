@@ -174,6 +174,7 @@ def test_clear_labels_clears_only_this_slice_as_one_undoable_edit(block):
     """批量删除：本片上选中的几个 id 全部清为 0，记成一笔；其他切片不动；撤销一次逐像素还原。"""
     seg0 = block.seg_slice(0).copy(); seg1 = block.seg_slice(1).copy()
     block.paint(0, [(10, 10)], 3, 7)                       # 确保 z0 上有 7；再造一个 9
+    block.paint(0, [(60, 30)], 3, 0)                      # 画笔只补空白，先擦除再改涂
     block.paint(0, [(60, 30)], 3, 9)
     before0 = block.seg_slice(0).copy()
     assert (before0 == 7).any() and (before0 == 9).any()

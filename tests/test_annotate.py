@@ -107,23 +107,70 @@ def test_fill_is_copy_on_write_and_undoable(client, ann_root, workdir):
     assert int(np.load(w / "seg_edit.npy", mmap_mode="r")[1, 1, 0]) == BIG
     assert client.get("/api/v1/annotate/blocks/b0/labels/0.json").json()["ids"] == ["0", str(BIG)]
 
-    # paint a 3-px line (columns 1..3 of row 1) with a brand-new id; the brush records the previous id of every pixel
-    r = client.post("/api/v1/annotate/blocks/b0/paint", json={"z": 1, "points": [[1, 1], [3, 1]], "radius": 0, "new_id": "42"}).json()
+    # Paint a 3-px line in the background hole with a brand-new id.
+    r = client.post("/api/v1/annotate/blocks/b0/paint", json={"z": 1, "points": [[4, 5], [6, 5]], "radius": 0, "new_id": "42"}).json()
     assert r["edit"]["kind"] == "paint" and r["edit"]["n_px"] == 3 and r["edit"]["old_id"] is None
     seg = np.load(w / "seg_edit.npy", mmap_mode="r")
-    assert [int(seg[x, 1, 1]) for x in (1, 2, 3)] == [42, 42, 42] and int(seg[4, 1, 1]) == 5
+    assert [int(seg[x, 5, 1]) for x in (4, 5, 6)] == [42, 42, 42] and int(seg[7, 5, 1]) == 0
     assert client.post("/api/v1/annotate/blocks/b0/new-id").json()["id"] == str(BIG + 1)
 
     # undo restores exactly, most recent first
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["kind"] == "paint"
     seg = np.load(w / "seg_edit.npy", mmap_mode="r")
-    assert [int(seg[x, 1, 1]) for x in (1, 2, 3)] == [5, 5, 5]
+    assert [int(seg[x, 5, 1]) for x in (4, 5, 6)] == [0, 0, 0]
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"]["n"] == 2
     assert int(np.load(w / "seg_edit.npy", mmap_mode="r")[1, 1, 0]) == 5
     assert client.get("/api/v1/annotate/blocks/b0/edits").json()["n"] == 1
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["n_edits"] == 0
     assert np.array_equal(np.load(w / "seg_edit.npy"), np.load(b / "seg.npy"))
     assert client.post("/api/v1/annotate/blocks/b0/undo").json()["undone"] is None
+
+
+@pytest.mark.parametrize("new_id", [42, BIG + 17])
+def test_brush_only_fills_background_and_eraser_still_works(tmp_path, monkeypatch, new_id):
+    from fastapi.testclient import TestClient
+    from emqc.annotate.store import Block
+    from emqc.api.app import app
+    from emqc.api.routers import annotate
+
+    source = tmp_path / "brush"
+    source.mkdir()
+    original = np.zeros((12, 7, 2), np.uint64)
+    original[:3] = BIG
+    original[5:7] = 2**63  # Historical gap labels remain protected as ordinary nonzero ids.
+    original[10:] = new_id  # Even the selected label is left untouched.
+    np.save(source / "em.npy", np.zeros(original.shape, np.uint8))
+    np.save(source / "seg.npy", original)
+    block = Block(source, tmp_path / "work")
+    monkeypatch.setattr(annotate, "_block", lambda _: block)
+    url = "/api/v1/annotate/blocks/brush"
+    with TestClient(app) as c:
+        # Cross cells and an existing gap label, interpolating between the image edges.
+        stroke = {"z": 0, "points": [[0, 3], [11, 3]], "radius": 1, "new_id": str(new_id)}
+        response = c.post(url + "/paint", json=stroke)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["edit"]["n_px"] == 15 and result["edit"]["new_id"] == str(new_id)
+        expected = original.copy()
+        for x in (3, 4, 7, 8, 9):
+            expected[x, 2:5, 0] = new_id
+        assert np.array_equal(block._seg(), expected)
+        assert np.array_equal(np.load(source / "seg.npy"), original)
+        with np.load(block.work / "edits" / "000001.npz") as edit:
+            assert np.all(edit["old"] == 0), "undo must only record previously empty pixels"
+        # Repainting or touching only a cell must not change labels or add undo entries.
+        assert c.post(url + "/paint", json=stroke).json()["edit"] is None
+        occupied = {"z": 0, "points": [[1, 3]], "radius": 0, "new_id": str(new_id)}
+        assert c.post(url + "/paint", json=occupied).json()["edit"] is None
+        assert len(block.edits()) == 1 and np.array_equal(block._seg(), expected)
+        # The same endpoint is used by the eraser: new_id=0 must still remove labels.
+        occupied["new_id"] = "0"
+        assert c.post(url + "/paint", json=occupied).json()["edit"]["n_px"] == 1
+        assert block.pick(0, 1, 3) == 0
+        c.post(url + "/undo?z=0")
+        assert np.array_equal(block._seg(), expected)
+        c.post(url + "/undo?z=0")
+        assert np.array_equal(block._seg(), original) and block.edits() == []
 
 
 def test_page_renders(client):
@@ -277,7 +324,7 @@ def test_created_labels_persist_without_editing_pixels(tmp_path, monkeypatch):
     assert second > first
     assert reopened.labels_table(0)['created_ids'] == [str(first), str(second)]
     assert reopened.labels_table(1)['created_ids'] == [str(first), str(second)]
-    reopened.paint(0, [[5, 5]], 0, first)
+    reopened.paint(0, [[12, 12]], 0, first)
     assert str(first) in reopened.labels_table(0)['ids']
     reopened.undo()
     assert reopened.created_ids() == [str(first), str(second)]
@@ -304,21 +351,21 @@ def test_slice_history_and_undo_leave_other_slices_untouched(tmp_path, monkeypat
     monkeypatch.setattr(annotate, '_block', lambda _: b)
     with TestClient(app) as c:
         url = '/api/v1/annotate/blocks/slice-history'
-        for z, label in [(0, '101'), (1, '202'), (0, '303')]:
-            assert c.post(url + '/paint', json={'z': z, 'points': [[5, 5]], 'radius': 0, 'new_id': label}).status_code == 200
+        for z, x, label in [(0, 12, '101'), (1, 12, '202'), (0, 13, '303')]:
+            assert c.post(url + '/paint', json={'z': z, 'points': [[x, 12]], 'radius': 0, 'new_id': label}).status_code == 200
         history = c.get(url + '/edits?z=0&limit=1').json()
         assert history['n'] == 2 and [r['n'] for r in history['edits']] == [3]
         assert c.get(url + '/edits?z=1').json()['n'] == 1
         assert c.post(url + '/undo?z=0').json()['undone']['n'] == 3
-        assert b.pick(0, 5, 5) == 101 and b.pick(1, 5, 5) == 202
+        assert b.pick(0, 12, 12) == 101 and b.pick(1, 12, 12) == 202 and b.pick(0, 13, 12) == 0
         # The latest block edit is now on slice 1; undo on slice 0 must skip it.
         assert c.post(url + '/undo?z=0').json()['undone']['n'] == 1
-        assert b.pick(0, 5, 5) == int(original[5, 5, 0]) and b.pick(1, 5, 5) == 202
+        assert b.pick(0, 12, 12) == int(original[12, 12, 0]) and b.pick(1, 12, 12) == 202
         assert c.post(url + '/undo?z=0').json()['undone'] is None
         assert c.get(url + '/edits?z=0').json() == {'n': 0, 'edits': []}
         assert [r['n'] for r in b.edits()] == [2]
         b = Block(data, tmp_path / 'work')
-        rec = b.paint(0, [(5, 5)], 0, 404)
+        rec = b.paint(0, [(12, 12)], 0, 404)
         assert rec['n'] == 3  # remaining history is never overwritten
         for endpoint in ['/edits?z=99', '/edits?z=-1']:
             assert c.get(url + endpoint).status_code == 422

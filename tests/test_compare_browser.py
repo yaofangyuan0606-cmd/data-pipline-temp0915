@@ -2,16 +2,190 @@
 import json
 
 import numpy as np
+import pytest
 
 from annotation_data import write_pairs
 from emqc.annotate.store import Block
 from test_sam_browser import browser_for
 
 
+@pytest.fixture
+def comparison_page(tmp_path):
+    data = tmp_path / "blocks" / "stack"
+    original = write_pairs(data)
+    np.save(data / "seg.npy", np.repeat(original, 4, axis=2))
+    np.save(data / "em.npy", np.repeat(np.load(data / "em.npy"), 4, axis=2))
+    with browser_for(tmp_path, data) as (_, page):
+        requests = []
+        page.on("request", lambda r: requests.append(r.url) if "/compare/" in r.url else None)
+        page.locator("#an-compare").click()
+        page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false' && !document.querySelector('#cmp-images').hidden")
+        yield page, requests
+
+
+def test_comparison_wheel_inertia_does_not_keep_turning_slices(comparison_page):
+    page, requests = comparison_page
+    # A single touchpad gesture continues sending events after the fingers stop.
+    page.locator(".cmp-viewport").first.evaluate("""async el => {
+        for (const deltaY of [80, 40, 20, 8, 2]) {
+            el.dispatchEvent(new WheelEvent('wheel', {deltaY, bubbles:true, cancelable:true}));
+            await new Promise(resolve => setTimeout(resolve, 150));
+        }
+    }""")
+    page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false'")
+    assert page.locator("#cmp-z").input_value() == "1"
+    assert len(requests) == 2, "one gesture should request exactly one new slice"
+    page.wait_for_timeout(350)
+    page.locator(".cmp-viewport").first.dispatch_event("wheel", {"deltaY": 40})
+    page.wait_for_function("document.querySelector('#cmp-status').textContent.includes('Z 2') && document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false'")
+    assert len(requests) == 3, "a separate gesture can turn the next slice"
+    page.wait_for_timeout(350)
+    for delta in ({"deltaX": 50, "deltaY": 0}, {"deltaX": 50, "deltaY": 1}, {"deltaY": 0}):
+        page.locator(".cmp-viewport").first.dispatch_event("wheel", delta)
+        page.wait_for_timeout(300)
+    assert page.locator("#cmp-z").input_value() == "2" and len(requests) == 3
+    page.locator(".cmp-viewport").first.dispatch_event("wheel", {"deltaY": -40, "ctrlKey": True})
+    assert page.locator("#cmp-zoom").input_value() == "125" and len(requests) == 3
+    page.locator(".cmp-viewport").first.dispatch_event("wheel", {"deltaY": -10})
+    page.wait_for_timeout(1200)
+    assert len(requests) == 3, "releasing Ctrl during zoom inertia or waiting idle must not turn a slice"
+
+
+def test_comparison_boundaries_same_slice_and_key_repeat_do_not_reload(comparison_page):
+    page, requests = comparison_page
+    viewport = page.locator(".cmp-viewport").first
+    viewport.dispatch_event("wheel", {"deltaY": -40})
+    viewport.focus()
+    page.keyboard.press("ArrowLeft")
+    page.locator("#cmp-z").dispatch_event("change")
+    page.wait_for_timeout(350)
+    assert len(requests) == 1, "the first slice must not be reloaded by backward navigation"
+    viewport.dispatch_event("keydown", {"key": "ArrowRight", "repeat": True})
+    page.wait_for_timeout(200)
+    assert len(requests) == 1, "holding a key must not start automatic paging"
+    page.locator("#cmp-z").fill("7")
+    page.locator("#cmp-z").dispatch_event("change")
+    page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false'")
+    assert len(requests) == 2
+    viewport.dispatch_event("wheel", {"deltaY": 40})
+    page.wait_for_timeout(350)
+    assert len(requests) == 2, "the last slice must not be reloaded by forward navigation"
+    page.locator("#cmp-z").focus()
+    page.locator("#cmp-z").hover()
+    page.mouse.wheel(0, -100)
+    page.wait_for_timeout(300)
+    assert page.locator("#cmp-z").input_value() == "7" and len(requests) == 2
+    page.locator("#cmp-refresh").click()
+    page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false'")
+    assert len(requests) == 3, "explicit refresh still fetches fresh data"
+
+
+def test_comparison_loading_keeps_page_layout_zoom_and_pan(comparison_page):
+    page, requests = comparison_page
+    page.set_viewport_size({"width": 1400, "height": 900})
+    page.locator("#cmp-zoom").fill("300")
+    page.locator(".cmp-viewport").first.evaluate("el => { el.scrollLeft = 100; el.scrollTop = 80; }")
+    page.wait_for_function("[...document.querySelectorAll('.cmp-viewport')].every(v => v.scrollLeft === 100 && v.scrollTop === 80)")
+    page.evaluate("window.scrollTo(0, 120)")
+    geometry = """() => ({y: scrollY, height: document.documentElement.scrollHeight,
+        panes: [...document.querySelectorAll('.cmp-viewport')].map(v => [v.scrollLeft, v.scrollTop, v.getBoundingClientRect().top])})"""
+    before = page.evaluate(geometry)
+    pending = []
+    page.route("**/compare/1", lambda route: pending.append(route))
+    page.locator("#cmp-next").evaluate("button => button.click()")
+    page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'true'")
+    page.wait_for_timeout(150)
+    assert pending
+    assert page.locator("#cmp-images").is_visible(), "loading must not collapse the image area"
+    assert page.evaluate(geometry) == before, "loading must not jump or scroll the document"
+    pending[0].fulfill(response=pending[0].fetch())
+    page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false'")
+    assert page.evaluate(geometry) == before
+    assert page.locator("#cmp-zoom").input_value() == "300"
+    assert page.locator("#cmp-z").input_value() == "1" and len(requests) == 2
+
+
+def test_comparison_pending_and_stale_requests_cannot_turn_back(comparison_page):
+    page, requests = comparison_page
+    pending = []
+    page.route("**/compare/1", lambda route: pending.append((route, route.fetch())))
+    page.locator("#cmp-next").click()
+    page.wait_for_timeout(150)
+    assert len(pending) == 1 and len(requests) == 2
+    page.locator("#cmp-z").dispatch_event("change")
+    page.wait_for_timeout(150)
+    assert len(pending) == 1 and len(requests) == 2, "the same pending slice must not restart its request"
+    page.locator("#cmp-next").click()
+    page.wait_for_function("document.querySelector('#cmp-status').textContent.includes('Z 2') && document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false'")
+    route, response = pending.pop()
+    route.fulfill(response=response)
+    page.wait_for_timeout(350)
+    assert page.locator("#cmp-z").input_value() == "2"
+    assert "Z 2" in page.locator("#cmp-status").inner_text() and len(requests) == 3
+
+
+def test_comparison_failed_refresh_waits_for_explicit_retry(comparison_page):
+    page, requests = comparison_page
+    pattern = "**/compare/0"
+    page.route(pattern, lambda route: route.fulfill(status=503, json={"detail": "临时不可用"}))
+    height = page.evaluate("document.documentElement.scrollHeight")
+    page.locator("#cmp-refresh").click()
+    page.wait_for_function("document.querySelector('#cmp-status').textContent.includes('加载失败')")
+    assert not page.locator("#cmp-images").is_visible(), "a failed request must not show stale images as current"
+    assert page.evaluate("document.documentElement.scrollHeight") == height
+    assert page.locator("#cmp-refresh").is_enabled()
+    page.wait_for_timeout(1200)
+    assert len(requests) == 2, "failure must not start an automatic refresh loop"
+    page.unroute(pattern)
+    page.locator("#cmp-refresh").click()
+    page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false' && !document.querySelector('#cmp-status').textContent.includes('加载失败')")
+    assert page.locator("#cmp-images").is_visible() and len(requests) == 3
+
+
+def test_neuroglancer_third_pane_keeps_images_fitted_and_aligned(comparison_page):
+    from urllib.parse import parse_qs, urlsplit
+
+    page, requests = comparison_page
+    page.route("https://neuroglancer.example/**", lambda r: r.fulfill(body="<!doctype html><title>Viewer</title>"))
+
+    def embed(route):
+        z = parse_qs(urlsplit(route.request.url).query)["z"][0]
+        route.fulfill(json={"url": f"https://neuroglancer.example/viewer#z={z}", "center": [10, 20, int(z)]})
+
+    page.route("**/neuroglancer/embed?*", embed)
+    page.locator("#cmp-ng").check()
+    page.wait_for_function("document.querySelector('#cmp-ng-caption').textContent.includes('Z 0')")
+    for width, height in [(2559, 1345), (1366, 768), (1024, 768), (768, 1024), (390, 844), (320, 740)]:
+        page.set_viewport_size({"width": width, "height": height})
+        page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+        geometry = page.evaluate("""() => ({
+            width: innerWidth, scroll: document.documentElement.scrollWidth,
+            panes: [...document.querySelectorAll('.cmp-viewport,.cmp-ngbox')].map(e => {
+                const r=e.getBoundingClientRect(); return {y:r.y,height:r.height};
+            }),
+            fitted: [...document.querySelectorAll('.cmp-viewport')].every(v =>
+                v.scrollWidth<=v.clientWidth+1 && v.scrollHeight<=v.clientHeight+1)
+        })""")
+        assert geometry["scroll"] <= width + 1
+        assert geometry["fitted"]
+        panes = geometry["panes"]
+        assert panes[2]["height"] == pytest.approx(panes[0]["height"], abs=1)
+        if width > 1100:
+            assert all(p["y"] == pytest.approx(panes[0]["y"], abs=1) for p in panes)
+    assert len(requests) == 1, "enabling or resizing the third pane must not reload the comparison"
+    page.locator("#cmp-next").click()
+    page.wait_for_function("document.querySelector('#cmp-ng-frame').getAttribute('src').endsWith('z=1')")
+    assert len(requests) == 2
+    page.locator("#cmp-ng").uncheck()
+    assert not page.locator("#cmp-ng-pane").is_visible()
+    assert page.locator(".cmp-viewport").evaluate_all("es=>es.every(v=>v.scrollWidth<=v.clientWidth+1&&v.scrollHeight<=v.clientHeight+1)")
+
+
 def test_comparison_in_browser(tmp_path):
     data = tmp_path / "blocks" / "pairs"
     original = write_pairs(data)
     block = Block(data, tmp_path / "work")
+    block.paint(0, [(4, 4)], 0, 0)  # Relabelling with the brush requires erasing first.
     block.paint(0, [(4, 4)], 0, 77)
     mask = np.zeros(block.shape_zyx[1:], bool)
     mask[4, 20] = True
@@ -26,8 +200,7 @@ def test_comparison_in_browser(tmp_path):
         assert page.locator("#cmp-status").inner_text().endswith("3 像素与原始分割不同")
         assert page.locator("#cmp-before").evaluate("c => [c.width,c.height]") == [64, 32]
         assert page.locator("#cmp-after").evaluate("c => [c.width,c.height]") == [64, 32]
-        # Both canvases now paint changed pixels with the same fixed pink highlight.
-        # Check the underlying before/after labels via the linked pixel readout.
+        # The left defaults to raw EM; the right outlines changes. The readout still shows both labels.
         page.locator("#cmp-before").evaluate('''c => {
             const r = c.getBoundingClientRect();
             c.dispatchEvent(new MouseEvent('mousemove', {clientX: r.left + 4.5*r.width/c.width, clientY: r.top + 4.5*r.height/c.height}));
@@ -67,6 +240,7 @@ def test_comparison_in_browser(tmp_path):
         page.locator("#cmp-report > summary").click()          # 收起，回到默认的精简视图
         page.locator("#cmp-next").click()
         page.wait_for_function("document.querySelector('#cmp-status').textContent.includes('Z 1') && document.querySelector('#cmp-status').textContent.includes('一致')")
+        page.locator("#cmp-left-mode").select_option("seg")
         assert page.locator("#cmp-before").evaluate("c => c.toDataURL()") == page.locator("#cmp-after").evaluate("c => c.toDataURL()")
         page.locator("#cmp-edit").click()
         page.wait_for_function("document.querySelector('#an-z').value === '1'")
