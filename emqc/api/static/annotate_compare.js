@@ -32,8 +32,9 @@
   function draw() {
     if (!state.images) return;
     const {em, indices, sources, changes} = state.images, data = state.snapshot;
-    // Fixed instead of a slider, and the change highlight is always on: this page exists to show what changed.
-    const alpha = 0.5, highlight = true, sourceMode = $("mode").value === "sources";
+    // Fixed instead of a slider. The change marker is always on, but ONLY on the right: the left is "before",
+    // it must show the baseline exactly as delivered, with nothing drawn on top of it.
+    const alpha = 0.5, sourceMode = $("mode").value === "sources";
     // 左图默认是纯 EM 原图——「标注前」对标注员来说就是什么颜色都没有的那张；想对照交付的原始分割可以切过去
     const leftRaw = $("left-mode").value === "em";
     $("after-caption").textContent = sourceMode ? "当前结果 · 按来源着色" : "当前编辑结果";
@@ -49,7 +50,21 @@
         if (ids[idx[i]] !== "0" || (side && sourceMode && changes[i])) {
           pixels.set(c, i*4); pixels[i*4+3] = Math.round(alpha*255);
         }
-        if (highlight && changes[i]) { pixels.set([255, 80, 150], i*4); pixels[i*4+3] = 190; }
+      }
+      // Changed regions on the right are outlined with a black-outside / white-inside double edge. A filled tint
+      // was tried first and failed twice over: the pink was indistinguishable from pink cells, and it hid the
+      // colour the annotator had actually painted. A two-tone edge cannot be mistaken for any label colour and
+      // leaves the interior visible.
+      if (side) {
+        const W = em.width, H = em.height;
+        const changedAt = (x, y) => x >= 0 && y >= 0 && x < W && y < H && changes[y * W + x] > 0;
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+          const i = y * W + x, me = changes[i] > 0;
+          const nb = changedAt(x - 1, y) || changedAt(x + 1, y) || changedAt(x, y - 1) || changedAt(x, y + 1);
+          const inner = me && !(changedAt(x - 1, y) && changedAt(x + 1, y) && changedAt(x, y - 1) && changedAt(x, y + 1));
+          if (inner) { pixels.set([255, 255, 255], i*4); pixels[i*4+3] = 255; }        // white rim just inside
+          else if (!me && nb) { pixels.set([0, 0, 0], i*4); pixels[i*4+3] = 230; }     // black rim just outside
+        }
       }
       const layer = document.createElement("canvas"); layer.width = em.width; layer.height = em.height;
       layer.getContext("2d").putImageData(overlay, 0, 0);

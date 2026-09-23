@@ -5,7 +5,7 @@
 {% block content %}
 <link rel="stylesheet" href="/static/annotate_compare.css?v={{ static_v('annotate_compare.css') }}">
 <section class="cmp-page" id="cmp-page" aria-busy="true">
-  <div class="cmp-heading"><div><h1>前后对比</h1><p class="muted">同一张电镜切片：改了哪些地方，标签增减了什么。<b class="cmp-key">粉色</b>是与原始分割不同的像素。</p></div><button id="cmp-refresh">刷新</button></div>
+  <div class="cmp-heading"><div><h1>前后对比</h1><p class="muted">同一张电镜切片：改了哪些地方，标签增减了什么。右图里<b>黑白双线描出的区域</b>就是与原始分割不同的地方，描边里面是你实际填的颜色；左图不做任何标记。</p></div><button id="cmp-refresh">刷新</button></div>
   <div class="cmp-controls">
     <label class="cmp-block">数据块<select id="cmp-block" class="text"><option>加载中…</option></select></label>
     <div><label for="cmp-z">切片 Z</label><div class="cmp-z"><button id="cmp-prev" aria-label="上一片">←</button><input id="cmp-z" class="text mono" type="number" min="0" value="0"><span id="cmp-zmax" class="muted">/ —</span><button id="cmp-next" aria-label="下一片">→</button></div></div>
