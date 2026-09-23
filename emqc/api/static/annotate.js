@@ -293,7 +293,7 @@
     S.tool = t; mergeArm(null);
     if ((t === "merge" || t === "ng" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     document.querySelectorAll(".tool").forEach(b => { const active = b.dataset.tool === t; b.classList.toggle("active", active); b.setAttribute("aria-pressed", String(active)); });
-    for (const p of P) p.stage.classList.toggle("pan", t === "pan");
+    for (const p of P) { p.stage.classList.toggle("pan", t === "pan"); p.stage.dataset.tool = t; }   // 光标跟着工具走（见 style.css）
     renderHi();
   }
   function setCur(id) { S.cur = String(id); $("an-cur-id").textContent = S.cur === "0" ? "未选择" : S.cur; $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur)); status(); segList(); samButtons(); }
