@@ -21,8 +21,9 @@
 .cmp-metrics strong { font: 600 23px var(--mono); }
 .cmp-metrics .cmp-total { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); }
 .cmp-images { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 16px; --cmp-view-height: 50vh; }
-.cmp-ngbox { position: relative; height: var(--cmp-view-height); background: #000; }
-.cmp-ngbox iframe { width: 100%; height: 100%; border: 0; display: block; pointer-events: none; }
+/* 盒子只露出查看器的 xy 视口：iframe 按 ≥800px 渲染、上移 47px 藏掉顶部两条栏、再等比缩回盒子宽（尺寸和 transform 由 ngFit 写） */
+.cmp-ngbox { position: relative; height: var(--cmp-view-height); background: #000; overflow: hidden; }
+.cmp-ngbox iframe { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border: 0; display: block; pointer-events: none; transform-origin: 0 0; }
 /* 我们自己画的跟踪指针：黄色圆环 + 中心点，深色外描边在灰度 EM 和彩色分割上都看得见；纯位移，不走查看器状态 */
 .cmp-ng-mark { position: absolute; left: 0; top: 0; width: 30px; height: 30px; margin: -15px 0 0 -15px; border: 3px solid #ffd60a; border-radius: 50%; box-shadow: 0 0 0 1.5px rgba(0,0,0,.8), inset 0 0 0 1.5px rgba(0,0,0,.8); pointer-events: none; will-change: transform; }
 .cmp-ng-mark::after { content: ""; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #ffd60a; box-shadow: 0 0 0 1px rgba(0,0,0,.8); }

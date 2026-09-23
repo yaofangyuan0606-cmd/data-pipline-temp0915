@@ -289,11 +289,28 @@
   // 两栏常驻：EM 原图、EM + c3 分割，各自一个 iframe，同一位置同一切片。
   let ngSerial = 0, ngLast = {block: "", z: -1, px: 0};
   // 每栏记住基础 URL、块角点和取景（中心 + 比例）。悬停指针由页面自己画在 iframe 上面：
-  //   iframe 像素 = (体素坐标 - 中心) / 比例 + iframe 中心
-  // 嵌入状态隐藏了查看器的顶部 UI 且 iframe 不接鼠标，所以这个换算是精确的；不再为每次移动改 URL 片段
-  //（那条路要让查看器重新应用整份状态，肉眼可见地卡）。点击居中才改 URL。
-  const ngBase = {em: null, seg: null}, ngView = {em: null, seg: null};
+  //   栏内像素 = (体素坐标 - 中心) / 比例 × f + 栏中心
+  // 前提是栏里露出来的**正好是** xy 视口、栏中心就是 state.position。但 H01 这份 Neuroglancer 不理会
+  // showUIControls 等开关：顶部两条栏（坐标栏 21 px + 图层栏 26 px = 47 px）总在，视口从 47 px 才开始；
+  // 而且查看器窄于 750 px 时坐标栏会折行，栏更高——之前按「视口铺满 iframe」算，圆环就整体偏上了。
+  // 所以 iframe 一律按不少于 NG_MIN_W 的宽度渲染（此时两条栏恒为 47 px），上移 47 px 把栏藏到盒子外，
+  // 再用 transform 等比缩到盒子宽度（f = 盒宽 / iframe 宽）。这样盒子里露出的就是完整视口，换算精确。
+  // iframe 不接鼠标；不再为每次移动改 URL 片段（那条路要让查看器重新应用整份状态，肉眼可见地卡），点击居中才改 URL。
+  const NG_BARS = 47, NG_MIN_W = 800;
+  const ngBase = {em: null, seg: null}, ngView = {em: null, seg: null}, ngGeom = {em: null, seg: null};
   let ngCorner = null, ngRaf = null, ngPending = null;
+  function ngFit() {                             // 按盒子尺寸摆 iframe：宽 ≥ NG_MIN_W、上移一条栏、等比缩回盒子
+    for (const key of ["em", "seg"]) {
+      const frame = $(`ng-${key}-frame`), box = frame.parentElement;
+      const bw = box.clientWidth, bh = box.clientHeight;
+      if (!bw || !bh) continue;
+      const iw = Math.max(bw, NG_MIN_W), f = bw / iw, ih = Math.round(bh / f + NG_BARS);
+      frame.style.width = `${iw}px`; frame.style.height = `${ih}px`;
+      frame.style.top = `${(-NG_BARS * f).toFixed(2)}px`;
+      frame.style.transform = `scale(${f.toFixed(5)})`;
+      ngGeom[key] = {bw, bh, iw, f};
+    }
+  }
   function ngParse(url) {
     try { const st = JSON.parse(decodeURIComponent(url.split("#!")[1])); return {pos: st.position, scale: st.crossSectionScale}; } catch (_) { return null; }
   }
@@ -306,12 +323,11 @@
   }
   function ngPlace(x, y) {                       // x, y: 标注后画布像素；null = 隐藏
     for (const key of ["em", "seg"]) {
-      const mark = $(`ng-${key}-mark`), view = ngView[key], frame = $(`ng-${key}-frame`);
-      if (x == null || !view || !ngCorner) { mark.hidden = true; continue; }
-      const w = frame.clientWidth, h = frame.clientHeight;
-      const px = (ngCorner[0] + x + .5 - view.pos[0]) / view.scale + w / 2;
-      const py = (ngCorner[1] + y + .5 - view.pos[1]) / view.scale + h / 2;
-      const inside = px >= 0 && py >= 0 && px <= w && py <= h;
+      const mark = $(`ng-${key}-mark`), view = ngView[key], g = ngGeom[key];
+      if (x == null || !view || !ngCorner || !g) { mark.hidden = true; continue; }
+      const px = (ngCorner[0] + x + .5 - view.pos[0]) / view.scale * g.f + g.bw / 2;
+      const py = (ngCorner[1] + y + .5 - view.pos[1]) / view.scale * g.f + g.bh / 2;
+      const inside = px >= 0 && py >= 0 && px <= g.bw && py <= g.bh;
       mark.hidden = !inside;
       if (inside) mark.style.transform = `translate(${px.toFixed(1)}px, ${py.toFixed(1)}px)`;
     }
@@ -331,21 +347,19 @@
     }
     ngPlace(x, y);
   }
-  // 取景尺寸用 iframe 的实际宽度（首次同步时布局可能还没排出来，向上找有宽度的容器兜底）
-  function ngWidth(frame) {
-    const w = frame.clientWidth || frame.parentElement?.clientWidth || Math.floor($("images").clientWidth / 3) || 600;
-    return Math.max(300, Math.round(w));
-  }
+  // 取景宽度 = iframe 渲染宽度（≥ NG_MIN_W，见 ngFit）：块正好占满 iframe，缩回盒子后也正好占满盒子。
+  // 首次同步时盒子可能还没排出尺寸，先按 NG_MIN_W 取景，等布局稳定后由下面的复查纠正。
+  function ngWidth() { ngFit(); return ngGeom.em?.iw || NG_MIN_W; }
   async function ngSync() {
     layoutImages();
     if (!state.block) return;
-    const px = ngWidth($("ng-em-frame"));
+    const px = ngWidth();
     if (ngLast.block === state.block && ngLast.z === state.z && Math.abs(px - ngLast.px) < ngLast.px * 0.15) return;
     ngLast = {block: state.block, z: state.z, px};
     const serial = ++ngSerial;
     // 首次同步常常发生在 iframe 还没有尺寸的瞬间（读到 0 → 退回 600 → 只显示块中心的一半）。等布局稳定后
     // 复查一次：真实宽度和这次用的差得多，就按真实宽度重新取景。ngLast 的 15% 守卫保证不会来回震荡。
-    setTimeout(() => { const now = ngWidth($("ng-em-frame")); if (Math.abs(now - px) >= px * 0.15) ngSync(); }, 600);
+    setTimeout(() => { const now = ngWidth(); if (Math.abs(now - px) >= px * 0.15) ngSync(); }, 600);
     const panes = [["em", "em", "公开 H01 · 电镜原图"], ["seg", "em+seg", "公开 H01 · c3 分割叠在电镜上"]];
     await Promise.all(panes.map(async ([key, layers, title]) => {
       const frame = $(`ng-${key}-frame`), note = $(`ng-${key}-note`), open = $(`ng-${key}-open`), cap = $(`ng-${key}-caption`);
@@ -475,6 +489,7 @@
     });
     $("zoom").value = state.zoom; $("zoom-value").textContent = `${state.zoom}%`;
     layout = {key, W, H};
+    ngFit();                                                    // 盒子高度变了，iframe 立刻跟上，不等 ResizeObserver
     if (state.images && state.rimDrawn && rimWidth(canvases[0]) !== state.rimDrawn) draw();   // rim must track the new scale
   }
   function setZoom(v) {
@@ -485,7 +500,7 @@
   $("fit").addEventListener("click", () => { state.zoom = 100; layoutImages(true); });
   new ResizeObserver(() => layoutImages()).observe($("images"));
   let ngResize = null;
-  new ResizeObserver(() => { clearTimeout(ngResize); ngResize = setTimeout(ngSync, 300); }).observe($("ng-em-frame"));
+  new ResizeObserver(() => { ngFit(); clearTimeout(ngResize); ngResize = setTimeout(ngSync, 300); }).observe($("ng-em-frame").parentElement);
   window.addEventListener("resize", () => layoutImages());
   let wheelGesture = null;
   function onWheel(ev) {

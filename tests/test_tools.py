@@ -192,7 +192,8 @@ def test_embed_state_is_flat_and_shows_every_segment(client_tools):
                          "voxel_size_nm": [8, 8, 33]}}
     st = ng.embed_state(meta, (100, 512, 512), 20, 600)
     assert st["layout"] == "xy" and "projectionScale" not in st, "平面视图，不带 3D 面板"
-    assert st["showUIControls"] is False, "嵌入时不带顶部 UI：视口铺满 iframe，页面才能精确把体素换算成 iframe 像素"
+    assert "showUIControls" not in st and "showPanelBorders" not in st, \
+        "H01 这份查看器不理会隐藏 UI 的开关；页面自己按固定栏高把栏藏掉，所以状态里不能带这些将来可能突然生效的开关"
     seg = [l for l in st["layers"] if l["type"] == "segmentation"][0]
     assert "segments" not in seg and seg["selectedAlpha"] == 0.45, "不选中任何分段 = 全部渲染，透明度让 EM 透出来"
     assert st["position"] == [355846 + 512 + 256 + .5, 68275 + 256 + .5, 1245 + .5], "块中心，y0 配 origin.x"

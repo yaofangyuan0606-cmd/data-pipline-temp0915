@@ -179,11 +179,10 @@ def embed_state(meta: dict, shape_zyx, z: int, screen_px: int = 600, with_seg: b
     state.pop("projectionDepth", None)
     state["showAxisLines"] = False
     state["showDefaultAnnotations"] = False
-    # No top bars inside the embed: the xy panel then fills the whole iframe, so the page can map a voxel to an
-    # iframe pixel exactly (centre = position, scale = crossSectionScale) and draw its own hover marker on top
-    # instead of pushing a hashchange into the viewer for every mouse move (which was visibly laggy).
-    state["showUIControls"] = False
-    state["showPanelBorders"] = False
+    # Deliberately NO showUIControls / showLayerPanel / showLocation here. The H01 demo build ignores them all
+    # (verified: the position row and layer bar stay), so the page hides the bars itself by rendering the iframe
+    # taller and shifted up by their height, which it can only do if that height is predictable — i.e. if we do
+    # not send flags that a future build might suddenly honour.
     for layer in state["layers"]:
         if layer.get("type") == "segmentation":
             layer["selectedAlpha"] = 0.45
