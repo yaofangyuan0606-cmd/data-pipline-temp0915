@@ -148,6 +148,27 @@ def test_neuroglancer_endpoint(client_tools):
     assert c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer", params={"z": 0, "x": 999, "y": 10}).status_code == 404
 
 
+# ----------------------------------------------------------------------------- 对比页第三栏：嵌入公开查看器
+def test_embed_state_is_flat_and_shows_every_segment(client_tools):
+    from emqc.annotate import neuroglancer as ng
+
+    meta = {"dataset": {"id": "h01", "seg_source": "h01-release/c3"},
+            "geometry": {"origin": {"x": 355846, "y": 68275, "z": 1225}, "offset_in_parent": {"y0": 512, "x0": 0},
+                         "voxel_size_nm": [8, 8, 33]}}
+    st = ng.embed_state(meta, (100, 512, 512), 20, 600)
+    assert st["layout"] == "xy" and "projectionScale" not in st, "平面视图，不带 3D 面板"
+    seg = [l for l in st["layers"] if l["type"] == "segmentation"][0]
+    assert "segments" not in seg and seg["selectedAlpha"] == 0.45, "不选中任何分段 = 全部渲染，透明度让 EM 透出来"
+    assert st["position"] == [355846 + 512 + 256 + .5, 68275 + 256 + .5, 1245 + .5], "块中心，y0 配 origin.x"
+    assert ng.link_for_embed(meta, (100, 512, 512), 20)["url"].startswith(ng.VIEWER + "#!")
+    assert ng.embed_state({"dataset": {"id": "mouse"}}, (100, 512, 512), 20) is None
+    # 接口：合成块不是 H01 → url 为 None 并给出原因；z 越界 404
+    c, block_id = client_tools
+    r = c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer/embed", params={"z": 0}).json()
+    assert r["url"] is None and "H01" in r["reason"]
+    assert c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer/embed", params={"z": 99}).status_code == 404
+
+
 # ----------------------------------------------------------------------------- 批量删除
 def test_clear_labels_clears_only_this_slice_as_one_undoable_edit(block):
     """批量删除：本片上选中的几个 id 全部清为 0，记成一笔；其他切片不动；撤销一次逐像素还原。"""

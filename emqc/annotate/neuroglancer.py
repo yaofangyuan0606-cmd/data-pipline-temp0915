@@ -165,6 +165,37 @@ def block_state(meta: dict, shape_zyx, z: int, screen_px: int = 700) -> dict | N
     return state
 
 
+def embed_state(meta: dict, shape_zyx, z: int, screen_px: int = 600) -> dict | None:
+    """A state for EMBEDDING the public viewer beside our own before/after panes on the compare page.
+
+    Same framing as block_state, but flat: a single xy cross-section (no 3D panel, no slice planes), the EM under
+    the full c3 segmentation. Neuroglancer shows every segment when the layer's `segments` list is empty, which is
+    exactly the "reference segmentation" picture wanted here; selectedAlpha keeps the EM readable through it."""
+    state = block_state(meta, shape_zyx, z, screen_px)
+    if state is None:
+        return None
+    state["layout"] = "xy"
+    state.pop("projectionScale", None)
+    state.pop("projectionDepth", None)
+    state["showAxisLines"] = False
+    state["showDefaultAnnotations"] = False
+    for layer in state["layers"]:
+        if layer.get("type") == "segmentation":
+            layer["selectedAlpha"] = 0.45
+            layer["notSelectedAlpha"] = 0
+            layer.pop("segments", None)                     # empty selection = every segment rendered
+    return state
+
+
+def link_for_embed(meta: dict, shape_zyx, z: int, screen_px: int = 600) -> dict:
+    """{'url', 'center', ...} for an iframe framing this block at section z, or {'url': None, 'reason': ...}."""
+    state = embed_state(meta, shape_zyx, z, screen_px)
+    if state is None:
+        return {"url": None, "reason": "这个数据块没有 geometry.origin 或不是 H01 数据，公开查看器里没有对应的体数据"}
+    return {"url": VIEWER + "#!" + urllib.parse.quote(json.dumps(state, separators=(",", ":")), safe=""),
+            "center": [int(p - 0.5) for p in state["position"]], "layout": state["layout"]}
+
+
 def link_for(meta: dict, x: int, y: int, z: int, segment: int | None = None, zoom_nm: float = 4.0,
              shape_zyx=None, neighbours: list | None = None) -> dict:
     """{'url', 'position', 'segment', 'position_um'} for the viewer, or {'url': None, 'reason': ...}.

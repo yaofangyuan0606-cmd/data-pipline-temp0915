@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, Query
 from pydantic import BaseModel, Field
 from typing import Literal
 
@@ -124,6 +124,17 @@ class NeighbourLabelIn(BaseModel):
     token: str | None = Field(default=None, min_length=32, max_length=32)   # a pending SAM mask, voted over
     radius: int = Field(default=10, ge=1, le=32)
     z_src: int | None = Field(default=None, ge=0)          # 指定去哪一片取色；不给就自动挑最近的
+
+
+@router.get("/blocks/{block_id}/neuroglancer/embed")
+def neuroglancer_embed(block_id: str, z: int = Query(ge=0), px: int = Query(default=600, ge=100, le=4000)):
+    """A public-viewer URL framing this block at section z, flat xy layout, for the compare page's third pane."""
+    from emqc.annotate.neuroglancer import link_for_embed
+
+    b = _block(block_id, read_only=True)
+    if not 0 <= z < b.shape_zyx[0]:
+        raise HTTPException(404, "z outside the block")
+    return {**link_for_embed(b.meta, b.shape_zyx, z, px), "block_id": b.id, "z": z}
 
 
 @router.post("/blocks/{block_id}/neighbour-label")
