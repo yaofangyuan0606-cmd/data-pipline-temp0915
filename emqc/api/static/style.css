@@ -327,3 +327,20 @@ main.full .vast-side .flash { position: static; transform: none; max-width: none
 #an-notices { position: relative; }
 #an-notice-close { position: absolute; right: 4px; top: 4px; padding: 0 4px; background: transparent; border: 0; }
 #an-notices:not(:has(.flash[style*="display: block"])) { display: none; }
+
+/* 批量删除 */
+.vast-sec-btn { float: right; font: 500 11px var(--mono); letter-spacing: 0; text-transform: none; padding: 1px 8px; }
+.vast-sec-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); }
+.an-bulk-bar { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
+.an-bulk-bar span { flex: 1; }
+.vast-list .row .bulk-box { margin: 0 2px 0 0; }
+.vast-list .row.bulk-on { background: var(--accent-soft); }
+button.danger { background: #b42318; color: #fff; border-color: #b42318; }
+button.danger:disabled { opacity: .5; }
+.an-confirm { border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; max-width: 420px; }
+.an-confirm::backdrop { background: rgba(0,0,0,.35); }
+.an-confirm h3 { margin: 0 0 8px; font-size: 15px; }
+.an-confirm p { font-size: 13px; line-height: 1.6; margin: 0 0 12px; }
+.an-confirm .an-bulk-ids { margin-top: 8px; font-size: 11px; color: var(--muted); word-break: break-all; }
+.an-confirm .actions { display: flex; justify-content: flex-end; gap: 8px; }
+.vast-toolgrid .tool kbd { margin-left: 4px; font-size: 10px; opacity: .75; }

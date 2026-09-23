@@ -148,6 +148,38 @@ def test_neuroglancer_endpoint(client_tools):
     assert c.get(f"/api/v1/annotate/blocks/{block_id}/neuroglancer", params={"z": 0, "x": 999, "y": 10}).status_code == 404
 
 
+# ----------------------------------------------------------------------------- 批量删除
+def test_clear_labels_clears_only_this_slice_as_one_undoable_edit(block):
+    """批量删除：本片上选中的几个 id 全部清为 0，记成一笔；其他切片不动；撤销一次逐像素还原。"""
+    seg0 = block.seg_slice(0).copy(); seg1 = block.seg_slice(1).copy()
+    block.paint(0, [(10, 10)], 3, 7)                       # 确保 z0 上有 7；再造一个 9
+    block.paint(0, [(60, 30)], 3, 9)
+    before0 = block.seg_slice(0).copy()
+    assert (before0 == 7).any() and (before0 == 9).any()
+    rec = block.clear_labels(0, ["7", 9, 0, 7])           # 重复、含 0 都要能吃
+    assert rec["kind"] == "clear" and rec["scope"] == "batch" and rec["ids"] == ["7", "9"] and rec["n_ids"] == 2
+    after0 = block.seg_slice(0)
+    assert rec["n_px"] == int(np.isin(before0, [7, 9]).sum()) and not np.isin(after0, [7, 9]).any()
+    assert np.array_equal(after0[~np.isin(before0, [7, 9])], before0[~np.isin(before0, [7, 9])]), "别的标签原样"
+    assert np.array_equal(block.seg_slice(1), seg1), "其他切片一个像素不动"
+    block.undo()
+    assert np.array_equal(block.seg_slice(0), before0), "一次撤销整笔还原"
+    with pytest.raises(ValueError):
+        block.clear_labels(0, [0])
+    assert block.clear_labels(0, [123456789]) is None, "本片没有这个 id：没有可写的像素，返回 None"
+
+
+def test_clear_labels_api(client_tools):
+    c, block_id = client_tools
+    url = f"/api/v1/annotate/blocks/{block_id}/clear-labels"
+    assert c.post(url, json={"z": 99, "ids": ["7"]}).status_code == 404
+    assert c.post(url, json={"z": 0, "ids": []}).status_code == 422, "空列表被模型拒绝"
+    assert c.post(url, json={"z": 0, "ids": ["0"]}).status_code == 422, "只有背景 0 等于什么都没选"
+    r = c.post(url, json={"z": 0, "ids": ["7"]})
+    assert r.status_code == 200 and r.json()["edit"]["kind"] == "clear" and r.json()["edit"]["n_px"] > 0
+    assert c.post(f"/api/v1/annotate/blocks/{block_id}/undo?z=0").json()["undone"]["kind"] == "clear"
+
+
 # ----------------------------------------------------------------------------- 跨片取色
 def test_neighbour_lookup_finds_the_colour_the_current_slice_is_missing(block):
     """漏标的那一片没有颜色可吸——取色要去最近一张有标签的邻片上拿，并且说清楚是从哪一片拿的。

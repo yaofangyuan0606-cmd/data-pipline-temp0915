@@ -440,6 +440,25 @@ class Block:
             self._invalidate(z)
             return rec
 
+    def clear_labels(self, z: int, ids) -> dict | None:
+        """批量删除：把本片上这几个 id 的像素全部清为背景 0，记成一笔，可整笔撤销。只动第 z 片。"""
+        self._check_z(z)
+        ids = sorted({int(i) for i in ids} - {0})
+        if not ids:
+            raise ValueError("没有选中任何标签")
+        with self.lock:
+            seg = self._seg_writable()
+            plane = self._plane(z)
+            mask = np.isin(plane, np.asarray(ids, dtype=plane.dtype))
+            xs, ys = self._disk_idx(mask)
+            if not xs.size:
+                return None
+            old = seg[xs, ys, z].copy()
+            plane[mask] = 0
+            seg.flush()
+            self._invalidate(z)
+            return self._record("clear", z, xs, ys, old, 0, {"scope": "batch", "ids": [str(i) for i in ids], "n_ids": len(ids)})
+
     def fill(self, z: int, x: int, y: int, new_id: int, whole_slice: bool = False) -> dict | None:
         """Bucket fill: relabel the connected component of the clicked pixel (4-connectivity within the slice) to
         `new_id`; with whole_slice, every pixel of that id in the slice. Returns the edit record, or None if the
