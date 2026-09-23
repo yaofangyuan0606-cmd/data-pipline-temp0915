@@ -16,7 +16,7 @@
 {% macro blockmap(ds, blocks, qc, size=300) -%}
 {% set W = size %}{% set H = (size * ds.shape.y / ds.shape.x)|round|int if ds.shape.x else size %}
 {% set zgroups = blocks|map(attribute='z_start')|unique|list %}
-<div class="grid" style="grid-template-columns: repeat(auto-fill, minmax({{ W + 24 }}px, max-content)); gap:14px">
+<div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(min(100%, {{ W + 24 }}px), 1fr)); gap:14px">
 {% for z0 in zgroups %}{% set grp = blocks|selectattr('z_start','equalto',z0)|list %}
 <figure style="margin:0">
 <svg class="chart" viewBox="-1 -1 {{ W + 2 }} {{ H + 2 }}" style="max-width:{{ W }}px" role="img" aria-label="z {{ z0 }} 到 {{ grp[0].z_end - 1 }} 的平面按 tile 划分，颜色为等级">

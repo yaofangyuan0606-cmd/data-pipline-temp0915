@@ -104,7 +104,7 @@ def test_real_sam_preview_apply_undo_in_browser(tmp_path):
     original = np.load(data / "seg.npy")
     work = tmp_path / "work" / "sample"
     with browser_for(tmp_path, data) as (adapter, page):
-        page.locator('[data-tool="sam"]').click()
+        page.locator('button[data-tool="sam"]').click()
         page.locator("#an-stage").scroll_into_view_if_needed()
         adapter.move((150, 200), click=True)
         page.wait_for_function("!document.getElementById('an-sam-new').disabled", timeout=60000)
@@ -123,7 +123,7 @@ def test_real_sam_preview_apply_undo_in_browser(tmp_path):
         page.wait_for_function("document.getElementById('an-nedit').textContent === '0 次改动' && !document.getElementById('an-undo').disabled")
         assert np.array_equal(np.load(work / "seg_edit.npy"), original)
         # The tool remains selected after apply; clicking again would cancel it.
-        assert page.locator('[data-tool="sam"]').get_attribute("aria-pressed") == "true"
+        assert page.locator('button[data-tool="sam"]').get_attribute("aria-pressed") == "true"
         # Page changes invalidate the old proposal before it can be applied elsewhere.
         page.locator("#an-stage").scroll_into_view_if_needed()
         adapter.move((150, 200), click=True)
@@ -158,7 +158,7 @@ def test_sam_click_starts_target_modifiers_refine_it(tmp_path):
             route.fulfill(json={'token': 'a' * 32, 'candidate': 0, 'n_px': 1, 'seconds': .01,
                                 'mask_png': 'data:image/png;base64,' + base64.b64encode(png.getvalue()).decode()})
         page.route('**/sam/predict', predict)
-        page.locator('[data-tool="sam"]').click()
+        page.locator('button[data-tool="sam"]').click()
 
         def click(point, modifier=None):
             count = len(requests)
@@ -194,7 +194,7 @@ def test_sam_click_starts_target_modifiers_refine_it(tmp_path):
         click((5, 30))
         assert requests[-1]['labels'] == [1]  # clears positive and negative prompts
 
-        page.locator('[data-tool="sam-box"]').click()
+        page.locator('button[data-tool="sam-box"]').click()
         page.mouse.move(*adapter.position((3, 3)))
         page.mouse.down()
         page.mouse.move(*adapter.position((20, 40)))
@@ -202,18 +202,18 @@ def test_sam_click_starts_target_modifiers_refine_it(tmp_path):
         page.wait_for_function("!document.getElementById('an-sam-new').disabled")
         box = requests[-1]['box']
         assert box is not None and requests[-1]['points'] == []
-        page.locator('[data-tool="sam"]').click()
+        page.locator('button[data-tool="sam"]').click()
         click((10, 10), 'Meta')
         assert requests[-1]['box'] == box and requests[-1]['labels'] == [1]
         click((20, 20))
         assert requests[-1]['box'] is None and requests[-1]['labels'] == [1]
-        page.locator('[data-tool="sam"]').click()
-        assert page.locator('[data-tool="sam"]').get_attribute('aria-pressed') == 'false'
+        page.locator('button[data-tool="sam"]').click()
+        assert page.locator('button[data-tool="sam"]').get_attribute('aria-pressed') == 'false'
         assert page.locator('#an-sam-new').is_disabled()
-        page.locator('[data-tool="sam-box"]').click()
-        assert page.locator('[data-tool="sam-box"]').get_attribute('aria-pressed') == 'true'
-        page.locator('[data-tool="sam-box"]').click()
-        assert page.locator('[data-tool="sam-box"]').get_attribute('aria-pressed') == 'false'
+        page.locator('button[data-tool="sam-box"]').click()
+        assert page.locator('button[data-tool="sam-box"]').get_attribute('aria-pressed') == 'true'
+        page.locator('button[data-tool="sam-box"]').click()
+        assert page.locator('button[data-tool="sam-box"]').get_attribute('aria-pressed') == 'false'
         assert not (tmp_path / 'work' / 'prompts' / 'seg_edit.npy').exists()
 
 
@@ -257,9 +257,9 @@ def test_current_and_new_labels_in_browser(tmp_path):
         page.wait_for_selector(f'#an-segs [data-id="{label}"]')
         assert created.locator(f'[data-id="{label}"]').count() == 1
         page.locator(f'#an-segs [data-id="{label}"]').click()
-        page.locator('[data-tool="brush"]').click()
+        page.locator('button[data-tool="brush"]').click()
         page.locator('#an-brush').fill('0')
-        adapter.move((5, 5), click=True)
+        adapter.move((12, 12), click=True)  # Brush writes only into background pixels.
         page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动'")
         page.wait_for_function(f'''document.querySelector('#an-segs [data-id="{label}"] .n').textContent === '1' ''')
         assert created.locator(f'[data-id="{label}"]').count() == 1
@@ -292,14 +292,14 @@ def test_sam_cancel_during_prediction_ignores_late_result(tmp_path):
                 }), {status: 200, headers: {'Content-Type': 'application/json'}})); })
                 : realFetch(url, options);
         }''')
-        page.locator('[data-tool="sam"]').click()
+        page.locator('button[data-tool="sam"]').click()
         adapter.move((5, 5), click=True)
         page.wait_for_function('!!window.finishPrediction')
         assert page.locator('#an-sam-new').is_disabled()
-        page.locator('[data-tool="sam"]').click()
+        page.locator('button[data-tool="sam"]').click()
         page.evaluate('window.finishPrediction()')
         page.wait_for_timeout(100)
-        assert page.locator('[data-tool="sam"]').get_attribute('aria-pressed') == 'false'
+        assert page.locator('button[data-tool="sam"]').get_attribute('aria-pressed') == 'false'
         assert page.locator('#an-sam-new').is_disabled()
         assert '预览 10' not in page.locator('#an-sam-result').inner_text()
         assert not (tmp_path / 'work' / 'cancel' / 'seg_edit.npy').exists()
@@ -352,13 +352,13 @@ def test_3d_modes_toggle_and_close_viewer(tmp_path):
         assert point.get_attribute('aria-pressed') == 'false'
         # Switching to SAM cancels point mode; navigating cancels a viewer.
         point.click()
-        page.locator('[data-tool="sam"]').click()
+        page.locator('button[data-tool="sam"]').click()
         assert point.get_attribute('aria-pressed') == 'false'
         with page.expect_popup() as popup:
             block.click()
         viewer = popup.value
         viewer.wait_for_url('about:blank#view3d')
-        assert page.locator('[data-tool="sam"]').get_attribute('aria-pressed') == 'false'
+        assert page.locator('button[data-tool="sam"]').get_attribute('aria-pressed') == 'false'
         with viewer.expect_event('close'):
             page.locator('#an-next').click()
         assert block.get_attribute('aria-pressed') == 'false'
@@ -428,15 +428,15 @@ def test_notices_do_not_cover_image_and_history_follows_slice(tmp_path):
         page.locator('#an-notice-close').click()
         page.set_viewport_size({'width': 1600, 'height': 1200})
         page.locator('#an-segs [data-id="22"]').click()
-        page.locator('[data-tool="brush"]').click()
+        page.locator('button[data-tool="brush"]').click()
         page.locator('#an-brush').fill('0')
-        adapter.move((5, 5), click=True)
+        adapter.move((12, 12), click=True)  # Brush writes only into background pixels.
         page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动'")
         assert '#1 ' in page.locator('#an-edits').inner_text()
         page.locator('#an-next').click()
         page.wait_for_function("document.getElementById('an-z').value === '1' && document.getElementById('an-nedit').textContent === '0 次改动'")
         assert '本片还没有改动' in page.locator('#an-edits').inner_text()
-        adapter.move((5, 5), click=True)
+        adapter.move((12, 12), click=True)  # Brush writes only into background pixels.
         page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动'")
         assert '#2 ' in page.locator('#an-edits').inner_text()
         assert '#1 ' not in page.locator('#an-edits').inner_text()
@@ -446,7 +446,7 @@ def test_notices_do_not_cover_image_and_history_follows_slice(tmp_path):
         page.wait_for_function("document.getElementById('an-nedit').textContent === '0 次改动' && !document.getElementById('an-undo').disabled")
         work = tmp_path / 'work' / 'slice-history' / 'seg_edit.npy'
         assert np.array_equal(np.load(work)[:, :, 0], original[:, :, 0])
-        assert int(np.load(work)[5, 5, 1]) == 22
+        assert int(np.load(work)[12, 12, 1]) == 22
         page.locator('#an-next').click()
         page.wait_for_function("document.getElementById('an-nedit').textContent === '1 次改动'")
         page.locator('#an-stage').focus()

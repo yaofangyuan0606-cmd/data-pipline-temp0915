@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}使用说明{% endblock %}
+{% block mainclass %}guide{% endblock %}
 {% block crumbs %}<a href="/annotate">切片标注</a> › <b>使用说明</b>{% endblock %}
 {% block topright %}<a class="btn primary" href="/annotate">打开工作台</a>{% endblock %}
 {% block content %}
@@ -60,7 +61,7 @@
 </div>
 
 <h2>接口</h2>
-<div class="card pad-0"><table class="dense">
+<div class="card pad-0 scroll"><table class="dense">
 <thead><tr><th>方法</th><th>路径</th><th>作用</th></tr></thead>
 <tbody>
 {% for m, p, d in [

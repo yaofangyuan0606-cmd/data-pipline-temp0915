@@ -214,8 +214,11 @@
   }
   function applyView() { const t = `translate(${S.tx}px,${S.ty}px) scale(${S.zoom})`; for (const p of P) p.cv.style.transform = t; status(); }
   function fit() {
-    const r = P[0].stage.getBoundingClientRect(); S.zoom = Math.max(0.05, Math.min(r.width / S.W, r.height / S.H) * 0.98);
-    S.tx = (r.width - S.W * S.zoom) / 2; S.ty = (r.height - S.H * S.zoom) / 2; applyView();
+    const width = Math.min(...panes().map(p => p.stage.clientWidth));
+    const height = Math.min(...panes().map(p => p.stage.clientHeight));
+    if (!S.W || !S.H || !width || !height) return;
+    S.zoom = Math.min(width / S.W, height / S.H) * 0.98;
+    S.tx = (width - S.W * S.zoom) / 2; S.ty = (height - S.H * S.zoom) / 2; applyView();
   }
   function zoomAt(f, cx, cy) {
     const nz = Math.min(64, Math.max(0.05, S.zoom * f));
@@ -880,7 +883,9 @@
   $("an-rightseg").addEventListener("change", ev => { S.rightSegOnly = ev.target.checked; render(); });
   $("an-curtain").addEventListener("change", ev => { S.curtain = ev.target.checked; if (S.curtain && !S.curtainX) S.curtainX = S.W >> 1; render(); });
   document.querySelectorAll("input[name=an-view]").forEach(r => r.addEventListener("change", () => setView(r.value)));
-  window.addEventListener("resize", () => { if (S.info) fit(); });
+  // Panels also resize when toolbar text wraps or the view mode changes, without a window resize.
+  const stageResize = new ResizeObserver(() => { if (S.info) fit(); });
+  P.forEach(p => stageResize.observe(p.stage));
 
   // ------------------------------------------------------------------ blocks
   async function selectBlock(id) {
