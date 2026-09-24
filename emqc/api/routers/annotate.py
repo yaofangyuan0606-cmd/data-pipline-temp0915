@@ -592,6 +592,29 @@ def undo(block_id: str, z: int | None = None, body: UndoIn | None = None, user=D
         raise HTTPException(422, str(e))
 
 
+@router.post("/blocks/{block_id}/undo-all")
+def undo_all(block_id: str, z: int, body: UndoIn | None = None, user=Depends(require_user)):
+    """一次撤掉本片全部改动，回到标注前。本片有别人的记录 → 409 not_yours；审核员 / 管理员确认后带 force 再来。"""
+    from emqc.annotate.store import UndoForbidden
+
+    body = body or UndoIn()
+    b = _block(block_id)
+    if not 0 <= z < b.shape_zyx[0]:
+        raise HTTPException(404, "z outside the block")
+    actor = _who(body, user)
+    if body.force and not can_override(user):
+        raise HTTPException(403, {"code": "forbidden", "message": "只有审核员或管理员能撤销别人的改动"})
+    try:
+        with b.lock:
+            _fresh(b, z, body, actor)
+            done = b.undo_all(z, by=actor, force=body.force)
+            return {"undone": done, "n_edits": len(b.edits()), "n_slice_edits": 0, "rev": _rev(b, z)}
+    except UndoForbidden as e:
+        raise HTTPException(409, {"code": "not_yours", "message": str(e), "latest": e.record, "can_override": can_override(user)})
+    except (ValueError, IndexError, OSError) as e:
+        raise HTTPException(422, str(e))
+
+
 @router.post("/blocks/{block_id}/new-id")
 def new_id(block_id: str, z: int = 0):
     b = _block(block_id)

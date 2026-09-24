@@ -902,6 +902,28 @@ class Block:
             return undone
 
 
+    def undo_all(self, z: int, by: "str | Actor | None" = None, force: bool = False) -> dict:
+        """撤销本片全部有效改动——回到这一片标注前的样子。从最近一笔往前逐笔撤，直到本片没有记录；每一笔照样
+        记入审计流水。权限同 undo：本片有别人的记录而没带 force，一笔都不动，直接抛 UndoForbidden（带那一笔）。"""
+        self._check_z(z)
+        actor = Actor.coerce(by)
+        with self.lock:
+            if actor is not None and not force:
+                for rec in self.edits(z):
+                    owner = rec.get("by") if isinstance(rec.get("by"), str) else None
+                    verified = rec.get("by_id") is not None or isinstance(rec.get("by_user"), str)
+                    if owner is not None and not same_actor(rec, actor) and (verified or actor.id is None):
+                        raise UndoForbidden(rec)
+            n = px = 0
+            while True:
+                undone = self.undo(z, by=actor, force=force)
+                if undone is None:
+                    break
+                n += 1
+                px += int(undone.get("n_px") or 0)
+            return {"n": n, "n_px": px, "z": int(z)}
+
+
 class AnnotateStore:
     def __init__(self, root: Path | None, workdir: Path | None = None, extra_roots: list[Path] | None = None, *, read_only: bool = False):
         self.root = Path(root) if root else None

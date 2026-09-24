@@ -71,7 +71,7 @@
     <div class="actions" style="margin-top:6px"><button id="an-play">▶ 连播</button><label class="muted" style="font-size:12px">速度 <input id="an-fps" type="number" class="text mono" value="8" min="1" max="60" style="width:54px"> 张/秒</label></div>
 
     <div class="vast-sec">本片历史</div>
-    <div class="actions"><button id="an-undo" title="撤销本片最近一次改动 (Ctrl/⌘+Z)；只能撤自己的，撤别人的要确认">撤销</button><span class="muted mono" id="an-nedit">0 次改动</span></div>
+    <div class="actions"><button id="an-undo" title="撤销本片最近一次改动 (Ctrl/⌘+Z)；只能撤自己的，撤别人的要确认">撤销</button><button id="an-undo-all" class="danger" title="一次撤掉本片全部改动，回到标注前；会先确认">全部撤销</button><span class="muted mono" id="an-nedit">0 次改动</span></div>
     <div class="muted an-editors" id="an-editors"></div>
     <div class="an-presence" id="an-presence" hidden></div>
   </aside>
@@ -128,6 +128,11 @@
   <input id="an-who-input" class="text mono" maxlength="64" placeholder="填你的名字" autocomplete="off">
   <div class="actions"><button id="an-who-later">先看看</button><button id="an-who-ok" class="primary">开始标注</button></div>
 </dialog>
+<dialog id="an-undo-all-confirm" class="an-confirm">
+  <h3>撤销本片全部改动？</h3>
+  <p id="an-undo-all-msg"></p>
+  <div class="actions"><button id="an-undo-all-no" autofocus>取消</button><button id="an-undo-all-yes" class="danger">全部撤销</button></div>
+</dialog>
 <dialog id="an-undo-confirm" class="an-confirm">
   <h3>撤销别人的改动？</h3>
   <p id="an-undo-msg"></p>
@@ -155,7 +160,7 @@
       <div class="kbd-row"><kbd>M</kbd> 合并：先点 A，再点 B，B 改为 A 的标签</div>
       <div class="kbd-row"><kbd>B</kbd> 画笔（只补空白） · <kbd>E</kbd> 橡皮 · <kbd>[</kbd> <kbd>]</kbd> 半径</div>
       <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>
-      <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销</div>
+      <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销 · 「全部撤销」一次撤掉本片全部改动（先确认）</div>
       <div class="kbd-row">标注人：右上角填名字，每笔改动记下是谁改的 · 有人同时改这一片会提醒并自动刷新 · 只能撤销自己的改动</div>
     </section>
   </div>

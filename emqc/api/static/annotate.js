@@ -145,7 +145,7 @@
   });
   $("an-who-later").addEventListener("click", () => $("an-who-dialog").close());
   $("an-who-input").addEventListener("keydown", ev => { if (ev.key === "Enter") { ev.preventDefault(); $("an-who-ok").click(); } });
-  for (const id of ["an-who-dialog", "an-undo-confirm"]) $(id).addEventListener("keydown", ev => ev.stopPropagation());   // 对话框里的按键不落到画布快捷键上
+  for (const id of ["an-who-dialog", "an-undo-confirm", "an-undo-all-confirm"]) $(id).addEventListener("keydown", ev => ev.stopPropagation());   // 对话框里的按键不落到画布快捷键上
   // 写入请求的公共字段：谁在改，以及我看到的是这一片的哪个版本（服务端据此判断有没有别人在我之后动过它）
   function editBody(z, body) { return { ...body, annotator: ME ? undefined : (S.who || undefined), expect_rev: z != null && S.revs.has(z) ? S.revs.get(z) : undefined }; }
   // 服务端说"别人在你之后改过这一片"（409 stale）：重载这一片，把话转给标注员。返回 true 表示已处理完
@@ -164,6 +164,41 @@
       + `<br>撤销别人的改动会记入操作流水（撤销人、被撤销人）。确定要撤销吗？`;
     $("an-undo-confirm").showModal();
   }
+  // 全部撤销：把本片所有改动一次撤掉，回到标注前。先确认——撤了没有"重做"。
+  async function undoAllAsk() {
+    if (S.mergeBusy || !ensureWho() || !S.block) return;
+    let r;
+    try { r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/edits?z=${S.z}&limit=1`); } catch (err) { flash("读取本片历史失败：" + err.message, true); return; }
+    if (!r.n) { flash("本片没有可撤销的改动"); return; }
+    const px = (r.editors || []).reduce((s, e) => s + (e.n_px || 0), 0);
+    const others = (r.editors || []).filter(e => !(ME?.user ? e.by === S.who : e.by === S.who) && e.by);
+    $("an-undo-all-msg").innerHTML = `将撤销 <b>z ${S.z}</b> 这一片上的全部 <b>${r.n}</b> 笔改动（共 ${px.toLocaleString("zh-CN")} 像素），回到标注前的状态。`
+      + (others.length ? `<br>其中包含别人的改动：${others.map(e => `${esc(e.by)} ×${e.n}`).join("、")}。` : "")
+      + `<br>每一笔都记入操作流水；撤了不能再恢复。`;
+    $("an-undo-all-confirm").showModal();
+  }
+  async function undoAll() {
+    $("an-undo-all-confirm").close();
+    if (S.mergeBusy || !ensureWho()) return;
+    const z = S.z;
+    clearSAM(); mergeBusy(true); mergeArm(null);
+    $("an-merge-hint").textContent = "正在撤销本片全部改动，请稍候…";
+    try {
+      const force = !ME || ME.role !== "annotator";          // 审核员 / 管理员可以连别人的一起撤；标注员只能撤自己的
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/undo-all?z=${z}`, editBody(z, { force }));
+      S.info.n_edits = r.n_edits;
+      if (r.rev != null) S.revs.set(z, r.rev);
+      invalidate(z); await goZ(z, true, true);
+      flash(`已撤销本片全部 ${r.undone.n} 笔改动（${Number(r.undone.n_px || 0).toLocaleString("zh-CN")} 像素），回到标注前`);
+    } catch (err) {
+      if (await stale(err, z)) return;
+      if (err.code === "not_yours") { flash(`本片有 ${err.info?.latest?.by ?? "别人"} 的改动；只有审核员或管理员能撤销别人的改动`, true); return; }
+      flash("全部撤销失败：" + err.message, true);
+    } finally { mergeBusy(false); mergeArm(null); }
+  }
+  $("an-undo-all").addEventListener("click", undoAllAsk);
+  $("an-undo-all-no").addEventListener("click", () => $("an-undo-all-confirm").close());
+  $("an-undo-all-yes").addEventListener("click", undoAll);
   $("an-undo-no").addEventListener("click", () => $("an-undo-confirm").close());
   $("an-undo-yes").addEventListener("click", () => { $("an-undo-confirm").close(); undo(true, S.undoTarget); });
 

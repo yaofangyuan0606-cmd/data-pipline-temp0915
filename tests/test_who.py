@@ -339,3 +339,35 @@ def test_logged_in_user_may_undo_legacy_name_only_records(tmp_path):
     dot(b, 0, 1, 1, 7, by="张三")
     with pytest.raises(UndoForbidden):
         b.undo(0, by="李四"), "没开登录时（双方都只有名字）仍按名字比"
+
+
+def test_undo_all_reverts_the_whole_section(tmp_path):
+    from emqc.annotate.store import Actor
+
+    b = make_block(tmp_path)
+    for x in range(4):
+        dot(b, 0, x, 1, 7, by="张三")
+    dot(b, 1, 0, 0, 9, by="张三")                                    # another section stays
+    done = b.undo_all(0, by="张三")
+    assert done == {"n": 4, "n_px": 4, "z": 0} and b.edits(0) == [] and len(b.edits(1)) == 1
+    assert b.pick(0, 0, 1) == 0 and b.pick(1, 0, 0) == 9
+    assert [e["action"] for e in b.audit_entries()][-4:] == ["undo"] * 4, "每一笔都在流水里"
+    dot(b, 0, 1, 1, 7, by=Actor("李四", "lisi", 5))
+    dot(b, 0, 2, 1, 7, by=Actor("张三", "zhangsan", 2))
+    with pytest.raises(UndoForbidden):
+        b.undo_all(0, by=Actor("张三", "zhangsan", 2))
+    assert len(b.edits(0)) == 2, "有别人的记录且没带 force：一笔都不动"
+    assert b.undo_all(0, by=Actor("张三", "zhangsan", 2), force=True)["n"] == 2
+    assert b.undo_all(0, by="张三") == {"n": 0, "n_px": 0, "z": 0}
+
+
+def test_undo_all_api(api):
+    c, b, url = api
+    for x in range(3):
+        assert paint(c, url, 0, x, "7", annotator="张三").status_code == 200
+    assert paint(c, url, 0, 5, "8", annotator="李四").status_code == 200
+    r = c.post(url + "/undo-all?z=0", json={"annotator": "张三"})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "not_yours" and len(b.edits(0)) == 4
+    r = c.post(url + "/undo-all?z=0", json={"annotator": "张三", "force": True})
+    assert r.status_code == 200 and r.json()["undone"]["n"] == 4 and r.json()["n_slice_edits"] == 0 and b.edits(0) == []
+    assert c.post(url + "/undo-all?z=99", json={}).status_code == 404
