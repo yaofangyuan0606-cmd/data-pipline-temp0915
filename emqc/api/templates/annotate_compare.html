@@ -11,13 +11,14 @@
     <div><label for="cmp-z">切片 Z</label><div class="cmp-z"><button id="cmp-prev" aria-label="上一片">←</button><input id="cmp-z" class="text mono" type="number" min="0" value="0"><span id="cmp-zmax" class="muted">/ —</span><button id="cmp-next" aria-label="下一片">→</button></div></div>
     <label title="100% 完整显示图像；更高比例在此基础上放大">适配缩放 <output id="cmp-zoom-value">100%</output><input id="cmp-zoom" type="range" min="100" max="400" step="25" value="100"></label>
     <button id="cmp-fit" title="恢复完整图像并居中">适合窗口</button>
+    <button id="cmp-mark" aria-pressed="false" title="标记：开着时点标注后图上的位置、写一句话，就钉在那个体素上；同事打开链接看到同一个图钉，能回复、能标为已解决">📍 标记</button>
     <div class="cmp-play"><span class="muted">动态 ±10</span><button id="cmp-play-back" class="cmp-dir" data-mode="back" title="从当前片起向后（z 减小）循环播放" disabled>◀ 向后</button><button id="cmp-play-pp" class="cmp-dir" data-mode="pingpong" title="在上下各 10 片之间来回播放" disabled>⇄ 来回</button><button id="cmp-play-fwd" class="cmp-dir" data-mode="fwd" title="从当前片起向前（z 增大）循环播放；空格 = 开始/停止最近用过的方向" disabled>▶ 向前</button><select id="cmp-fps" class="text" aria-label="播放速度"><option value="4">慢 · 4 帧/秒</option><option value="8" selected>中 · 8 帧/秒</option><option value="12">快 · 12 帧/秒</option></select><span id="cmp-play-info" class="muted"></span></div>
   </div>
   <p id="cmp-status" class="muted" role="status" aria-live="polite">正在加载数据块…</p>
   <div class="cmp-images" id="cmp-images" hidden>
     <figure class="cmp-ng-pane"><figcaption><b>Neuroglancer · EM</b><span id="cmp-ng-em-caption">公开 H01 · 电镜原图</span><a id="cmp-ng-em-open" class="btn" target="_blank" rel="noopener" href="#">新窗口</a></figcaption><div class="cmp-ngbox"><iframe id="cmp-ng-em-frame" title="公开 H01 Neuroglancer：电镜原图" allow="fullscreen"></iframe><div class="cmp-ng-mark" id="cmp-ng-em-mark" hidden></div><div id="cmp-ng-em-note" class="cmp-ng-note muted" hidden></div></div></figure>
     <figure class="cmp-ng-pane"><figcaption><b>Neuroglancer · seg</b><span id="cmp-ng-seg-caption">公开 H01 · c3 分割叠在电镜上</span><a id="cmp-ng-seg-open" class="btn" target="_blank" rel="noopener" href="#">新窗口</a></figcaption><div class="cmp-ngbox"><iframe id="cmp-ng-seg-frame" title="公开 H01 Neuroglancer：c3 分割" allow="fullscreen"></iframe><div class="cmp-ng-mark" id="cmp-ng-seg-mark" hidden></div><div id="cmp-ng-seg-note" class="cmp-ng-note muted" hidden></div></div></figure>
-    <figure><figcaption><b>标注后</b><span id="cmp-after-caption">当前编辑结果</span></figcaption><div class="cmp-viewport" tabindex="0" aria-label="当前标注图，可滚动查看"><div class="cmp-canvas-wrap"><canvas id="cmp-after" aria-label="当前标注叠加电镜切片"></canvas><i class="cmp-cursor" hidden></i><i class="cmp-ring" hidden></i></div></div></figure>
+    <figure><figcaption><b>标注后</b><span id="cmp-after-caption">当前编辑结果</span></figcaption><div class="cmp-viewport" tabindex="0" aria-label="当前标注图，可滚动查看"><div class="cmp-canvas-wrap"><canvas id="cmp-after" aria-label="当前标注叠加电镜切片"></canvas><i class="cmp-cursor" hidden></i><i class="cmp-ring" hidden></i><div class="cmp-pins" id="cmp-pins"></div></div></div></figure>
   </div>
   <p id="cmp-pixel" class="cmp-pixel mono muted">滚轮翻片（一次手势一片） · Ctrl/⌘+滚轮缩放 · 拖动平移（两侧同步） · 移动鼠标查看标签与来源</p>
 
@@ -33,6 +34,17 @@
       <p id="cmp-labels-more" class="muted"></p>
     </section>
   </div>
+
+  <section class="cmp-marks" id="cmp-marks-panel" hidden>
+    <h2>标记与评论 <span id="cmp-marks-count" class="muted"></span><span class="spacer"></span><label class="muted">范围 <select id="cmp-marks-scope" class="text"><option value="z">本片</option><option value="all">整块</option></select></label><label class="muted"><input type="checkbox" id="cmp-marks-resolved"> 含已解决</label></h2>
+    <div id="cmp-marks-list" class="cmp-marks-list"></div>
+  </section>
+  <form id="cmp-mark-form" class="cmp-mark-form" hidden>
+    <div class="mono muted" id="cmp-mark-form-where"></div>
+    <textarea name="text" rows="3" maxlength="2000" placeholder="这里有什么问题 / 要说什么…" required></textarea>
+    <div class="cmp-mark-form-err muted" id="cmp-mark-form-err"></div>
+    <div class="actions"><button type="button" id="cmp-mark-form-cancel">取消</button><button type="submit" class="primary">钉上去</button></div>
+  </form>
 
   <details class="cmp-report" id="cmp-report" hidden>
     <summary>完整溯源报表与导出<span class="muted"> · 每个标签的来源构成、编辑记录、CSV / JSON</span></summary>
@@ -51,5 +63,6 @@
     <details id="cmp-audit"><summary>操作流水（含已撤销）</summary><p class="muted">本片每一次写入和撤销，按时间倒序，包括已经被撤销、上表不再列出的那些。「撤销」行的“对象”是被撤掉那一笔原来的标注人。</p><div class="cmp-table-wrap"><table><thead><tr><th>#</th><th>时间</th><th>标注人</th><th>操作</th><th>像素</th><th>对象</th></tr></thead><tbody id="cmp-audit-rows"></tbody></table></div></details>
   </details>
 </section>
+<script>window.EMQC_USER = {{ ({'name': user.display_name or user.username, 'user': user.username, 'role': user.role} if user else none)|tojson }};</script>
 <script src="/static/annotate_compare.js?v={{ static_v('annotate_compare.js') }}" defer></script>
 {% endblock %}

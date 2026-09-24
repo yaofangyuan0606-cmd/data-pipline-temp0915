@@ -2,14 +2,17 @@
 (() => {
   const $ = id => document.getElementById(`cmp-${id}`), API = "/api/v1/annotate/blocks";
   const fmt = n => Number(n).toLocaleString("zh-CN"), esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[c]));
-  const state = {blocks: [], block: "", z: 0, snapshot: null, images: null, serial: 0, controller: null, page: 0, downloads: new Set(), zoom: 100};
+  const state = {blocks: [], block: "", z: 0, snapshot: null, images: null, serial: 0, controller: null, page: 0, downloads: new Set(), zoom: 100,
+                 marks: [], marksBlock: "", markMode: false, markSel: null};
+  const ME = window.EMQC_USER || null;
   // One canvas of ours (标注后); the other two panes are embedded Neuroglancer iframes, see ngSync().
   const canvases = [$("after")], viewports = [...document.querySelectorAll(".cmp-viewport")];
   const wraps = canvases.map(c => c.parentElement);
   let layout = null;
   const image = url => new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = () => reject(new Error("图片读取失败")); im.src = url; });
-  async function json(url, signal, body) {
-    const r = await fetch(url, body ? {signal, cache: "no-store", method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)} : {signal, cache: "no-store"});
+  async function json(url, signal, body, method) {
+    method = method || (body ? "POST" : "GET");
+    const r = await fetch(url, method !== "GET" ? {signal, cache: "no-store", method, headers: {"content-type": "application/json"}, body: body ? JSON.stringify(body) : undefined} : {signal, cache: "no-store"});
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(typeof e.detail === "string" ? e.detail : `请求失败 (${r.status})`); }
     return r.json();
   }
@@ -223,7 +226,8 @@
       trimFrames();
       draw(); renderReport(); renderChanges(); renderAudit();
       dirButtons().forEach(b => { b.disabled = false; });
-      for (const id of ["images", "report", "summary"]) $(id).hidden = false;
+      for (const id of ["images", "report", "summary", "marks-panel"]) $(id).hidden = false;
+      if (state.marksBlock !== state.block) loadMarks(true); else { renderMarks(); renderPins(); }
       ngSync();
       downloadButtons();
       const r = data.report;
@@ -298,7 +302,9 @@
       press = null;
       const canvas = canvases[side], rect = canvas.getBoundingClientRect();
       const x = Math.floor((ev.clientX-rect.left)*canvas.width/rect.width), y = Math.floor((ev.clientY-rect.top)*canvas.height/rect.height);
-      if (x >= 0 && y >= 0 && x < canvas.width && y < canvas.height) ngCentre(x, y);
+      if (!(x >= 0 && y >= 0 && x < canvas.width && y < canvas.height)) return;
+      if (state.markMode) { openMarkForm(x, y, ev.clientX, ev.clientY); return; }
+      ngCentre(x, y);
     });
   });
   $("block").addEventListener("change", () => load(0)); $("z").addEventListener("change", () => load($("z").value));
@@ -420,7 +426,7 @@
   function showFrame(z) {
     const frame = frames.get(frameKey(state.block, z)); if (!frame) return false;
     state.z = z; state.snapshot = frame.snapshot; state.images = frame.images;
-    draw();
+    draw(); renderPins();
     $("z").value = z;
     $("status").textContent = `${state.block} · Z ${z} · 动态播放 ${play.mode === "back" ? "◀ 向后" : play.mode === "fwd" ? "▶ 向前" : "⇄ 来回"} ${play.lo}–${play.hi}（空格或再点一次停止）`;
     const now = performance.now();
@@ -564,6 +570,100 @@
     }
     if (e.key === " " && !e.repeat) { e.preventDefault(); play.timer || play.controller ? stopPlay() : startPlay(play.lastMode); }
   });
+  // ---------------------------------------------------------------- 标记与评论：钉在体素上的一句话 + 线程
+  // 图上是编号图钉，下面是列表；同事打开带 mark= 的链接看到同一个点；AI agent 用同一套接口读写（评论 kind=agent 打「AI」标）。
+  const MARKS = "/api/v1/annotate";
+  const fmtTime = ts => ts ? ts.replace("T", " ").slice(5, 16) : "";
+  const canDelete = m => !ME || ME.role === "admin" || (!!ME.user && m.created_by_user === ME.user);
+  const labelAt = (x, y) => { const im = state.images, d = state.snapshot; if (!im?.indices?.[1] || !d?.after) return null; return d.after.ids[im.indices[1][y * canvases[0].width + x]] ?? null; };
+  async function loadMarks(silent) {
+    const block = state.block; if (!block) return;
+    try {
+      const r = await json(`${MARKS}/blocks/${encodeURIComponent(block)}/marks`);
+      if (block !== state.block) return;
+      state.marks = r.marks; state.marksBlock = block; renderMarks(); renderPins();
+    } catch (e) { if (!silent) $("marks-list").innerHTML = `<p class="muted">读取标记失败：${esc(e.message)}</p>`; }
+  }
+  const showResolved = () => $("marks-resolved").checked;
+  function marksOnSlice(z) { return state.marks.filter(m => m.z === z && (showResolved() || m.status === "open")); }
+  function renderPins() {
+    const W = canvases[0].width, H = canvases[0].height, box = $("pins");
+    if (!W || !H) { box.innerHTML = ""; return; }
+    box.innerHTML = marksOnSlice(state.z).map(m => `<button type="button" class="cmp-pin ${m.status}${m.id === state.markSel ? " sel" : ""}" data-id="${m.id}" style="left:${(m.x + .5) / W * 100}%;top:${(m.y + .5) / H * 100}%" title="#${m.id} ${esc(m.created_by_name || "匿名")}：${esc(m.text)}"><span>${m.id}</span></button>`).join("");
+  }
+  function renderMarks() {
+    const scope = $("marks-scope").value, list = state.marks.filter(m => (scope === "all" || m.z === state.z) && (showResolved() || m.status === "open"));
+    const open = state.marks.filter(m => m.status === "open").length;
+    $("marks-count").textContent = state.marks.length ? `${open} 个待处理 · 整块共 ${state.marks.length}` : "";
+    $("marks-list").innerHTML = list.map(m => `<article class="cmp-mark ${m.status}${m.id === state.markSel ? " sel" : ""}" data-id="${m.id}">
+      <header><b>#${m.id}</b><span class="mono">z ${m.z} · (${m.x}, ${m.y})${m.label_id && m.label_id !== "0" ? ` · 标签 ${esc(m.label_id)}` : ""}</span><span>${esc(m.created_by_name || "匿名")}</span><span class="muted">${fmtTime(m.created_at)}</span>${m.status === "resolved" ? `<span class="cmp-tag cmp-done">已解决 · ${esc(m.resolved_by_name || "")}</span>` : ""}</header>
+      <p class="cmp-mark-text">${esc(m.text)}</p>
+      ${m.comments.map(c => `<div class="cmp-comment ${c.kind}"><b>${esc(c.created_by_name || "匿名")}</b>${c.kind === "agent" ? '<span class="cmp-tag cmp-agent">AI</span>' : ""}<span class="muted">${fmtTime(c.created_at)}</span><div>${esc(c.text)}</div></div>`).join("")}
+      <form class="cmp-reply" data-id="${m.id}"><input class="text" name="text" placeholder="回复…" maxlength="2000" autocomplete="off"><button type="submit">发送</button></form>
+      <div class="cmp-mark-actions"><button type="button" data-act="go">定位</button><button type="button" data-act="link">复制链接</button><button type="button" data-act="${m.status === "open" ? "resolve" : "reopen"}">${m.status === "open" ? "标为已解决" : "重新打开"}</button>${canDelete(m) ? '<button type="button" data-act="del" class="danger">删除</button>' : ""}</div>
+    </article>`).join("") || `<p class="muted">${scope === "all" ? "这个数据块还没有标记。" : "这一片还没有标记。"}点上面的「📍 标记」，再点图上的位置即可添加。</p>`;
+  }
+  function setMarkMode(on) {
+    state.markMode = on;
+    $("mark").setAttribute("aria-pressed", String(on));
+    viewports.forEach(v => v.classList.toggle("cmp-marking", on));
+    if (!on) hideMarkForm();
+    $("pixel").textContent = on ? "标记模式：点标注后图上的位置，写一句话钉在那里；再点「标记」退出" : "滚轮翻片（一次手势一片） · Ctrl/⌘+滚轮缩放 · 拖动平移（两侧同步） · 移动鼠标查看标签与来源";
+  }
+  function openMarkForm(x, y, cx, cy) {
+    const f = $("mark-form"); f.hidden = false; f.dataset.x = x; f.dataset.y = y;
+    f.style.left = `${Math.max(8, Math.min(cx + 14, innerWidth - 300))}px`; f.style.top = `${Math.max(8, Math.min(cy + 14, innerHeight - 190))}px`;
+    $("mark-form-where").textContent = `z ${state.z} · (${x}, ${y})${labelAt(x, y) && labelAt(x, y) !== "0" ? ` · 标签 ${labelAt(x, y)}` : ""}`;
+    $("mark-form-err").textContent = ""; f.text.value = ""; f.text.focus();
+    document.querySelectorAll(".cmp-pin.draft").forEach(e => e.remove());
+    $("pins").insertAdjacentHTML("beforeend", `<span class="cmp-pin draft" style="left:${(x + .5) / canvases[0].width * 100}%;top:${(y + .5) / canvases[0].height * 100}%"><span>+</span></span>`);
+  }
+  function hideMarkForm() { $("mark-form").hidden = true; document.querySelectorAll(".cmp-pin.draft").forEach(e => e.remove()); }
+  async function focusMark(m) {
+    if (m.block_id !== state.block) { if (!state.blocks.some(b => b.block_id === m.block_id)) return; $("block").value = m.block_id; await load(m.z, true); }
+    else if (m.z !== state.z) await load(m.z);
+    state.markSel = m.id; renderMarks(); renderPins();
+    focusRegion({cx: m.x, cy: m.y, x0: m.x - 6, x1: m.x + 7, y0: m.y - 6, y1: m.y + 7});
+    if (ngCorner) ngCentre(m.x, m.y);
+    document.querySelector(`.cmp-mark[data-id="${m.id}"]`)?.scrollIntoView({block: "nearest", behavior: "smooth"});
+  }
+  async function openMarkLink(id) {
+    try { const m = await json(`${MARKS}/marks/${id}`); await focusMark(m); }
+    catch (e) { $("status").textContent = `找不到标记 #${id}：${e.message}`; }
+  }
+  $("mark").addEventListener("click", () => setMarkMode(!state.markMode));
+  $("mark-form-cancel").addEventListener("click", hideMarkForm);
+  $("mark-form").addEventListener("keydown", ev => { if (ev.key === "Escape") hideMarkForm(); ev.stopPropagation(); });
+  $("mark-form").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const f = ev.target, text = f.text.value.trim(); if (!text) return;
+    const x = +f.dataset.x, y = +f.dataset.y;
+    try {
+      const m = await json(`${MARKS}/blocks/${encodeURIComponent(state.block)}/marks`, undefined, {z: state.z, x, y, text, label_id: labelAt(x, y)});
+      hideMarkForm(); setMarkMode(false); state.markSel = m.id; await loadMarks();
+    } catch (e) { $("mark-form-err").textContent = e.message; }
+  });
+  $("marks-scope").addEventListener("change", renderMarks);
+  $("marks-resolved").addEventListener("change", () => { renderMarks(); renderPins(); });
+  $("pins").addEventListener("click", ev => { const pin = ev.target.closest(".cmp-pin[data-id]"); if (!pin) return; const m = state.marks.find(x => x.id === +pin.dataset.id); if (m) focusMark(m); });
+  $("marks-list").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const f = ev.target, text = f.text.value.trim(); if (!text) return;
+    try { await json(`${MARKS}/marks/${f.dataset.id}/comments`, undefined, {text}); f.text.value = ""; await loadMarks(); }
+    catch (e) { $("status").textContent = `回复失败：${e.message}`; }
+  });
+  $("marks-list").addEventListener("click", async ev => {
+    const b = ev.target.closest("button[data-act]"); if (!b) return;
+    const art = b.closest(".cmp-mark"), m = state.marks.find(x => x.id === +art.dataset.id); if (!m) return;
+    try {
+      if (b.dataset.act === "go") await focusMark(m);
+      else if (b.dataset.act === "link") { const link = `${location.origin}${m.link}`; try { await navigator.clipboard.writeText(link); $("status").textContent = `已复制链接：${link}`; } catch (_) { prompt("复制这个链接", link); } }
+      else if (b.dataset.act === "resolve" || b.dataset.act === "reopen") { await json(`${MARKS}/marks/${m.id}`, undefined, {status: b.dataset.act === "resolve" ? "resolved" : "open"}, "PATCH"); await loadMarks(); }
+      else if (b.dataset.act === "del") { if (!confirm(`删除标记 #${m.id} 及其 ${m.comments.length} 条回复？不需要了通常标为已解决即可。`)) return; await json(`${MARKS}/marks/${m.id}`, undefined, undefined, "DELETE"); if (state.markSel === m.id) state.markSel = null; await loadMarks(); }
+    } catch (e) { $("status").textContent = `操作失败：${e.message}`; }
+  });
+  setInterval(() => { if (document.visibilityState === "visible" && state.block && $("mark-form").hidden) loadMarks(true); }, 30000);   // 同事新加的标记 30 秒内出现；正在写的时候不刷
+
   async function init() {
     $("page").setAttribute("aria-busy", "true");
     for (const id of ["block", "z", "prev", "next", "refresh"]) $(id).disabled = true;
@@ -576,6 +676,7 @@
       const p = new URLSearchParams(location.search);
       if (state.blocks.some(b => b.block_id === p.get("block"))) $("block").value = p.get("block");
       await load(p.get("z") || 0, true);
+      if (p.get("mark")) await openMarkLink(+p.get("mark"));       // 同事发来的链接：跳到那一片、定位到那个点
     } catch (e) { $("status").textContent = `加载失败：${e.message}。可点击刷新重试。`; }
     finally { $("page").setAttribute("aria-busy", "false"); $("refresh").disabled = false; }
   }

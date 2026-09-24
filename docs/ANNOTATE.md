@@ -170,6 +170,17 @@ python -m emqc reset-password --username <登录名>                            
 
 建议的分工仍然是按块或按 z 段分，冲突检测是兜底而不是协作方式：两个人真的同时在一片上画，谁后提交谁重来。
 
+## 对比页的标记与评论
+
+对比页开「📍 标记」后点标注后图上的位置，写一句话，就钉在那个体素 (block, z, x, y) 上：图上显示编号的图钉，
+下方「标记与评论」列出本片（或整块）的标记，谁都能回复、标为已解决 / 重新打开，作者和管理员能删。「复制链接」得到
+`/annotate/compare?block=…&z=…&mark=<id>`，同事打开就跳到那一片、定位到那个点，两栏 Neuroglancer 也居中到该点。
+标记存在 MySQL（`annot_marks` / `annot_mark_comments`），带作者账号、时间、钉下去时光标下的标签 id。
+
+给 AI agent 用的是同一套接口（先登录拿到会话 Cookie，或将来发 token）：
+`GET /blocks/{b}/marks` 读标记与线程，`POST /marks/{id}/comments {text, kind: "agent"}` 回复（界面上打「AI」标），
+`PATCH /marks/{id} {status}` 标为已解决。每条标记都带 `label_id`、坐标和链接，agent 可以直接定位到图上去看。
+
 ## 接口
 
 ```

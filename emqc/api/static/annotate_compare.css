@@ -108,3 +108,32 @@
 /* 操作流水里的撤销行 */
 .cmp-undo td { color: var(--muted); }
 .cmp-undo td:nth-child(4) { color: var(--critical); }
+
+/* 标记与评论：图上的编号图钉、钉标记的浮层、下方的线程列表 */
+.cmp-pins { position: absolute; inset: 0; pointer-events: none; }
+.cmp-pin { position: absolute; width: 22px; height: 22px; margin: -22px 0 0 -11px; padding: 0; border: 0; pointer-events: auto; cursor: pointer; background: #ff5096; color: #fff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 0 0 2px #fff, 0 2px 6px rgba(0,0,0,.5); }
+.cmp-pin > span { display: block; transform: rotate(45deg); font: 700 10px var(--mono); line-height: 22px; text-align: center; }
+.cmp-pin.resolved { background: #4cbf8b; }
+.cmp-pin.sel { background: #ffd60a; color: #000; }
+.cmp-pin.draft { background: #ffd60a; color: #000; opacity: .85; pointer-events: none; }
+.cmp-viewport.cmp-marking { cursor: crosshair; outline: 2px solid #ff5096; outline-offset: -2px; }
+#cmp-mark[aria-pressed="true"] { background: #ff5096; border-color: #ff5096; color: #fff; }
+.cmp-mark-form { position: fixed; z-index: 40; width: 280px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: 0 12px 30px rgba(0,0,0,.28); }
+.cmp-mark-form textarea { width: 100%; box-sizing: border-box; margin: 6px 0 4px; font: inherit; padding: 6px 8px; border: 1px solid var(--border-2); border-radius: var(--r-s); background: var(--ground); color: var(--text); resize: vertical; }
+.cmp-mark-form-err:empty { display: none; } .cmp-mark-form-err { color: var(--high); font-size: 12px; margin-bottom: 4px; }
+.cmp-marks { margin-top: 16px; padding: 18px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r); }
+.cmp-marks h2 { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; } .cmp-marks h2::after { content: none; } .cmp-marks h2 .spacer { flex: 1; }
+.cmp-marks h2 label { display: inline-flex; align-items: center; gap: 4px; font: 12px var(--sans); text-transform: none; letter-spacing: 0; }
+.cmp-marks h2 select { width: auto; padding: 2px 6px; font-size: 12px; }
+.cmp-marks-list { display: grid; gap: 10px; }
+.cmp-mark { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-s); background: var(--ground); }
+.cmp-mark.sel { border-color: #e0b400; box-shadow: 0 0 0 2px rgba(255,214,10,.35); }
+.cmp-mark.resolved { opacity: .78; }
+.cmp-mark header { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 12px; }
+.cmp-mark-text { margin: 6px 0 0; white-space: pre-wrap; font-size: 13.5px; }
+.cmp-comment { margin: 8px 0 0 10px; padding: 6px 10px; border-left: 2px solid var(--border-2); font-size: 13px; }
+.cmp-comment.agent { border-left-color: #8f84e0; }
+.cmp-comment b { margin-right: 6px; } .cmp-comment .muted { font-size: 11px; margin-left: 6px; } .cmp-comment div { white-space: pre-wrap; margin-top: 2px; }
+.cmp-reply { display: flex; gap: 6px; margin-top: 10px; } .cmp-reply input { flex: 1; padding: 5px 8px; font-size: 13px; }
+.cmp-mark-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; } .cmp-mark-actions button { font-size: 12px; padding: 4px 9px; }
+.cmp-tag.cmp-done { background: #d3f5e3; color: #1f7a4c; } .cmp-tag.cmp-agent { background: #e6e2ff; color: #4b3fbf; margin-left: 6px; }

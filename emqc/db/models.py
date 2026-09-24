@@ -531,3 +531,39 @@ class AuthSession(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     user_agent: Mapped[str] = mapped_column(String(255), default="")
     ip: Mapped[str] = mapped_column(String(64), default="")
+
+
+# ----------------------------------------------------------------------------- 对比页的标记与评论
+class Mark(Base):
+    """钉在某个体素 (block, z, x, y) 上的一句话，加一条评论线程。给人在对比页上指着图说话用，也给 AI agent 用同一套接口读写。
+    标记属于数据块而不是某个人：谁都能看、都能回复、都能标为已解决；只有作者和管理员能删。"""
+    __tablename__ = "annot_marks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    block_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    z: Mapped[int] = mapped_column(Integer, nullable=False)
+    x: Mapped[int] = mapped_column(Integer, nullable=False)
+    y: Mapped[int] = mapped_column(Integer, nullable=False)
+    label_id: Mapped[str | None] = mapped_column(String(32))          # 钉下去时光标下的标签 id（字符串，H01 的 id 超过 2^53）
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="open")   # open | resolved
+    created_by: Mapped[int | None] = mapped_column(Integer)           # users.id；没开登录时为空
+    created_by_user: Mapped[str | None] = mapped_column(String(32))   # 登录名（改显示名不影响归属）
+    created_by_name: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    resolved_by_name: Mapped[str | None] = mapped_column(String(64))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class MarkComment(Base):
+    __tablename__ = "annot_mark_comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mark_id: Mapped[int] = mapped_column(ForeignKey("annot_marks.id", ondelete="CASCADE"), index=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), default="comment")  # comment | agent（AI 写的，界面上打个标）
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[int | None] = mapped_column(Integer)
+    created_by_user: Mapped[str | None] = mapped_column(String(32))
+    created_by_name: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
