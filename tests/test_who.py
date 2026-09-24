@@ -322,3 +322,20 @@ def test_truncated_audit_tail_is_dropped_and_the_log_keeps_going(tmp_path):
     (b.work / "audit.jsonl").write_text('{"seq": 1, "action": "edit"}\nGARBAGE\n{"seq": 3, "action": "edit"}\n')
     with pytest.raises(ValueError, match="审计日志格式损坏"):
         Block(b.path, b.work.parent).audit_entries()
+
+
+def test_logged_in_user_may_undo_legacy_name_only_records(tmp_path):
+    """登录系统之前的记录只有自报的名字；登录用户（带 id）撤它不算撤别人的，带账号的记录才认主。"""
+    from emqc.annotate.store import Actor
+
+    b = make_block(tmp_path)
+    dot(b, 0, 1, 1, 7, by="张三")                                   # legacy: name only
+    me = Actor("y", "u-95cb0bfd29", 3)
+    assert b.undo(0, by=me)["n"] == 1, "旧的名字记录，登录用户可以撤"
+    dot(b, 0, 1, 1, 7, by=Actor("张三", "zhangsan", 2))               # a real account's record
+    with pytest.raises(UndoForbidden):
+        b.undo(0, by=me)
+    assert b.undo(0, by=me, force=True)["n"] == 1
+    dot(b, 0, 1, 1, 7, by="张三")
+    with pytest.raises(UndoForbidden):
+        b.undo(0, by="李四"), "没开登录时（双方都只有名字）仍按名字比"

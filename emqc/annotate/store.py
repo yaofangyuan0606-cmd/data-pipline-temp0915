@@ -856,7 +856,11 @@ class Block:
             if expect_n is not None and int(rec["n"]) != int(expect_n):
                 raise UndoMismatch(undone, int(expect_n))
             owner = rec.get("by") if isinstance(rec.get("by"), str) else None
-            if actor is not None and owner is not None and not same_actor(rec, actor) and not force:
+            # 只拦"确知是别人的"：记录带账号（by_id / by_user）而且不是我。登录系统之前的旧记录只有个自报的名字，
+            # 名字对不上多半是同一个人换了登录名（以前填"张三"，现在账号叫 y），登录用户撤它照旧放行；
+            # 没开登录（actor 也只有名字）时仍按名字比。
+            verified = rec.get("by_id") is not None or isinstance(rec.get("by_user"), str)
+            if actor is not None and owner is not None and not same_actor(rec, actor) and not force and (verified or actor.id is None):
                 raise UndoForbidden(undone)
             f = self._edit_dir() / f"{rec['n']:06d}.npz"
             with np.load(f, allow_pickle=False) as data:
