@@ -469,6 +469,14 @@ class PaintIn(EditIn):
     points: list[list[int]] = Field(min_length=1)
     radius: int = Field(default=3, ge=0, le=200)
     new_id: str | int
+    only_id: str | int | None = None               # 橡皮（new_id 0）时：只擦这个颜色
+
+
+class RefineIn(EditIn):
+    z: int = Field(ge=0)
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    sensitivity: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 def _edit_response(b, rec, rev=None):
@@ -528,7 +536,26 @@ def paint(block_id: str, body: PaintIn, user=Depends(require_user)):
     try:
         with b.lock:
             _fresh(b, body.z, body, actor)
-            rec = b.paint(body.z, pts, body.radius, _int_id(body.new_id), by=actor)
+            rec = b.paint(body.z, pts, body.radius, _int_id(body.new_id), by=actor,
+                          only_id=_int_id(body.only_id) if body.only_id is not None else None)
+            rev = _rev(b, body.z)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return _edit_response(b, rec, rev)
+
+
+@router.post("/blocks/{block_id}/refine-edge")
+def refine_edge(block_id: str, body: RefineIn, user=Depends(require_user)):
+    """修缮边缘：点到的标签块若压过了黑色的膜，往里收到膜为止（只收缩，收掉的像素清成背景，可撤销）。"""
+    b = _block(block_id)
+    Z, H, W = b.shape_zyx
+    if not (0 <= body.z < Z and 0 <= body.x < W and 0 <= body.y < H):
+        raise HTTPException(404, "outside the block")
+    actor = _who(body, user)
+    try:
+        with b.lock:
+            _fresh(b, body.z, body, actor)
+            rec = b.refine_edge(body.z, body.x, body.y, body.sensitivity, by=actor)
             rev = _rev(b, body.z)
     except ValueError as e:
         raise HTTPException(422, str(e))

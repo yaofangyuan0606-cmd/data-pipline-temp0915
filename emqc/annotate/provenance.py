@@ -17,7 +17,7 @@ from PIL import Image
 
 
 SOURCES = ("baseline", "manual", "sam", "interpolation", "assisted", "unknown")
-SOURCE_NAMES = ("原始标签", "人工编辑", "SAM", "插值修补", "智能填充（历史）", "来源不明")
+SOURCE_NAMES = ("原始标签", "人工编辑", "SAM", "插值修补", "算法辅助（边缘修缮 · 历史智能填充）", "来源不明")
 SOURCE_COLORS = ("#89939f", "#f0a33a", "#35b9dd", "#aa83f5", "#4cbf8b", "#ed647a")
 POLICY = "按当前像素最后一次有效写入统计；同一标签可混合来源。原始标签不代表人工真值，人工编辑不代表人工审核。撤销操作不计入。"
 
@@ -28,8 +28,8 @@ def source_for_edit(record: dict) -> str:
         return "interpolation"
     if kind == "sam":
         return "sam"
-    # Retired tools remain identifiable when reading existing edit logs.
-    if kind == "smartfill":
+    # Algorithmic helpers a person triggers: edge refinement now, the retired smart fill in old logs.
+    if kind in {"smartfill", "refine"}:
         return "assisted"
     if kind in {"paint", "fill", "merge", "split", "clear"}:
         return "manual"

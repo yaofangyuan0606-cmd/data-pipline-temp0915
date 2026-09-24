@@ -24,6 +24,7 @@
     samNeighbour: null, repair: null, repairMask: null,
     historySequence: 0, ngMode: null, ngRequest: null, ngSequence: 0, ngWindow: null, ngTimer: null,
     who: "", hbTimer: null, revs: new Map(), undoTarget: null,
+    tabHeld: false, radiusDrag: null,
   };
   // 登录用户（服务端按会话记标注人；这里只用于显示和"是不是我"的判断）。没开登录的实例是 null → 页面里填名字。
   const ME = window.EMQC_USER || null;
@@ -116,7 +117,7 @@
   // 平台没有账号，"谁"就是标注员在右上角填的名字：存在本机浏览器里，每次写入随请求带给服务端，写进每条记录。
   const WHO_KEY = "emqc.annotator";
   const when = ts => typeof ts === "string" && ts.length >= 16 ? ts.slice(11, 16) : "刚才";
-  const editLabel = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "修补·插值" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : "涂抹";
+  const editLabel = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "修补·插值" : e.kind === "refine" ? "修缮边缘" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : e.only_id ? "擦除" : "涂抹";
   function cleanWho(v) { return String(v || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64); }
   function setWho(v, save = true) {
     S.who = cleanWho(v);
@@ -433,6 +434,21 @@
     renderHi();
   }
   function setCur(id) { S.cur = String(id); $("an-cur-id").textContent = S.cur === "0" ? "未选择" : S.cur; $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur)); status(); segList(); samButtons(); }
+  // 修缮边缘：点一下标签块，压过黑膜、跨到邻居身上的部分收回来（只收缩，收掉的清成背景，可撤销）
+  async function refineAt(x, y) {
+    if (S.mergeBusy || !ensureWho()) return;
+    const id = idAt(x, y);
+    if (id == null) return;
+    if (id === "0") { flash("这里是背景：点到要修缮的标签上"); return; }
+    const z = S.z, sensitivity = (+$("an-sam-sens").value || 50) / 100;
+    mergeBusy(true);
+    try {
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/refine-edge`, editBody(z, { z, x, y, sensitivity }));
+      await afterEdit(r, z);
+      flash(r.edit ? `已收回 ${r.edit.n_px.toLocaleString("zh-CN")} 像素到膜为止，Ctrl/⌘+Z 可撤销` : "这块的边缘已经贴着膜，不用修");
+    } catch (err) { if (await stale(err, z)) return; flash("修缮失败：" + err.message, true); }
+    finally { mergeBusy(false); }
+  }
   function pick(x, y) { const id = idAt(x, y); if (id == null || id === "0") return; setCur(id); if (S.tool === "merge") mergeArm({ id, xy: [x, y], z: S.z }); }
 
   function floodLocal(e, x, y, newIdx) {           // scanline flood fill on the index map, 4-connectivity
@@ -501,31 +517,36 @@
     } finally { mergeBusy(false); mergeArm(null); }
   }
 
-  function strokeStart(x, y) { if (!ensureWho()) return; if (S.tool === "brush" && S.cur === "0") { flash("请先选择或新建标签"); return; } S.stroke = { pts: [[x, y]], z: S.z, id: S.tool === "erase" ? "0" : S.cur }; strokeDot(x, y); }
+  // 画笔：左键涂当前颜色（只补空白），右键擦；橡皮工具同理。擦除只擦**当前颜色**——压到邻居身上不会把邻居擦掉，
+  // 所以擦之前得先有当前颜色（Ctrl/⌘+点击拾取）。
+  function strokeStart(x, y, erase = false) {
+    if (!ensureWho()) return;
+    erase = erase || S.tool === "erase";
+    if (S.cur === "0") { flash(erase ? "先选要擦的颜色：Ctrl/⌘+点击拾取" : "请先选择或新建标签"); return; }
+    S.stroke = { pts: [[x, y]], z: S.z, id: erase ? "0" : S.cur, only: erase ? S.cur : null };
+    strokeDot(x, y);
+  }
   function strokeDot(x, y) {
-    const id = S.stroke.id;
-    let ink;
-    if (id !== "0") {
-      const e = S.cache.get(S.stroke.z); if (!e?.idx) return;
-      // Preview the same pixel discs as the server, clipped to background even in outline view.
-      // Canvas transparency alone cannot identify background: labelled interiors may be hidden.
-      ink = new Path2D();
-      for (let row = Math.max(0, y - S.brush); row <= Math.min(S.H - 1, y + S.brush); row++) {
-        const dx = Math.floor(Math.sqrt(S.brush * S.brush - (row - y) ** 2));
-        const end = Math.min(S.W - 1, x + dx);
-        let start = -1;
-        for (let col = Math.max(0, x - dx); col <= end + 1; col++) {
-          const empty = col <= end && e.ids[e.idx[row * S.W + col]] === "0";
-          if (empty && start < 0) start = col;
-          if (!empty && start >= 0) { ink.rect(start, row, col - start, 1); start = -1; }
-        }
+    const id = S.stroke.id, only = S.stroke.only;
+    const e = S.cache.get(S.stroke.z); if (!e?.idx) return;
+    // Preview the same pixel discs as the server: a brush only lands on background, the eraser only on the current
+    // colour. Canvas transparency alone cannot identify either, so walk the index map.
+    const want = id !== "0" ? "0" : only;
+    const ink = new Path2D();
+    for (let row = Math.max(0, y - S.brush); row <= Math.min(S.H - 1, y + S.brush); row++) {
+      const dx = Math.floor(Math.sqrt(S.brush * S.brush - (row - y) ** 2));
+      const end = Math.min(S.W - 1, x + dx);
+      let start = -1;
+      for (let col = Math.max(0, x - dx); col <= end + 1; col++) {
+        const hit = col <= end && e.ids[e.idx[row * S.W + col]] === want;
+        if (hit && start < 0) start = col;
+        if (!hit && start >= 0) { ink.rect(start, row, col - start, 1); start = -1; }
       }
     }
     for (const p of segPanes()) {
       const g = p.gSeg; g.save(); g.globalCompositeOperation = id === "0" ? "destination-out" : "source-over";
       g.fillStyle = id === "0" ? "#000" : `rgba(${colorOf(id).join(",")},${S.view === "side" ? 1 : S.opacity})`;
-      if (ink) g.fill(ink);
-      else { g.beginPath(); g.arc(x + 0.5, y + 0.5, S.brush + 0.5, 0, Math.PI * 2); g.fill(); }
+      g.fill(ink);
       g.restore();
     }
   }
@@ -538,7 +559,7 @@
   async function strokeEnd() {
     const st = S.stroke; S.stroke = null; if (!st) return;
     try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/paint`, editBody(st.z, { z: st.z, points: st.pts, radius: S.brush, new_id: st.id }));
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/paint`, editBody(st.z, { z: st.z, points: st.pts, radius: S.brush, new_id: st.id, only_id: st.only || undefined }));
       afterEdit(r, st.z);
     } catch (err) { if (await stale(err, st.z)) return; flash("涂抹失败: " + err.message, true); invalidate(st.z); goZ(st.z, true); }
   }
@@ -841,11 +862,17 @@
       const [x, y] = toImg(ev, p);                        // before focus(): focusing may scroll the page and move the canvas
       p.stage.focus({ preventScroll: true });
       if (ev.button === 0 && nearCurtain(x)) { S.curtainDrag = true; return; }
+      const painting = S.tool === "brush" || S.tool === "erase";
+      // 按住 Tab 拖动：改画笔半径（向右变大、向左变小），不落笔
+      if (S.tabHeld && ev.button === 0 && painting) { S.radiusDrag = { x: ev.clientX, r: S.brush }; if (S.blink) { S.blink = false; render(); } return; }
+      // 画笔 / 橡皮下右键 = 擦当前颜色；平移用中键、空格或 H
+      if (ev.button === 2 && painting && !S.spacePan) { if (inside(x, y) && !S.mergeBusy) strokeStart(x, y, true); return; }
       if (ev.button === 2 || ev.button === 1 || S.tool === "pan" || S.spacePan) { S.drag = { x: ev.clientX, y: ev.clientY, tx: S.tx, ty: S.ty }; for (const q of P) q.stage.classList.add("panning"); return; }
       if (ev.button !== 0 || !inside(x, y)) return;
       if (S.mergeBusy) return;
       if (S.ngMode) { if (S.ngMode === "point") open3D([x, y]); return; }
-      if (ev.altKey || S.tool === "pick") { pick(x, y); return; }
+      if (ev.altKey || S.tool === "pick" || (painting && (ev.ctrlKey || ev.metaKey))) { pick(x, y); return; }
+      if (S.tool === "refine") { refineAt(x, y); return; }
       if (S.tool === "sam") {
         if (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey) clearSAM();
         if (ev.shiftKey && !S.samLabels.includes(1) && !S.samBox) { flash("请先点击或框选目标，再 Shift+点击排除"); return; }
@@ -864,6 +891,7 @@
     });
     let pending = false;
     p.stage.addEventListener("mousemove", ev => {
+      if (S.radiusDrag) { setBrush(S.radiusDrag.r + Math.round((ev.clientX - S.radiusDrag.x) / 4)); return; }
       if (S.drag) { S.tx = S.drag.tx + ev.clientX - S.drag.x; S.ty = S.drag.ty + ev.clientY - S.drag.y; applyView(); return; }
       const previous = S.hoverXY, [x, y] = toImg(ev, p); S.hoverXY = inside(x, y) ? [x, y] : null; S.hoverPane = i;
       if (S.samStart) {
@@ -886,7 +914,7 @@
     if (S.samBox[2] <= S.samBox[0] || S.samBox[3] <= S.samBox[1]) { S.samBox = null; renderHi(); return; }
     predictSAM();
   });
-  window.addEventListener("mouseup", () => { S.curtainDrag = false; if (S.drag) { S.drag = null; for (const q of P) q.stage.classList.remove("panning"); } if (S.stroke) strokeEnd(); });
+  window.addEventListener("mouseup", () => { S.curtainDrag = false; S.radiusDrag = null; if (S.drag) { S.drag = null; for (const q of P) q.stage.classList.remove("panning"); } if (S.stroke) strokeEnd(); });
 
   // ------------------------------------------------------------------ keyboard
   document.addEventListener("keydown", ev => {
@@ -894,22 +922,22 @@
     if (S.mergeBusy) return;
     const k = ev.key;
     if ((ev.ctrlKey || ev.metaKey) && k.toLowerCase() === "z") { ev.preventDefault(); undo(); return; }
-    if (k === "ArrowUp" || k === "w") { ev.preventDefault(); goZ(S.z - 1, true); }
-    else if (k === "ArrowDown" || k === "s") { ev.preventDefault(); goZ(S.z + 1, true); }
+    if (k === "ArrowUp" || k === "w" || k === "a") { ev.preventDefault(); goZ(S.z - 1, true); }
+    else if (k === "ArrowDown" || k === "s" || k === "z") { ev.preventDefault(); goZ(S.z + 1, true); }
     else if (k === "PageUp") { ev.preventDefault(); goZ(S.z - 10, true); }
     else if (k === "PageDown") { ev.preventDefault(); goZ(S.z + 10, true); }
     else if (k === "Home") goZ(0); else if (k === "End") goZ(S.info.shape_zyx[0] - 1);
     else if (k === "Escape") { if (S.ngMode || S.tool.startsWith("sam")) setTool("pick"); mergeArm(null); clearSAM(); clearRepair(); renderHi(); }
     else if (k === "m") setTool("merge");
     else if (k.toLowerCase() === "u" && !ev.repeat) toggle3D("point", S.hoverXY);
-    else if (k === "p") setTool("pick"); else if (k === "f") setTool("fill"); else if (k === "b") setTool("brush"); else if (k === "e") setTool("erase"); else if (k === "h") setTool("pan");
+    else if (k === "p") setTool("pick"); else if (k === "f") setTool("fill"); else if (k === "b") setTool("brush"); else if (k === "e") setTool("erase"); else if (k === "h") setTool("pan"); else if (k === "r") setTool("refine");
     else if (k === "[") setBrush(S.brush - 1); else if (k === "]") setBrush(S.brush + 1);
     else if (k === "o") { $("an-outline").checked = S.outline = !S.outline; render(); }
     else if (k === "v") setView(S.view === "side" ? "overlay" : "side");
     else if (k === "g") setFade(!S.fade);
     else if (k === ",") setOpacity(S.opacity - 0.05); else if (k === ".") setOpacity(S.opacity + 0.05);
     else if (k === "c") { $("an-curtain").checked = S.curtain = !S.curtain; if (S.curtain && !S.curtainX) S.curtainX = S.W >> 1; render(); }
-    else if (k === "Tab") { ev.preventDefault(); if (!S.blink) { S.blink = true; render(); } }
+    else if (k === "Tab") { ev.preventDefault(); S.tabHeld = true; if (!S.blink && !S.radiusDrag) { S.blink = true; render(); } }
     else if (k === "n") newId();
     else if (k === "l") neighbourPick();
     else if (k === "0") fit(); else if (k === "1") { S.zoom = 1; applyView(); }
@@ -919,7 +947,7 @@
   });
   document.addEventListener("keyup", ev => {
     if (ev.key === " ") { S.spacePan = false; if (S.tool !== "pan") for (const q of P) q.stage.classList.remove("pan"); }
-    if (ev.key === "Tab" && S.blink) { S.blink = false; render(); }
+    if (ev.key === "Tab") { S.tabHeld = false; if (S.blink) { S.blink = false; render(); } }
   });
 
   // ------------------------------------------------------------------ side panels

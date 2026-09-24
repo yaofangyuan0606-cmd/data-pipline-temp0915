@@ -731,11 +731,17 @@ class Block:
             self._invalidate(z)
             return self._record("fill", z, xs, ys, old, new_id, {"x": int(x), "y": int(y), "whole_slice": bool(whole_slice)}, by=by)
 
-    def paint(self, z: int, points: list[tuple[int, int]], radius: int, new_id: int, by: str | None = None) -> dict | None:
+    def paint(self, z: int, points: list[tuple[int, int]], radius: int, new_id: int, by: str | None = None,
+              only_id: int | None = None) -> dict | None:
         """Brush: stamp a disc of `radius` at every point of the stroke (points are consecutive, so gaps are
-        bridged by interpolation). Nonzero labels only fill background pixels; new_id=0 erases existing labels."""
+        bridged by interpolation). Nonzero labels only fill background pixels; new_id=0 erases existing labels —
+        all of them, or with `only_id` just that one label (擦除只擦当前颜色，压到邻居身上也不会把邻居擦掉)."""
         self._check_z(z)
         new_id = self._check_id(new_id)
+        if only_id is not None:
+            only_id = self._check_id(only_id)
+            if only_id == 0:
+                raise ValueError("要擦的颜色不能是背景")
         if not points:
             return None
         radius = max(0, int(radius))
@@ -759,6 +765,8 @@ class Block:
             mask &= plane != new_id
             if new_id != 0:
                 mask &= plane == 0               # 所有画笔颜色都只补空白；橡皮仍可擦除已有标签
+            elif only_id is not None:
+                mask &= plane == only_id         # 橡皮只擦当前颜色
             xs, ys = self._disk_idx(mask)
             if xs.size == 0:
                 return None
@@ -766,7 +774,57 @@ class Block:
             plane[mask] = new_id
             seg.flush()
             self._invalidate(z)
-            return self._record("paint", z, xs, ys, old, new_id, {"radius": radius, "n_points": len(points)}, by=by)
+            extra = {"radius": radius, "n_points": len(points)}
+            if only_id is not None:
+                extra["only_id"] = str(only_id)
+            return self._record("paint", z, xs, ys, old, new_id, extra, by=by)
+
+    def refine_edge(self, z: int, x: int, y: int, sensitivity: float = 0.5, reach: int = 4, by=None) -> dict | None:
+        """修缮边缘：点到的那块标签如果压过了黑色的膜、跨到邻居身上，就往里收——收到膜为止。
+
+        做法：算这一片的膜图（membrane_map），把这块标签里不在膜上的像素分成连通块（"内部"），只留点击处所在的那一块
+        （或最大的那块）；标签里在膜上的像素归离它最近的那块内部——紧贴着留下那块的膜（包括细胞里的线粒体、噪点）
+        跟着留下，跨过膜溢出去的部分连同它那半边膜一起收掉。只收缩、从不扩张；收掉的像素清成背景，留给邻居去填。
+        返回改动记录；边缘本来就贴合时返回 None。"""
+        from emqc.annotate.boundary import membrane_map
+
+        self._check_z(z)
+        _, H, W = self.shape_zyx
+        if not (0 <= x < W and 0 <= y < H):
+            raise ValueError("outside the block")
+        if not self.has_seg:
+            raise ValueError("block has no segmentation")
+        with self.lock:
+            plane = self._plane_ro(z)
+            label = int(plane[y, x])
+            if label == 0:
+                raise ValueError("这里是背景，没有可修缮的标签")
+            comps, _ = ndimage.label(plane == label)
+            mask = comps == comps[y, x]
+            b = membrane_map(self.em_slice(z), float(sensitivity))
+            core, n = ndimage.label(mask & ~b)
+            if n == 0:
+                return None                                    # 整块都在膜上：没有"里面"可收
+            keep = int(core[y, x])
+            if keep == 0:                                      # 点在膜上：留面积最大的那块
+                sizes = np.bincount(core.ravel())
+                sizes[0] = 0
+                keep = int(sizes.argmax())
+            # 每个像素归离它最近的那块内部：膜图按"局部偏暗"的分位数取，细胞里的线粒体、噪点也会被标成膜，
+            # 它们离留下的那块最近，就跟着留下；溢出去那边的膜离溢出去的内部最近，一起收掉
+            _, (iy, ix) = ndimage.distance_transform_edt(core == 0, return_indices=True)
+            region = mask & (core[iy, ix] == keep)
+            removed = mask & ~region
+            xs, ys = self._disk_idx(removed)
+            if xs.size == 0:
+                return None
+            seg = self._seg_writable()
+            old = seg[xs, ys, z].copy()
+            seg[xs, ys, z] = 0
+            seg.flush()
+            self._invalidate(z)
+            return self._record("refine", z, xs, ys, old, 0, {"x": int(x), "y": int(y), "label": str(label),
+                                                            "sensitivity": float(sensitivity), "reach": int(reach)}, by=by)
 
     def merge_pair(self, z: int, first: tuple[int, int], second: tuple[int, int], by: str | None = None) -> dict | None:
         """Relabel only the second clicked 4-connected region using the first's id.

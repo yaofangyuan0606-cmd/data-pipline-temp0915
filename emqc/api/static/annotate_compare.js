@@ -167,7 +167,7 @@
     $("legend").innerHTML = r.source_legend.map(s => `<span><i class="cmp-dot" style="background:${s.color}"></i>${esc(s.name)} <b>${fmt(r.sources[s.key].label_pixels)}</b> px</span>`).join("");
     $("policy").textContent = r.policy;
     $("warnings").hidden = !r.warnings.length; $("warnings").replaceChildren(...r.warnings.map(w => { const p = document.createElement("p"); p.textContent = w; return p; }));
-    const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", split:"切割 / 分离（历史）", sam:"SAM 应用", repair:"插值修补", smartfill:"智能填充（历史）"};
+    const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", split:"切割 / 分离（历史）", sam:"SAM 应用", repair:"插值修补", refine:"边缘修缮", smartfill:"智能填充（历史）"};
     $("operations").innerHTML = r.operations.slice().reverse().map(e => `<tr><td>#${e.n} ${esc(kinds[e.kind] || e.kind)}</td><td>${esc(e.by ?? "未署名")}</td><td>${esc(names[e.source])}</td><td>${esc(e.ts || "—")}</td><td>${fmt(e.n_px_in_slice)}</td><td>${fmt(e.current_px)}</td><td>${esc(e.model || (e.source_sections ? `Z ${e.source_sections.join(", ")}` : "—"))}</td></tr>`).join("") || '<tr><td colspan="7">当前切片没有可读取的有效编辑记录。</td></tr>';
     rows();
   }
@@ -183,7 +183,7 @@
     try {
       const r = await json(`${API}/${encodeURIComponent(state.block)}/audit?z=${state.z}&limit=300`);
       if (auditFor !== key) return;
-      const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", sam:"SAM 应用", repair:"插值修补", clear:"批量删除"};
+      const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", sam:"SAM 应用", repair:"插值修补", refine:"边缘修缮", clear:"批量删除"};
       $("audit-rows").innerHTML = r.entries.map(e => `<tr class="${e.action === "undo" ? "cmp-undo" : ""}"><td>${e.seq}</td><td>${esc(e.ts || "—")}</td><td>${esc(e.by ?? "未署名")}</td><td>${e.action === "undo" ? `撤销 #${e.n}${e.forced ? "（强制）" : ""}` : `#${e.n} ${esc(kinds[e.kind] || e.kind || "")}${e.z == null ? " · 整块" : ""}`}</td><td>${fmt(e.n_px ?? 0)}</td><td>${e.action === "undo" ? esc(e.of ?? "未署名") : '<span class="muted">—</span>'}</td></tr>`).join("")
         || '<tr><td colspan="6" class="muted">这一片还没有任何操作。</td></tr>';
     } catch (err) { if (auditFor === key) { auditFor = ""; $("audit-rows").innerHTML = `<tr><td colspan="6" class="muted">读取失败：${esc(err.message)}</td></tr>`; } }

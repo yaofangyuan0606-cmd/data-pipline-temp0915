@@ -491,3 +491,65 @@ def test_apply_labels_writes_many_ids_and_undoes_exactly(block):
     assert np.array_equal(np.load(block.path / "seg.npy"), original), "the delivered array is never written"
     block.undo()
     assert np.array_equal(np.load(block.work / "seg_edit.npy"), original)
+
+
+# ---------------------------------------------------------------- 画笔右键擦 / 只擦当前颜色 / 修缮边缘
+def _cells_block(tmp_path, seg_disp):
+    """A block whose displayed section is two_cells()'s picture with the given displayed-orientation labels."""
+    em, _, _ = two_cells()
+    Z = 2
+    d = tmp_path / "blocks" / "cells"
+    d.mkdir(parents=True)
+    np.save(d / "em.npy", np.repeat(em.T[:, :, None], Z, axis=2))
+    seg = np.repeat(seg_disp.T[:, :, None], Z, axis=2).astype(np.uint64)
+    np.save(d / "seg.npy", np.ascontiguousarray(seg))
+    return Block(d, tmp_path / "work")
+
+
+def test_eraser_can_be_limited_to_one_label(tmp_path):
+    em, left, right = two_cells()
+    seg = np.zeros(em.shape, np.uint64)
+    seg[left] = 7
+    seg[right] = 8
+    b = _cells_block(tmp_path, seg)
+    # a disc straddling the wall at x=48: plain erase clears both cells, only_id=7 clears just the left one
+    rec = b.paint(0, [(49, 30)], 6, 0, only_id=7)
+    assert rec["only_id"] == "7" and rec["n_px"] > 0
+    plane = b.seg_slice(0)
+    assert plane[30, 45] == 0 and plane[30, 55] == 8, "左边的 7 被擦掉，右边的 8 原样"
+    assert b.undo(0)["n"] == rec["n"]
+    rec = b.paint(1, [(49, 30)], 6, 0)
+    plane = b.seg_slice(1)
+    assert plane[30, 45] == 0 and plane[30, 55] == 0, "不带 only_id 照旧全擦"
+    with pytest.raises(ValueError):
+        b.paint(0, [(10, 10)], 2, 0, only_id=0)
+
+
+def test_refine_edge_pulls_a_label_back_to_the_membrane(tmp_path):
+    em, left, right = two_cells()
+    seg = np.zeros(em.shape, np.uint64)
+    seg[2:-2, 2:57] = 7                # the left cell, spilling 7 px across the wall (x 48-49) into the right cell
+    b = _cells_block(tmp_path, seg)
+    rec = b.refine_edge(0, 20, 30, sensitivity=0.5)
+    assert rec is not None and rec["kind"] == "refine" and rec["label"] == "7" and rec["new_id"] == "0"
+    plane = b.seg_slice(0)
+    assert (plane[10:50, 50:57] == 0).all(), "跨过膜溢出去的部分被收掉"
+    assert (plane[10:50, 4:46] == 7).mean() > 0.97, "细胞内部基本原样（线粒体那种暗块也不该被挖掉）"
+    assert (plane[22:28, 22:28] == 7).all(), "内部的暗块被补回来了"
+    assert b.undo(0)["n"] == rec["n"] and (b.seg_slice(0)[10:50, 50:57] == 7).all()
+    with pytest.raises(ValueError, match="背景"):
+        b.refine_edge(0, 60, 30)
+    tight = np.zeros(em.shape, np.uint64)
+    tight[left] = 9
+    b2 = _cells_block(tmp_path / "t", tight)
+    assert b2.refine_edge(0, 20, 30) is None, "边缘本来就贴着膜：什么都不改"
+
+
+def test_refine_edge_api(client_tools):
+    c, block_id = client_tools
+    url = f"/api/v1/annotate/blocks/{block_id}"
+    assert c.post(url + "/refine-edge", json={"z": 0, "x": 999, "y": 5}).status_code == 404
+    r = c.post(url + "/refine-edge", json={"z": 0, "x": 1, "y": 1, "sensitivity": 0.5})
+    assert r.status_code in (200, 422), r.text
+    r = c.post(url + "/paint", json={"z": 0, "points": [[10, 10]], "radius": 1, "new_id": "0", "only_id": "0"})
+    assert r.status_code == 422, "只擦背景没有意义"
