@@ -65,8 +65,9 @@ class Settings(BaseSettings):
     # 登录系统（切片标注工作区）。默认开：/annotate 页面和 /api/v1/annotate 接口都要先登录，
     # 每一笔改动记在登录用户名下。EMQC_AUTH_DISABLED=1 关掉（本地开发、测试），退回页面里自报姓名的方式。
     auth_disabled: bool = False
-    # 试用模式：登录页照常，但不校验密码——填个名字就进，账号不存在就自动建（审核员）。账号还没发齐、内部同事还在整时用。
-    auth_open: bool = False
+    # 试用模式（默认开，内部使用）：登录页照常，但不校验密码——填个名字就进，账号不存在就自动建（审核员）。
+    # 要正式校验密码时置 EMQC_AUTH_OPEN=0，并由管理员给大家发账号。
+    auth_open: bool = True
     session_days: int = 14              # 会话有效期，活跃则滑动续期
     cookie_secure: bool = False         # 走 https 反代时置 1，Cookie 只在 https 下发送
     sam_blocks_dir: Path = PROJECT_ROOT / "var" / "sam_blocks"  # blocks produced by scripts/sam_label.py (em + SAM seg)

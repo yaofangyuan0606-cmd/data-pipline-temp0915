@@ -18,6 +18,7 @@ def auth_on(monkeypatch):
     from emqc.config import settings
 
     monkeypatch.setattr(settings, "auth_disabled", False)
+    monkeypatch.setattr(settings, "auth_open", False)      # 这些测试测的是正式校验；试用模式单独测
     init_db()
     with session_scope() as s:
         s.execute(delete(AuthSession))
