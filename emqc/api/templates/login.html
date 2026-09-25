@@ -34,7 +34,7 @@
   fetch("/api/v1/auth/status").then(r => r.json()).then(s => {
     if (s.auth_disabled) { location.href = next; return; }
     open = !!s.auth_open;
-    if (open) { note.textContent = "试用模式 · 密码暂不校验，填名字即可进入"; note.classList.add("soft"); pass.required = false; }
+    if (open) { note.textContent = "试用模式 · 填名字即可进入；设了密码的账号请输入密码"; note.classList.add("soft"); pass.required = false; }
     else if (s.has_users === false) note.textContent = "这个实例还没有任何账号：请在服务器上运行 python -m emqc create-user --role admin 建第一个管理员。";
   }).catch(() => {});
   function fail(message) {

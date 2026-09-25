@@ -21,6 +21,14 @@ def test_workbench_wheel_zoom_and_keyboard_navigation(tmp_path):
         assert before != zoomed and page.locator('#an-z').input_value() == '0'
         stage.dispatch_event('wheel', {'deltaY': 80, 'clientX': 700, 'clientY': 500})
         assert page.locator('.vast-canvas').first.evaluate('e => e.style.transform') != zoomed
+        # All wheel modifiers keep zooming after merging the upstream radius changes.
+        page.locator('[data-tool="brush"]').click()
+        radius = page.locator('#an-brush').input_value()
+        for modifier in ('altKey', 'ctrlKey', 'shiftKey', 'metaKey'):
+            before = page.locator('.vast-canvas').first.evaluate('e => e.style.transform')
+            stage.dispatch_event('wheel', {'deltaY': -20, modifier: True, 'clientX': 700, 'clientY': 500})
+            assert page.locator('.vast-canvas').first.evaluate('e => e.style.transform') != before
+            assert page.locator('#an-brush').input_value() == radius
         stage.focus()
         for key, z in [('ArrowDown', '1'), ('z', '2'), ('a', '1'), ('ArrowUp', '0')]:
             page.keyboard.press(key)
@@ -108,3 +116,27 @@ def test_new_label_highlights_list_then_painted_pixels(tmp_path):
         edited = np.load(tmp_path / 'work' / 'new-label' / 'seg_edit.npy')
         assert int(edited[12, 4, 0]) == int(new_id)
         assert np.array_equal(np.load(data / 'seg.npy'), original)
+
+
+def test_tap_tab_radius_and_escape_survive_merge(tmp_path):
+    data = tmp_path / 'blocks' / 'radius'
+    write_pairs(data)
+    with browser_for(tmp_path, data) as (adapter, page):
+        page.locator('[data-tool="brush"]').click()
+        stage = page.locator('#an-stage')
+        stage.focus()
+        adapter.move((12, 12))
+        page.keyboard.press('Tab')
+        assert 'resizing' in stage.get_attribute('class')
+        point = adapter.position((12, 12))
+        page.mouse.move(point[0] + 4, point[1])
+        page.mouse.move(point[0] + 44, point[1])
+        assert int(page.locator('#an-brush').input_value()) > 4
+        page.keyboard.press('Escape')
+        assert page.locator('#an-brush').input_value() == '4'
+        assert 'resizing' not in stage.get_attribute('class')
+        page.keyboard.press('Tab')
+        page.mouse.click(*point)
+        assert 'resizing' not in stage.get_attribute('class')
+        assert page.locator('#an-nedit').inner_text() == '0 次改动'
+        assert not (tmp_path / 'work' / 'radius' / 'seg_edit.npy').exists()

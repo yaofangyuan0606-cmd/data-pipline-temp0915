@@ -25,6 +25,26 @@ function filterRows(tableId, key, on) {
   rows.forEach(r => r.classList.toggle("hide", active.some(k => r.dataset[k] !== "1")));
 }
 
+// ---------------------------------------------------------------- 页面报错上报：管理员在「运行日志」里看得到
+(() => {
+  let sent = 0;
+  const seen = new Set();
+  function report(message, source, line, col, stack) {
+    const key = `${message}|${source}|${line}`;
+    if (sent >= 10 || seen.has(key)) return;
+    seen.add(key); sent++;
+    const body = JSON.stringify({message: String(message || "").slice(0, 1000), source: String(source || "").slice(0, 500), line: line || null,
+      col: col || null, stack: String(stack || "").slice(0, 4000), page: (location.pathname + location.search).slice(0, 500)});
+    try { fetch("/api/v1/logs/client", {method: "POST", headers: {"Content-Type": "application/json"}, body, keepalive: true}).catch(() => {}); } catch (_) {}
+  }
+  window.addEventListener("error", e => { if (e.target && e.target !== window) return; report(e.message, e.filename, e.lineno, e.colno, e.error && e.error.stack); });
+  window.addEventListener("unhandledrejection", e => {
+    const r = e.reason;
+    if (r && (r.name === "AbortError" || /Failed to fetch|NetworkError|Load failed/.test(r.message || ""))) return;   // 翻片取消、断网不算页面的错
+    report(r && r.message || String(r), "", null, null, r && r.stack);
+  });
+})();
+
 // ---------------------------------------------------------------- live pill in the top bar
 async function showInstance() {
   try {

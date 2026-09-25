@@ -313,3 +313,10 @@ def users_page(request: Request, user=Depends(page_user)):
     if user.role != "admin":
         raise HTTPException(403, "只有管理员能管理账号")
     return _render("users.html", request, active="users", workspace="annotate")
+
+
+@router.get("/annotate/logs", response_class=HTMLResponse)
+def logs_page(request: Request, user=Depends(page_user)):
+    if user is not None and user.role != "admin":
+        raise HTTPException(403, "只有管理员能看运行日志")
+    return _render("annotate_logs.html", request, active="logs", workspace="annotate")

@@ -16,7 +16,7 @@ from emqc import auth
 from emqc.auth import COOKIE, ROLES, user_dict
 from emqc.config import settings
 from emqc.db.base import get_session, session_scope
-from emqc.db.models import User
+from emqc.db.models import AccountEvent, User
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -39,6 +39,7 @@ def current_user(request: Request) -> User | None:
     if token:
         with session_scope() as s:
             request.state.user = auth.resolve_session(s, token)
+            request.state.username = request.state.user.username if request.state.user is not None else None   # 给请求日志用，不再碰 ORM 对象
     return request.state.user
 
 
@@ -94,32 +95,42 @@ class LoginIn(BaseModel):
 @router.get("/status")
 def status(s: Session = Depends(get_session)):
     """登录页用：这个实例开了登录没有、是不是试用模式、有没有任何账号（一个都没有就提示先用命令行建管理员）。"""
-    return {"auth_disabled": settings.auth_disabled, "auth_open": settings.auth_open,
-            "has_users": (auth.count_users(s) > 0) if not settings.auth_disabled else None}
+    if settings.auth_disabled:
+        return {"auth_disabled": True, "auth_open": False, "has_users": None}
+    return {"auth_disabled": False, "auth_open": auth.login_mode(s) == "open", "has_users": auth.count_users(s) > 0}
 
 
 @router.post("/login")
 def login(body: LoginIn, request: Request, response: Response, s: Session = Depends(get_session)):
     if settings.auth_disabled:
         raise HTTPException(409, {"code": "disabled", "message": "这个实例没有开启登录（EMQC_AUTH_DISABLED=1），直接打开工作台即可"})
-    if settings.auth_open:
-        # 试用模式：不看密码，账号不存在就建；只有停用的账号进不来
+    ip = client_ip(request)
+    existing = auth.find_user(s, body.username)
+    if auth.login_mode(s) == "open" and (existing is None or not auth.has_password(existing)):
+        # 试用模式：没有真正密码的账号不看密码，账号不存在就建；只有停用的账号进不来
         user = auth.open_login(s, body.username)
         if user is None:
+            auth.record_event(s, "login_failed", target=existing, target_name=None if existing else body.username[:64],
+                              detail="账号已停用" if existing else "名字是空的", ip=ip)
+            s.commit()
             raise HTTPException(401, {"code": "bad_login", "message": "这个账号已停用，或者名字是空的"})
     else:
-        if not body.password:
-            raise HTTPException(401, {"code": "bad_login", "message": "登录名或密码不对"})
-        keys = (f"u:{body.username.strip().lower()}", f"ip:{client_ip(request)}")
+        keys = (f"u:{body.username.strip().lower()}", f"ip:{ip}")
         wait = auth.throttled(*keys)
         if wait:
             raise HTTPException(429, {"code": "throttled", "message": f"尝试太频繁，请 {wait} 秒后再试"})
-        user = auth.authenticate(s, body.username, body.password)
+        user = auth.authenticate(s, body.username, body.password) if body.password else None
         if user is None:
             auth.note_failure(*keys)
+            auth.record_event(s, "login_failed", target=existing, target_name=None if existing else body.username[:64],
+                              detail="没填密码" if not body.password else "密码不对或账号不可用", ip=ip)
+            s.commit()
+            if existing is not None and not body.password and auth.login_mode(s) == "open":
+                raise HTTPException(401, {"code": "need_password", "message": "这个账号设了密码，请输入密码"})
             raise HTTPException(401, {"code": "bad_login", "message": "登录名或密码不对"})
         auth.clear_failures(*keys)
-    token = auth.open_session(s, user, request.headers.get("user-agent", ""), client_ip(request))
+    token = auth.open_session(s, user, request.headers.get("user-agent", ""), ip)
+    auth.record_event(s, "login", actor=user, target=user, ip=ip)
     auth.purge_expired_sessions(s)
     s.commit()
     _set_cookie(response, token)
@@ -128,7 +139,10 @@ def login(body: LoginIn, request: Request, response: Response, s: Session = Depe
 
 @router.post("/logout")
 def logout(request: Request, response: Response, s: Session = Depends(get_session)):
+    user = current_user(request)
     auth.revoke_session(s, request.cookies.get(COOKIE))
+    if user is not None:
+        auth.record_event(s, "logout", actor=user, target=user, ip=client_ip(request))
     s.commit()
     response.delete_cookie(COOKIE, path="/")
     return {"ok": True}
@@ -163,16 +177,22 @@ def change_password(body: PasswordIn, request: Request, s: Session = Depends(get
         auth.set_password(s, u, body.new_password, keep_session=request.cookies.get(COOKIE))
     except ValueError as e:
         raise HTTPException(422, str(e))
+    auth.record_event(s, "change_password", actor=u, target=u, ip=client_ip(request))
     s.commit()
     return {"ok": True, "user": user_dict(u)}
 
 
 # ---------------------------------------------------------------- 管理员：账号管理
 class UserIn(BaseModel):
-    username: str = Field(min_length=2, max_length=32)
+    username: str = Field(min_length=1, max_length=64)            # 合规的登录名，或中文名（登录名由它生成，见 auth.username_for）
     display_name: str | None = Field(default=None, max_length=64)
     role: str = Field(default="annotator", pattern="^(admin|reviewer|annotator)$")
     password: str | None = Field(default=None, max_length=256)     # 不给就生成初始密码，首次登录必须改
+
+
+class BulkIn(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)              # 一行一个：登录名或名字[,显示名[,角色]]
+    role: str = Field(default="annotator", pattern="^(admin|reviewer|annotator)$")
 
 
 class UserPatch(BaseModel):
@@ -181,28 +201,79 @@ class UserPatch(BaseModel):
     is_active: bool | None = None
 
 
+class ModeIn(BaseModel):
+    mode: str = Field(pattern="^(open|password)$")
+
+
 def _active_admins(s: Session) -> int:
     return len(list(s.scalars(select(User.id).where(User.role == "admin", User.is_active.is_(True)))))
 
 
+def _new_user(s: Session, admin: User | None, typed: str, display: str | None, role: str, password: str | None):
+    """填的是英文就必须是合规的登录名（打错了要报出来，不能悄悄换成别的）；填中文名则登录名由名字生成，本人填名字就能登录。"""
+    typed = " ".join((typed or "").split())
+    if typed.isascii():
+        username, fallback = auth.normalize_username(typed), typed
+    else:
+        username, fallback = auth.username_for(typed)
+    return auth.create_user(s, username, password, display or fallback, role, created_by=admin.id if admin else None)
+
+
 @router.get("/users")
 def list_users(admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
-    return {"users": [user_dict(u) for u in s.scalars(select(User).order_by(User.id))], "roles": list(ROLES)}
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    live: dict[int, int] = {}
+    for sess in s.scalars(select(auth.AuthSession).where(auth.AuthSession.expires_at > now)):
+        live[sess.user_id] = live.get(sess.user_id, 0) + 1
+    users = []
+    for u in s.scalars(select(User).order_by(User.id)):
+        d = user_dict(u)
+        d["n_sessions"] = live.get(u.id, 0)
+        users.append(d)
+    return {"users": users, "roles": list(ROLES), "login_mode": auth.login_mode(s), "login_modes": auth.LOGIN_MODES}
 
 
 @router.post("/users")
-def create_user(body: UserIn, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
+def create_user(body: UserIn, request: Request, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
     try:
-        u, issued = auth.create_user(s, body.username, body.password, body.display_name, body.role,
-                                     created_by=admin.id if admin else None)
+        u, issued = _new_user(s, admin, body.username, body.display_name, body.role, body.password)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    auth.record_event(s, "create", actor=admin, target=u, detail=f"角色 {auth.ROLE_NAMES[u.role]}", ip=client_ip(request))
     s.commit()
     return {"user": user_dict(u), "temp_password": issued}
 
 
+@router.post("/users/bulk")
+def bulk_create(body: BulkIn, request: Request, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
+    """一次建一批：每行「登录名或名字[,显示名[,角色]]」，逗号或 Tab 分隔，角色可写中文。每个人各发一个初始密码（只返回这一次）。
+    某一行出错不影响其他行。"""
+    names = {v: k for k, v in auth.ROLE_NAMES.items()}
+    results = []
+    for n, raw in enumerate(body.text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = [x.strip() for x in line.replace("\t", ",").replace("，", ",").split(",")]
+        typed, display = parts[0], (parts[1] if len(parts) > 1 and parts[1] else None)
+        role = parts[2] if len(parts) > 2 and parts[2] else body.role
+        role = names.get(role, role)
+        try:
+            if role not in ROLES:
+                raise ValueError(f"角色「{parts[2]}」不认识，只能是管理员 / 审核员 / 标注员")
+            u, issued = _new_user(s, admin, typed, display, role, None)
+            auth.record_event(s, "create", actor=admin, target=u, detail=f"批量 · 角色 {auth.ROLE_NAMES[u.role]}", ip=client_ip(request))
+            results.append({"line": n, "ok": True, "user": user_dict(u), "temp_password": issued})
+        except ValueError as e:
+            results.append({"line": n, "ok": False, "input": line[:100], "error": str(e)})
+    s.commit()
+    return {"results": results, "n_ok": sum(r["ok"] for r in results)}
+
+
 @router.patch("/users/{uid}")
-def patch_user(uid: int, body: UserPatch, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
+def patch_user(uid: int, body: UserPatch, request: Request, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
     u = s.get(User, uid)
     if u is None:
         raise HTTPException(404, "没有这个账号")
@@ -212,27 +283,98 @@ def patch_user(uid: int, body: UserPatch, admin: User | None = Depends(require_a
         raise HTTPException(422, "至少要保留一个可用的管理员")
     if admin is not None and u.id == admin.id and (demoting or deactivating):
         raise HTTPException(422, "不能停用或降级自己，请让另一位管理员操作")
+    changes, issued = [], None
     if body.display_name is not None:
         try:
-            u.display_name = auth.clean_display_name(body.display_name, u.username)
+            name = auth.clean_display_name(body.display_name, u.username)
         except ValueError as e:
             raise HTTPException(422, str(e))
-    if body.role is not None:
+        if name != u.display_name:
+            changes.append(f"显示名 {u.display_name} → {name}")
+            u.display_name = name
+    if body.role is not None and body.role != u.role:
+        changes.append(f"角色 {auth.ROLE_NAMES[u.role]} → {auth.ROLE_NAMES[body.role]}")
         u.role = body.role
-    if body.is_active is not None:
+        if body.role == "admin" and not auth.has_password(u):
+            # 管理员必须有密码（试用模式下也要校验）：从试用账号升上来的，顺手发一个初始密码
+            issued = auth.temp_password()
+            auth.set_password(s, u, issued, must_change=True)
+            changes.append("发了初始密码")
+    if body.is_active is not None and body.is_active != u.is_active:
+        changes.append("启用" if body.is_active else "停用")
         u.is_active = body.is_active
         if not body.is_active:
             auth.revoke_user_sessions(s, u.id)         # 停用立刻生效，不等会话过期
+    if changes:
+        auth.record_event(s, "update", actor=admin, target=u, detail="；".join(changes), ip=client_ip(request))
     s.commit()
-    return {"user": user_dict(u)}
+    return {"user": user_dict(u), "temp_password": issued}
 
 
 @router.post("/users/{uid}/reset-password")
-def reset_password(uid: int, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
+def reset_password(uid: int, request: Request, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
     u = s.get(User, uid)
     if u is None:
         raise HTTPException(404, "没有这个账号")
     temp = auth.temp_password()
     auth.set_password(s, u, temp, must_change=True)
+    auth.record_event(s, "reset_password", actor=admin, target=u, ip=client_ip(request))
     s.commit()
     return {"user": user_dict(u), "temp_password": temp}
+
+
+@router.post("/users/{uid}/revoke-sessions")
+def revoke_sessions(uid: int, request: Request, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
+    """强制下线：这个人所有浏览器里的登录立刻作废（账号本身不动，重新登录就行）。"""
+    u = s.get(User, uid)
+    if u is None:
+        raise HTTPException(404, "没有这个账号")
+    keep = request.cookies.get(COOKIE) if admin is not None and u.id == admin.id else None
+    n = auth.revoke_user_sessions(s, u.id, keep=keep)
+    auth.record_event(s, "revoke", actor=admin, target=u, detail=f"{n} 个登录", ip=client_ip(request))
+    s.commit()
+    return {"user": user_dict(u), "n_revoked": n}
+
+
+@router.post("/users/issue-passwords")
+def issue_passwords(request: Request, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
+    """给所有还没有真正密码的可用账号（试用模式自动建的）各发一个初始密码——切到「正式」登录方式之前用。只返回这一次。"""
+    out = []
+    for u in s.scalars(select(User).where(User.is_active.is_(True)).order_by(User.id)):
+        if auth.has_password(u):
+            continue
+        temp = auth.temp_password()
+        auth.set_password(s, u, temp, must_change=True)
+        auth.record_event(s, "reset_password", actor=admin, target=u, detail="批量发初始密码", ip=client_ip(request))
+        out.append({"user": user_dict(u), "temp_password": temp})
+    s.commit()
+    return {"results": out}
+
+
+@router.get("/login-mode")
+def get_login_mode(admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
+    n_nopw = sum(1 for u in s.scalars(select(User).where(User.is_active.is_(True))) if not auth.has_password(u))
+    return {"mode": auth.login_mode(s), "modes": auth.LOGIN_MODES, "env_default": "open" if settings.auth_open else "password",
+            "n_without_password": n_nopw, "open_role": settings.auth_open_role}
+
+
+@router.put("/login-mode")
+def put_login_mode(body: ModeIn, request: Request, admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
+    before = auth.login_mode(s)
+    auth.set_login_mode(s, body.mode, admin)
+    if before != body.mode:
+        auth.record_event(s, "login_mode", actor=admin, detail=f"{before} → {body.mode}", ip=client_ip(request))
+    s.commit()
+    return get_login_mode(admin, s)
+
+
+@router.get("/events")
+def account_events(limit: int = 200, user_id: int | None = None, action: str | None = None,
+                   admin: User | None = Depends(require_admin), s: Session = Depends(get_session)):
+    """账号操作记录，新的在前。可以按人（actor 或 target 是他）、按动作筛。"""
+    q = select(AccountEvent).order_by(AccountEvent.id.desc()).limit(max(1, min(limit, 1000)))
+    if user_id is not None:
+        q = q.where((AccountEvent.actor_id == user_id) | (AccountEvent.target_id == user_id))
+    if action:
+        q = q.where(AccountEvent.action == action)
+    return {"events": [auth.event_dict(e) for e in s.scalars(q)], "actions": auth.ACTIONS}

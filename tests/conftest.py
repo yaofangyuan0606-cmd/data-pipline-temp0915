@@ -21,6 +21,8 @@ os.environ["EMQC_BLOCK_SIZE_XY"] = "0"
 os.environ["EMQC_REMOTE_ROOTS"] = ""
 os.environ["EMQC_CACHE_DIR"] = str(TMP / "cache")
 os.environ["EMQC_MANIFEST_DIR"] = str(TMP / "manifests")
+os.environ["EMQC_LOG_DIR"] = str(TMP / "log")
+os.environ["EMQC_ALERT_WEBHOOK"] = ""
 os.environ["EMQC_AUTH_DISABLED"] = "1"   # 绝大多数测试不关心登录；test_auth.py 自己再打开
 sys.path.insert(0, str(ROOT))
 

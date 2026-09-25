@@ -774,11 +774,10 @@ class Block:
     def refine_edge(self, z: int, x: int, y: int, sensitivity: float = 0.5, reach: int = 4, by=None) -> dict | None:
         """修缮边缘：点到的那块标签如果压过了黑色的膜、跨到邻居身上，就往里收——收到膜为止。
 
-        做法：算这一片的膜图（membrane_map），把这块标签里不在膜上的像素分成连通块（"内部"），只留点击处所在的那一块
-        （或最大的那块）；标签里在膜上的像素归离它最近的那块内部——紧贴着留下那块的膜（包括细胞里的线粒体、噪点）
-        跟着留下，跨过膜溢出去的部分连同它那半边膜一起收掉。只收缩、从不扩张；收掉的像素清成背景，留给邻居去填。
+        只动最外层：跨过膜、大段贴着标签外面的部分才收；被细胞包着的暗色细胞器（线粒体等）和胞质一律留下。
+        算法见 boundary.pull_back_to_membrane。只收缩、从不扩张；收掉的像素清成背景，留给邻居去填。
         返回改动记录；边缘本来就贴合时返回 None。"""
-        from emqc.annotate.boundary import membrane_map
+        from emqc.annotate.boundary import pull_back_to_membrane
 
         self._check_z(z)
         _, H, W = self.shape_zyx
@@ -793,19 +792,7 @@ class Block:
                 raise ValueError("这里是背景，没有可修缮的标签")
             comps, _ = ndimage.label(plane == label)
             mask = comps == comps[y, x]
-            b = membrane_map(self.em_slice(z), float(sensitivity))
-            core, n = ndimage.label(mask & ~b)
-            if n == 0:
-                return None                                    # 整块都在膜上：没有"里面"可收
-            keep = int(core[y, x])
-            if keep == 0:                                      # 点在膜上：留面积最大的那块
-                sizes = np.bincount(core.ravel())
-                sizes[0] = 0
-                keep = int(sizes.argmax())
-            # 每个像素归离它最近的那块内部：膜图按"局部偏暗"的分位数取，细胞里的线粒体、噪点也会被标成膜，
-            # 它们离留下的那块最近，就跟着留下；溢出去那边的膜离溢出去的内部最近，一起收掉
-            _, (iy, ix) = ndimage.distance_transform_edt(core == 0, return_indices=True)
-            region = mask & (core[iy, ix] == keep)
+            region = pull_back_to_membrane(mask, self.em_slice(z), int(x), int(y), float(sensitivity))
             removed = mask & ~region
             xs, ys = self._disk_idx(removed)
             if xs.size == 0:
