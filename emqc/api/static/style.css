@@ -394,3 +394,25 @@ button.danger:disabled { opacity: .5; }
 .temp-pw { margin-top: 10px; border-color: var(--accent-line); background: var(--accent-soft); font-size: 13px; }
 .temp-pw code { font-size: 15px; padding: 2px 6px; background: var(--surface); border-radius: 4px; }
 tr.user-off td { color: var(--muted); }
+
+/* ---------------------------------------------------------------- 用户管理 / 运行日志 */
+.um-mode-head { display: flex; align-items: center; gap: 10px; }
+.um-mode-warn { margin-top: 10px; padding: 8px 10px; border-radius: 6px; font-size: 13px; background: color-mix(in srgb, var(--medium) 16%, var(--surface)); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.um-bar { display: flex; align-items: center; gap: 8px; margin: 18px 0 8px; flex-wrap: wrap; }
+.um-bar .spacer, .um-mode-head .spacer, .um-temp-head .spacer { flex: 1; }
+.um-temp-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.temp-pw table { background: var(--surface); }
+.um-acts { flex-wrap: wrap; gap: 4px; margin: 0; }
+.um-acts button { padding: 3px 8px; font-size: 12px; }
+.um-table td { vertical-align: top; }
+tr.um-bad td { background: color-mix(in srgb, var(--high) 8%, transparent); }
+tr.lg-4xx td { background: color-mix(in srgb, var(--medium) 8%, transparent); }
+.tile.lg-bad { border-color: var(--high); }
+.tile.lg-warn { border-style: dashed; }
+.lg-alert { margin-top: 12px; border-color: var(--high); background: color-mix(in srgb, var(--high) 8%, var(--surface)); font-size: 13px; }
+.lg-tabs { display: flex; gap: 2px; background: var(--surface-2, var(--surface)); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+.lg-tabs button { border: 0; background: transparent; padding: 5px 12px; border-radius: 6px; font-size: 13px; }
+.lg-tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--text); font-weight: 600; }
+.lg-table td { vertical-align: top; }
+.lg-msg { white-space: pre-wrap; word-break: break-word; font-size: 12.5px; max-width: 900px; }
+.lg-pre { white-space: pre-wrap; font-size: 11px; max-height: 320px; overflow: auto; background: var(--surface-2, var(--bg)); padding: 8px; border-radius: 6px; margin: 4px 0 0; }

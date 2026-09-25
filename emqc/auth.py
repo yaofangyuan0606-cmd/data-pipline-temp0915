@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from emqc.annotate.store import Actor
 from emqc.config import settings
-from emqc.db.models import AuthSession, User
+from emqc.db.models import AccountEvent, AppSetting, AuthSession, User
 
 ROLES = ("admin", "reviewer", "annotator")
 ROLE_NAMES = {"admin": "管理员", "reviewer": "审核员", "annotator": "标注员"}
@@ -80,8 +80,10 @@ def clean_display_name(name: str | None, fallback: str) -> str:
 
 # ---------------------------------------------------------------- 用户
 def create_user(s: Session, username: str, password: str | None, display_name: str | None = None,
-                role: str = "annotator", created_by: int | None = None, must_change: bool | None = None) -> tuple[User, str | None]:
-    """建号。不给密码就生成一个初始密码（返回给调用方显示一次，库里只存哈希），并要求首次登录修改。"""
+                role: str = "annotator", created_by: int | None = None, must_change: bool | None = None,
+                password_set: bool = True) -> tuple[User, str | None]:
+    """建号。不给密码就生成一个初始密码（返回给调用方显示一次，库里只存哈希），并要求首次登录修改。
+    `password_set=False` 只给试用模式自动建号用：密码是随机的、没人知道，这种账号填名字就能进。"""
     username = normalize_username(username)
     if role not in ROLES:
         raise ValueError(f"角色只能是 {', '.join(ROLES)}")
@@ -92,7 +94,8 @@ def create_user(s: Session, username: str, password: str | None, display_name: s
         issued = password = temp_password()
         must_change = True if must_change is None else must_change
     user = User(username=username, display_name=clean_display_name(display_name, username), password_hash=hash_password(password),
-                role=role, is_active=True, must_change_password=bool(must_change), created_by=created_by)
+                role=role, is_active=True, must_change_password=bool(must_change), created_by=created_by,
+                password_set=bool(password_set))
     s.add(user)
     s.flush()
     return user, issued
@@ -102,15 +105,27 @@ def set_password(s: Session, user: User, password: str, *, must_change: bool = F
     """改密码；其他登录全部作废（keep_session 是当前这次登录的原始令牌，留着不踢自己）。"""
     user.password_hash = hash_password(password)
     user.must_change_password = must_change
+    user.password_set = True
     revoke_user_sessions(s, user.id, keep=keep_session)
+
+
+def has_password(u: User) -> bool:
+    """这个账号有没有一个真正的密码（见 User.password_set）。这一列上线之前的旧账号：管理员账号和管理员建的号算有。"""
+    if u.password_set is None:
+        return u.role == "admin" or u.created_by is not None
+    return bool(u.password_set)
+
+
+def iso(dt: datetime | None) -> str | None:
+    """库里存的是不带时区的 UTC；给页面的带上时区，浏览器按本地时间显示。"""
+    return dt.replace(tzinfo=timezone.utc).isoformat(timespec="seconds") if dt else None
 
 
 def user_dict(u: User) -> dict:
     return {"id": u.id, "username": u.username, "display_name": u.display_name or u.username, "role": u.role,
             "role_name": ROLE_NAMES.get(u.role, u.role), "is_active": bool(u.is_active),
-            "must_change_password": bool(u.must_change_password),
-            "created_at": u.created_at.isoformat(timespec="seconds") if u.created_at else None,
-            "last_login_at": u.last_login_at.isoformat(timespec="seconds") if u.last_login_at else None}
+            "must_change_password": bool(u.must_change_password), "has_password": has_password(u),
+            "created_at": iso(u.created_at), "last_login_at": iso(u.last_login_at), "created_by": u.created_by}
 
 
 def actor_for(u: User | None) -> Actor | None:
@@ -157,23 +172,40 @@ def clear_failures(*keys: str) -> None:
             _FAILS.pop(k, None)
 
 
-def open_login(s: Session, typed: str) -> User | None:
-    """试用模式（EMQC_AUTH_OPEN，默认开）：内部同事试用阶段用，填什么名字都能进，不看密码。
+def username_for(typed: str) -> tuple[str, str]:
+    """登录框里填的 → (登录名, 显示名)。合规的登录名原样用；填的是中文名之类不合规的，就把它当显示名，
+    登录名由它的哈希生成——同一个名字永远对上同一个账号，试用模式和正式密码登录都认。"""
+    typed = " ".join((typed or "").split())
+    try:
+        return normalize_username(typed), typed
+    except ValueError:
+        return "u-" + hashlib.sha1(typed.encode("utf-8")).hexdigest()[:10], typed
 
-    合规的登录名直接用；填的是中文名之类不合规的，就把它当显示名，登录名由它的哈希生成（同一个名字永远对上同一个账号）。
-    账号不存在就自动建成审核员（能改、能撤别人的），密码随机——关掉试用模式时管理员重置一下即可。停用的账号仍然进不来。"""
+
+def find_user(s: Session, typed: str) -> User | None:
+    """登录名对得上就是它；对不上、但正好有一个账号的显示名就是填的这个（比如管理员建了 zhangsan / 张三，本人填「张三」），也算它。"""
     typed = " ".join((typed or "").split())
     if not typed:
         return None
-    try:
-        username = normalize_username(typed)
-        display = typed
-    except ValueError:
-        username = "u-" + hashlib.sha1(typed.encode("utf-8")).hexdigest()[:10]
-        display = clean_display_name(typed, username)
-    user = s.scalar(select(User).where(User.username == username))
+    u = s.scalar(select(User).where(User.username == username_for(typed)[0]))
+    if u is not None:
+        return u
+    same = list(s.scalars(select(User).where(User.display_name == typed).limit(2)))
+    return same[0] if len(same) == 1 else None
+
+
+def open_login(s: Session, typed: str) -> User | None:
+    """试用模式：填什么名字都能进，不看密码；账号不存在就自动建（角色见 EMQC_AUTH_OPEN_ROLE，默认标注员）。
+    只用于没有真正密码的账号——有密码的和管理员账号由调用方走密码校验（见 has_password）。停用的账号仍然进不来。"""
+    typed = " ".join((typed or "").split())
+    if not typed:
+        return None
+    username, display = username_for(typed)
+    user = find_user(s, typed)
     if user is None:
-        user, _ = create_user(s, username, secrets.token_urlsafe(24), display, "reviewer", must_change=False)
+        role = settings.auth_open_role if settings.auth_open_role in ROLES and settings.auth_open_role != "admin" else "annotator"
+        user, _ = create_user(s, username, secrets.token_urlsafe(24), clean_display_name(display, username), role,
+                              must_change=False, password_set=False)
     elif not user.is_active:
         return None
     user.must_change_password = False
@@ -182,11 +214,7 @@ def open_login(s: Session, typed: str) -> User | None:
 
 def authenticate(s: Session, username: str, password: str) -> User | None:
     """对上了返回用户，否则 None。停用的账号、不存在的账号和密码错误对外一个样子，不泄露哪个存在。"""
-    try:
-        username = normalize_username(username)
-    except ValueError:
-        return None
-    user = s.scalar(select(User).where(User.username == username))
+    user = find_user(s, username)
     if user is None or not user.is_active or not verify_password(password or "", user.password_hash):
         return None
     return user
@@ -252,3 +280,50 @@ def purge_expired_sessions(s: Session) -> int:
 
 def count_users(s: Session) -> int:
     return len(list(s.scalars(select(User.id))))
+
+
+# ---------------------------------------------------------------- 登录方式（运行中可改，优先于 EMQC_AUTH_OPEN）
+LOGIN_MODES = {"open": "试用：填名字就能进（有密码的账号和管理员仍要密码）", "password": "正式：必须用登录名和密码"}
+
+
+def login_mode(s: Session) -> str:
+    row = s.get(AppSetting, "login_mode")
+    if row is not None and row.value in LOGIN_MODES:
+        return row.value
+    return "open" if settings.auth_open else "password"
+
+
+def set_login_mode(s: Session, mode: str, by: User | None) -> None:
+    if mode not in LOGIN_MODES:
+        raise ValueError("登录方式只能是 open 或 password")
+    row = s.get(AppSetting, "login_mode")
+    if row is None:
+        row = AppSetting(key="login_mode")
+        s.add(row)
+    row.value, row.updated_at, row.updated_by = mode, _now(), (by.id if by else None)
+
+
+# ---------------------------------------------------------------- 账号操作记录
+ACTIONS = {"login": "登录", "login_failed": "登录失败", "logout": "退出", "create": "建号", "update": "修改账号",
+           "reset_password": "重置密码", "change_password": "改密码", "revoke": "强制下线", "login_mode": "切换登录方式"}
+
+
+def record_event(s: Session, action: str, actor: User | None = None, target: User | None = None, detail: str = "",
+                 ip: str = "", target_name: str | None = None) -> None:
+    """记一笔账号操作（库里一行 + 日志一行）。detail 只写"改了什么"，从不写密码。"""
+    s.add(AccountEvent(ts=_now(), action=action, actor_id=actor.id if actor else None,
+                       actor_name=(actor.display_name or actor.username) if actor else "",
+                       target_id=target.id if target else None,
+                       target_name=(target_name if target_name is not None else ((target.display_name or target.username) if target else ""))[:64],
+                       detail=(detail or "")[:500], ip=(ip or "")[:64]))
+    import logging
+
+    logging.getLogger("emqc.account").info("%s actor=%s target=%s %s ip=%s", action, actor.username if actor else "-",
+                                           target.username if target else (target_name or "-"), detail, ip)
+
+
+def event_dict(e: AccountEvent) -> dict:
+    return {"id": e.id, "ts": iso(e.ts), "action": e.action,
+            "action_name": ACTIONS.get(e.action, e.action), "actor_id": e.actor_id, "actor": e.actor_name,
+            "target_id": e.target_id, "target": e.target_name, "detail": e.detail, "ip": e.ip}
+

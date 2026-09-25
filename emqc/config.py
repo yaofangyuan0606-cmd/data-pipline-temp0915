@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     # 试用模式（默认开，内部使用）：登录页照常，但不校验密码——填个名字就进，账号不存在就自动建（审核员）。
     # 要正式校验密码时置 EMQC_AUTH_OPEN=0，并由管理员给大家发账号。
     auth_open: bool = True
+    auth_open_role: str = "annotator"   # 试用模式下第一次填名字自动建出来的账号是什么角色；管理员可以再改
     session_days: int = 14              # 会话有效期，活跃则滑动续期
     cookie_secure: bool = False         # 走 https 反代时置 1，Cookie 只在 https 下发送
     sam_blocks_dir: Path = PROJECT_ROOT / "var" / "sam_blocks"  # blocks produced by scripts/sam_label.py (em + SAM seg)
@@ -75,6 +76,10 @@ class Settings(BaseSettings):
     sam_checkpoint: Path = PROJECT_ROOT / "var" / "models" / "sam2.1_hiera_large.pt"
     sam_config: str = "configs/sam2.1/sam2.1_hiera_l.yaml"
     sam_device: str = "cuda:0"
+
+    # 运行日志（emqc.log、access.log、lifecycle.jsonl）放哪；告警推到哪个群机器人（企业微信 / 钉钉 / 飞书的 webhook 地址，空 = 不推）
+    log_dir: Path = PROJECT_ROOT / "var" / "log"
+    alert_webhook: str = ""
 
     api_host: str = "127.0.0.1"
     api_port: int = 8765
@@ -85,7 +90,7 @@ class Settings(BaseSettings):
         roots += [r.strip() for r in self.remote_roots.split(";") if r.strip()]
         return roots
 
-    @field_validator("data_root", "preview_dir", "cache_dir", "manifest_dir", "export_dir", "sam_checkpoint", "annotate_workdir", "sam_blocks_dir", mode="after")
+    @field_validator("data_root", "preview_dir", "cache_dir", "manifest_dir", "export_dir", "sam_checkpoint", "annotate_workdir", "sam_blocks_dir", "log_dir", mode="after")
     @classmethod
     def _absolute(cls, v: Path) -> Path:
         # relative paths in .env are relative to the project root, never to the current working directory

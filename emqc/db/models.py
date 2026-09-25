@@ -517,6 +517,9 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     created_by: Mapped[int | None] = mapped_column(Integer)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # 有没有一个真正的密码：管理员建号 / 重置 / 本人改过的是 True；试用模式填名字自动建出来的是 False（密码是随机的，没人知道）。
+    # 试用模式下，有密码的账号和管理员账号仍然要输密码，不然谁填管理员的名字都能进
+    password_set: Mapped[bool | None] = mapped_column(Boolean, default=True)
 
 
 class AuthSession(Base):
@@ -531,6 +534,32 @@ class AuthSession(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     user_agent: Mapped[str] = mapped_column(String(255), default="")
     ip: Mapped[str] = mapped_column(String(64), default="")
+
+
+class AccountEvent(Base):
+    """账号相关的每一件事：登录、登录失败、退出、建号、改角色、改名、停用、启用、重置密码、强制下线、切换登录方式。
+    只追加。actor 是做这件事的人（登录失败时为空），target 是被操作的账号。"""
+    __tablename__ = "account_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+    action: Mapped[str] = mapped_column(String(32), index=True)
+    actor_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    actor_name: Mapped[str] = mapped_column(String(64), default="")
+    target_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    target_name: Mapped[str] = mapped_column(String(64), default="")
+    detail: Mapped[str] = mapped_column(String(500), default="")
+    ip: Mapped[str] = mapped_column(String(64), default="")
+
+
+class AppSetting(Base):
+    """运行中可以改的设置（目前只有登录方式），优先于环境变量；改动记在 account_events 里。"""
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_by: Mapped[int | None] = mapped_column(Integer)
 
 
 # ----------------------------------------------------------------------------- 对比页的标记与评论

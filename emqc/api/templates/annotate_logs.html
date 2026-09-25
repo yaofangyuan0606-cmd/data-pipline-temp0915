@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}运行日志{% endblock %}
+{% block crumbs %}<a href="/annotate">切片标注</a> › <b>运行日志</b>{% endblock %}
+{% block topright %}<a class="btn" href="/annotate">返回工作台</a>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><h1>运行日志</h1><p class="sub">服务跑了多久、重启过几次、最近的报错（含标注员浏览器里的报错）、谁在线。标注员报「编号 xxxx 出错了」时，在下面搜这个编号就能看到堆栈。</p></div>
+  <div class="actions"><label class="muted" style="font-size:12px"><input type="checkbox" id="lg-auto" checked> 每 30 秒刷新</label><button id="lg-refresh">刷新</button></div></div>
+
+<div class="tiles" id="lg-tiles"><div class="tile"><div class="k">加载中</div><div class="v">…</div></div></div>
+<div class="card lg-alert" id="lg-alert" hidden></div>
+
+<div class="um-bar" style="margin-top:18px">
+  <div class="lg-tabs" role="tablist">
+    <button role="tab" data-tab="problems" aria-selected="true">报错与警告</button>
+    <button role="tab" data-tab="lifecycle" aria-selected="false">进程启停</button>
+    <button role="tab" data-tab="access" aria-selected="false">请求记录</button>
+    <button role="tab" data-tab="online" aria-selected="false">在线</button>
+  </div>
+  <span class="spacer"></span>
+  <select id="lg-level" class="text" style="width:auto"><option value="WARNING">警告和报错</option><option value="ERROR">只看报错</option></select>
+  <label class="muted" id="lg-only-wrap" style="font-size:12px" hidden><input type="checkbox" id="lg-only"> 只看出错的</label>
+  <input id="lg-q" class="text" placeholder="搜编号 / 关键字 / 人" style="width:200px">
+</div>
+<div class="card pad-0 scroll"><table class="dense lg-table"><thead id="lg-head"></thead><tbody id="lg-rows"><tr><td class="muted">加载中…</td></tr></tbody></table></div>
+<p class="muted" style="font-size:12px" id="lg-foot"></p>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id), esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const when = iso => { if (!iso) return "—"; const d = new Date(iso); if (isNaN(d)) return iso; const p = n => String(n).padStart(2, "0"); return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+  const dur = s => s < 60 ? `${s} 秒` : s < 3600 ? `${Math.floor(s / 60)} 分钟` : s < 86400 ? `${Math.floor(s / 3600)} 小时 ${Math.floor(s % 3600 / 60)} 分` : `${Math.floor(s / 86400)} 天 ${Math.floor(s % 86400 / 3600)} 小时`;
+  const EVENT = {start: ["启动", "ok"], stop: ["正常退出", ""], exit: ["异常退出", "bad"], unclean: ["上次没有正常退出", "bad"], supervisor_stop: ["守护脚本停止", ""]};
+  let tab = "problems", DATA = [], OV = null;
+
+  async function call(url) {
+    const r = await fetch(url); const body = await r.json().catch(() => ({}));
+    if (!r.ok) { const d = body.detail; throw new Error(typeof d === "string" ? d : d?.message || `失败 (${r.status})`); }
+    return body;
+  }
+  async function overview() {
+    try {
+      const o = OV = await call("/api/v1/admin/overview");
+      const tile = (k, v, sub, cls) => `<div class="tile ${cls || ""}"><div class="k">${k}</div><div class="v">${v}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+      $("lg-tiles").innerHTML = [
+        tile("已运行", dur(o.uptime_s), `${when(o.started_at)} 启动 · pid ${o.pid}`),
+        tile("版本", `<span class="mono" style="font-size:18px">${esc(o.commit || o.version)}</span>`, esc(o.deployment || "")),
+        tile("7 天内启动", o.starts_7d, o.crashes_7d ? `其中 <b style="color:var(--high)">${o.crashes_7d}</b> 次是崩溃后` : "没有崩溃", o.crashes_7d ? "lg-bad" : ""),
+        tile("近 1 小时报错", o.errors.last_hour, `近 5 分钟 ${o.errors.last_5min}`, o.errors.last_hour ? "lg-bad" : ""),
+        tile("在线", o.online.length, `账号 ${o.n_active_users} 个可用 / 共 ${o.n_users}`),
+        tile("24 小时登录失败", o.failed_logins_24h, o.failed_logins_24h > 20 ? "偏多，看看是不是有人在试密码" : "", o.failed_logins_24h > 20 ? "lg-bad" : ""),
+        tile("自动重启", o.supervised ? "已开" : "未开", o.supervised ? "进程挂了会自动拉起" : "用 scripts/supervise.py 启动才会自动拉起", o.supervised ? "" : "lg-warn"),
+        tile("告警推送", o.alert_configured ? "已配置" : "未配置", o.alert_configured ? "崩溃、连续报错会推到群里" : "设 EMQC_ALERT_WEBHOOK 后推到群机器人", o.alert_configured ? "" : "lg-warn"),
+      ].join("");
+      const a = $("lg-alert");
+      a.hidden = !o.last_crash;
+      if (o.last_crash) a.innerHTML = `<b>最近一次崩溃</b>：${when(o.last_crash.ts)} · ${esc(o.last_crash.note || "")}${o.last_crash.prev_start ? `（那次是 ${when(o.last_crash.prev_start)} 启动的）` : ""}。崩溃前的报错在「报错与警告」和服务器上的 <span class="mono">${esc(o.log_dir)}/emqc.log</span>。`;
+      if (tab === "online") render();
+    } catch (e) { $("lg-tiles").innerHTML = `<div class="tile"><div class="k">出错</div><div class="sub">${esc(e.message)}</div></div>`; }
+  }
+  async function load() {
+    $("lg-level").hidden = tab !== "problems";
+    $("lg-only-wrap").hidden = tab !== "access";
+    try {
+      if (tab === "problems") DATA = (await call(`/api/v1/admin/logs?kind=problems&limit=500&level=${$("lg-level").value}`)).items;
+      else if (tab === "access") DATA = (await call(`/api/v1/admin/logs?kind=access&limit=500&only_errors=${$("lg-only").checked}`)).items;
+      else if (tab === "lifecycle") DATA = (await call("/api/v1/admin/logs?kind=lifecycle&limit=300")).items;
+      else DATA = null;
+    } catch (e) { DATA = []; $("lg-foot").textContent = e.message; }
+    render();
+  }
+  function render() {
+    const q = $("lg-q").value.trim().toLowerCase();
+    const hit = o => !q || JSON.stringify(o).toLowerCase().includes(q);
+    let head = "", rows = "";
+    if (tab === "problems") {
+      head = "<tr><th>时间</th><th>级别</th><th>编号</th><th>来源</th><th>内容</th></tr>";
+      rows = DATA.filter(hit).map(i => `<tr class="${i.level === "ERROR" || i.level === "CRITICAL" ? "um-bad" : ""}"><td class="mono" style="white-space:nowrap">${when(i.ts)}</td><td>${i.level === "WARNING" ? "警告" : "报错"}</td><td class="mono">${esc(i.request_id)}</td><td class="mono muted" style="font-size:11px">${esc(i.logger)}</td>
+        <td><div class="lg-msg">${esc(i.message)}</div>${i.exc ? `<details><summary>堆栈</summary><pre class="lg-pre">${esc(i.exc)}</pre></details>` : ""}</td></tr>`).join("");
+      $("lg-foot").textContent = "内存里保留最近 500 条（服务重启后清空）；完整的在服务器的 emqc.log，10 MB 滚动保留 10 份。";
+    } else if (tab === "access") {
+      head = "<tr><th>时间</th><th>编号</th><th>谁</th><th>请求</th><th class='num'>状态</th><th class='num'>耗时</th><th>IP</th></tr>";
+      rows = DATA.filter(hit).map(a => `<tr class="${a.status >= 500 ? "um-bad" : a.status >= 400 ? "lg-4xx" : ""}"><td class="mono" style="white-space:nowrap">${when(a.ts)}</td><td class="mono">${esc(a.rid)}</td><td>${esc(a.user || "—")}</td><td class="mono" style="font-size:12px;word-break:break-all">${esc(a.method)} ${esc(a.path)}</td><td class="num mono">${a.status}</td><td class="num mono">${a.ms} ms</td><td class="mono muted" style="font-size:11px">${esc(a.ip)}</td></tr>`).join("");
+      $("lg-foot").textContent = "只记写操作、出错的和超过 2 秒的慢请求；翻片看图这类高频读取不记。";
+    } else if (tab === "lifecycle") {
+      head = "<tr><th>时间</th><th>事件</th><th>进程</th><th>详情</th></tr>";
+      rows = DATA.filter(hit).map(e => { const [name, cls] = EVENT[e.event] || [e.event, ""];
+        const bits = [e.version && `版本 ${e.version}`, e.commit && `提交 ${e.commit}`, e.port && `端口 ${e.port}`, e.uptime_s != null && `运行了 ${dur(e.uptime_s)}`, e.code != null && e.event !== "start" && `退出码 ${e.code}`, e.note].filter(Boolean);
+        return `<tr class="${cls === "bad" ? "um-bad" : ""}"><td class="mono" style="white-space:nowrap">${when(e.ts)}</td><td>${name}</td><td class="mono">${esc(e.child_pid || e.pid)}</td><td style="font-size:12px">${esc(bits.join(" · "))}</td></tr>`; }).join("");
+      $("lg-foot").textContent = "「异常退出」由守护脚本记下；「上次没有正常退出」是服务启动时发现上一次既没正常退出、也没被守护脚本记下（比如机器重启、守护脚本本身被杀）。";
+    } else {
+      head = "<tr><th>谁</th><th>在哪</th><th>多久前报到</th></tr>";
+      rows = (OV?.online || []).filter(hit).map(p => `<tr><td><b>${esc(p.name)}</b> <span class="mono muted" style="font-size:11px">${esc(p.user || "")}</span></td><td class="mono" style="font-size:12px">${p.where.map(w => `${esc(w.block)} · z ${w.z}`).join("<br>")}</td><td class="mono muted">${Math.min(...p.where.map(w => w.ago_s))} 秒</td></tr>`).join("");
+      $("lg-foot").textContent = "工作台每 15 秒报一次自己在哪一片，60 秒没报到算离线。";
+    }
+    $("lg-head").innerHTML = head;
+    $("lg-rows").innerHTML = rows || `<tr><td colspan="7" class="muted">${q ? "没有匹配的" : "没有记录"}</td></tr>`;
+  }
+  document.querySelectorAll(".lg-tabs button").forEach(b => b.addEventListener("click", () => {
+    tab = b.dataset.tab;
+    document.querySelectorAll(".lg-tabs button").forEach(x => x.setAttribute("aria-selected", String(x === b)));
+    load();
+  }));
+  $("lg-q").addEventListener("input", render);
+  $("lg-level").addEventListener("change", load);
+  $("lg-only").addEventListener("change", load);
+  $("lg-refresh").addEventListener("click", () => { overview(); load(); });
+  const qs = new URLSearchParams(location.search);
+  if (qs.get("q")) $("lg-q").value = qs.get("q");
+  overview(); load();
+  setInterval(() => { if ($("lg-auto").checked && !document.hidden) { overview(); load(); } }, 30000);
+})();
+</script>
+{% endblock %}

@@ -4,70 +4,245 @@
 {% block topright %}<a class="btn" href="/annotate">返回工作台</a>{% endblock %}
 {% block content %}
 <div class="page-head"><div><h1>用户管理</h1><p class="sub">账号只停用不删除：旧记录里的标注人还要能对回人。管理员管账号、能撤任何人的改动；审核员能改、能撤别人的改动；标注员能改，只能撤自己的。</p></div></div>
-<div class="card" id="users-create">
-  <h2 style="margin-top:0">新建账号</h2>
-  <form id="new-user" class="users-form">
-    <div class="field"><label>登录名 <span class="muted">小写字母 / 数字 / _ . -</span></label><input class="text mono" name="username" required minlength="2" maxlength="32" autocomplete="off"></div>
-    <div class="field"><label>显示名 <span class="muted">记录里写的名字</span></label><input class="text" name="display_name" maxlength="64" autocomplete="off"></div>
-    <div class="field"><label>角色</label><select class="text" name="role"><option value="annotator">标注员</option><option value="reviewer">审核员</option><option value="admin">管理员</option></select></div>
-    <div class="field"><label>初始密码 <span class="muted">留空则自动生成</span></label><input class="text" name="password" type="text" minlength="8" maxlength="72" autocomplete="off"></div>
-    <div class="actions"><button type="submit" class="primary">创建</button></div>
-  </form>
-  <div class="card temp-pw" id="temp-pw" hidden></div>
+
+<div class="card um-mode" id="um-mode">
+  <div class="um-mode-head"><h2 style="margin:0">登录方式</h2><span class="pill" id="um-mode-now">…</span><span class="spacer"></span><button id="um-mode-switch">…</button></div>
+  <p class="muted" id="um-mode-desc" style="margin:8px 0 0"></p>
+  <div class="um-mode-warn" id="um-nopw" hidden></div>
 </div>
-<div class="card pad-0" style="margin-top:12px">
-  <table class="dense"><thead><tr><th>#</th><th>登录名</th><th>显示名</th><th>角色</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead><tbody id="users-rows"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody></table>
+
+<div class="grid c2" style="margin-top:12px">
+  <div class="card">
+    <h2 style="margin-top:0">新建一个账号</h2>
+    <form id="new-user" class="users-form">
+      <div class="field"><label>登录名 <span class="muted">英文小写 / 数字 / _ . -，或直接填中文名</span></label><input class="text mono" name="username" required maxlength="64" autocomplete="off"></div>
+      <div class="field"><label>显示名 <span class="muted">记录里写的名字</span></label><input class="text" name="display_name" maxlength="64" autocomplete="off"></div>
+      <div class="field"><label>角色</label><select class="text" name="role"><option value="annotator">标注员</option><option value="reviewer">审核员</option><option value="admin">管理员</option></select></div>
+      <div class="field"><label>初始密码 <span class="muted">留空则自动生成</span></label><input class="text" name="password" type="text" minlength="8" maxlength="72" autocomplete="off"></div>
+      <div class="actions"><button type="submit" class="primary">创建</button></div>
+    </form>
+  </div>
+  <div class="card">
+    <h2 style="margin-top:0">批量新建</h2>
+    <form id="bulk-user">
+      <div class="field" style="margin-top:0"><label>一行一个：<span class="mono">登录名或中文名, 显示名, 角色</span> <span class="muted">后两项可省；角色写中文也行</span></label>
+        <textarea class="text mono" name="text" rows="5" placeholder="zhangsan, 张三&#10;李四&#10;wangwu, 王五, 审核员" style="width:100%;resize:vertical"></textarea></div>
+      <div class="actions"><label class="muted" style="font-size:12px">没写角色的按 <select class="text" name="role" style="width:auto"><option value="annotator">标注员</option><option value="reviewer">审核员</option></select></label><span class="spacer"></span><button type="submit" class="primary">批量创建</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="card temp-pw" id="temp-pw" hidden></div>
+
+<div class="um-bar">
+  <h2 style="margin:0">账号 <span class="cnt" id="um-count"></span></h2>
+  <span class="spacer"></span>
+  <input id="um-q" class="text" placeholder="搜名字 / 登录名" style="width:180px">
+  <select id="um-role" class="text" style="width:auto"><option value="">全部角色</option><option value="admin">管理员</option><option value="reviewer">审核员</option><option value="annotator">标注员</option></select>
+  <select id="um-state" class="text" style="width:auto"><option value="">全部状态</option><option value="on">可用</option><option value="off">停用</option><option value="online">在线</option><option value="nopw">没有密码（试用）</option><option value="must">待改密码</option></select>
+</div>
+<div class="card pad-0 scroll">
+  <table class="dense um-table"><thead><tr><th>名字</th><th>角色</th><th>状态</th><th class="num">有效改动</th><th>最近改动</th><th>最近登录</th><th>操作</th></tr></thead><tbody id="users-rows"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody></table>
 </div>
 <p class="muted" id="users-msg" role="status" style="font-size:12px"></p>
+
+<div class="um-bar" style="margin-top:22px">
+  <h2 style="margin:0">账号操作记录</h2>
+  <span class="pill" id="ev-who" hidden></span>
+  <span class="spacer"></span>
+  <select id="ev-action" class="text" style="width:auto"><option value="">全部动作</option></select>
+</div>
+<div class="card pad-0 scroll"><table class="dense"><thead><tr><th>时间</th><th>动作</th><th>谁做的</th><th>对谁</th><th>详情</th><th>IP</th></tr></thead><tbody id="ev-rows"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody></table></div>
+
 <script>
 (() => {
   const $ = id => document.getElementById(id), esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const ME = {{ {'id': user.id, 'username': user.username}|tojson }};
   const ROLE = {admin: "管理员", reviewer: "审核员", annotator: "标注员"};
+  const when = iso => { if (!iso) return "—"; const d = new Date(iso); if (isNaN(d)) return iso; const p = n => String(n).padStart(2, "0"); return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+  const ago = iso => { if (!iso) return ""; const s = (Date.now() - new Date(iso)) / 1000; return s < 90 ? "刚刚" : s < 3600 ? `${Math.round(s / 60)} 分钟前` : s < 86400 ? `${Math.round(s / 3600)} 小时前` : `${Math.round(s / 86400)} 天前`; };
+  const px = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
+  let USERS = [], ACT = {}, ONLINE = {}, MODE = null, evUser = null;
+
   async function call(url, opts) {
     const r = await fetch(url, {headers: {"Content-Type": "application/json"}, ...opts});
     const body = await r.json().catch(() => ({}));
     if (!r.ok) { const d = body.detail; throw new Error(typeof d === "string" ? d : d?.message || `失败 (${r.status})`); }
     return body;
   }
-  function showTemp(u, pw) {
-    const box = $("temp-pw"); box.hidden = false;
-    box.innerHTML = `<b>${esc(u.display_name)}</b>（登录名 <span class="mono">${esc(u.username)}</span>）的初始密码：<code class="mono">${esc(pw)}</code><br><span class="muted">只显示这一次，请现在交给本人；首次登录必须修改。</span>`;
+  const say = t => { $("users-msg").textContent = t; };
+
+  // ------------------------------------------------ 初始密码：只显示这一次，可复制、可下载
+  function showTemp(rows, title) {
+    const box = $("temp-pw");
+    if (!rows.length) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = `<div class="um-temp-head"><b>${esc(title || "初始密码")}</b><span class="muted">只显示这一次，请现在交给本人；首次登录必须修改。</span><span class="spacer"></span>
+      <button type="button" id="tp-copy">复制</button><button type="button" id="tp-csv">下载 CSV</button><button type="button" id="tp-close">收起</button></div>
+      <table class="dense"><thead><tr><th>名字</th><th>登录名</th><th>角色</th><th>初始密码</th></tr></thead><tbody>${rows.map(r =>
+        `<tr><td>${esc(r.user.display_name)}</td><td class="mono">${esc(r.user.username)}</td><td>${ROLE[r.user.role] || r.user.role}</td><td><code class="mono">${esc(r.temp_password)}</code></td></tr>`).join("")}</tbody></table>`;
+    const lines = rows.map(r => [r.user.display_name, r.user.username, ROLE[r.user.role] || r.user.role, r.temp_password]);
+    $("tp-copy").onclick = async () => { try { await navigator.clipboard.writeText(lines.map(l => l.join("\t")).join("\n")); say("已复制"); } catch (_) { say("浏览器不让复制，请手动选中表格复制"); } };
+    $("tp-csv").onclick = () => {
+      const csv = "﻿名字,登录名,角色,初始密码\n" + lines.map(l => l.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const a = Object.assign(document.createElement("a"), {href: URL.createObjectURL(new Blob([csv], {type: "text/csv"})), download: `初始密码-${new Date().toISOString().slice(0, 10)}.csv`});
+      document.body.appendChild(a); a.click(); a.remove();
+    };
+    $("tp-close").onclick = () => { box.hidden = true; };
+    box.scrollIntoView({block: "nearest", behavior: "smooth"});
   }
-  async function load() {
+
+  // ------------------------------------------------ 登录方式
+  async function loadMode() {
     try {
-      const r = await call("/api/v1/auth/users");
-      $("users-rows").innerHTML = r.users.map(u => `<tr class="${u.is_active ? "" : "user-off"}"><td class="mono">${u.id}</td><td class="mono">${esc(u.username)}</td><td>${esc(u.display_name)}</td>
-        <td><select class="text role" data-id="${u.id}" ${u.id === ME.id ? "disabled" : ""}>${Object.entries(ROLE).map(([k, v]) => `<option value="${k}" ${k === u.role ? "selected" : ""}>${v}</option>`).join("")}</select></td>
-        <td>${u.is_active ? '<span class="pill ok">可用</span>' : '<span class="pill stub">停用</span>'}${u.must_change_password ? ' <span class="pill warn" title="拿着初始密码，还没改">待改密码</span>' : ""}</td>
-        <td class="mono muted">${esc((u.last_login_at || "—").replace("T", " "))}</td>
-        <td class="actions" style="flex-wrap:nowrap"><button data-act="reset" data-id="${u.id}">重置密码</button>${u.id === ME.id ? "" : `<button data-act="${u.is_active ? "off" : "on"}" data-id="${u.id}" class="${u.is_active ? "danger" : ""}">${u.is_active ? "停用" : "启用"}</button>`}</td></tr>`).join("");
-    } catch (e) { $("users-msg").textContent = e.message; }
+      MODE = await call("/api/v1/auth/login-mode");
+      const open = MODE.mode === "open";
+      $("um-mode-now").textContent = open ? "试用" : "正式";
+      $("um-mode-now").className = "pill " + (open ? "warn" : "ok");
+      $("um-mode-desc").textContent = open
+        ? `填名字就能进，第一次用的名字自动建成${ROLE[MODE.open_role] || "标注员"}；管理员和设了密码的账号仍要输密码。人都到齐、账号发好以后切到正式。`
+        : "必须用登录名和密码登录，不再自动建号。新人由管理员在下面建号、把初始密码交给本人。";
+      $("um-mode-switch").textContent = open ? "切到正式（必须密码）" : "切回试用";
+      $("um-mode-switch").className = open ? "primary" : "";
+      const warn = $("um-nopw");
+      warn.hidden = !MODE.n_without_password;
+      warn.innerHTML = MODE.n_without_password ? `有 <b>${MODE.n_without_password}</b> 个可用账号是试用时填名字自动建的，没有密码${open ? "；切到正式以后他们登录不了" : "，现在登录不了"}。
+        <button type="button" id="um-issue">给他们各发一个初始密码</button>` : "";
+      const b = $("um-issue");
+      if (b) b.onclick = async () => {
+        if (!confirm(`给 ${MODE.n_without_password} 个没有密码的账号各生成一个初始密码？生成后请逐个交给本人，他们首次登录要改。`)) return;
+        try { const r = await call("/api/v1/auth/users/issue-passwords", {method: "POST"}); showTemp(r.results, `已给 ${r.results.length} 人发初始密码`); } catch (e) { say(e.message); }
+        refresh();
+      };
+    } catch (e) { say(e.message); }
   }
+  $("um-mode-switch").addEventListener("click", async () => {
+    if (!MODE) return;
+    const to = MODE.mode === "open" ? "password" : "open";
+    const msg = to === "password"
+      ? (MODE.n_without_password ? `还有 ${MODE.n_without_password} 个账号没有密码，切过去后他们登录不了（已登录的不受影响）。确定切到正式？` : "切到正式：之后必须用登录名和密码登录。确定？")
+      : "切回试用：谁填个名字都能进来并自动建号。确定？";
+    if (!confirm(msg)) return;
+    try { await call("/api/v1/auth/login-mode", {method: "PUT", body: JSON.stringify({mode: to})}); say(to === "password" ? "已切到正式登录" : "已切回试用"); } catch (e) { say(e.message); }
+    refresh();
+  });
+
+  // ------------------------------------------------ 账号表
+  function state(u) {
+    const tags = [u.is_active ? '<span class="pill ok">可用</span>' : '<span class="pill stub">停用</span>'];
+    if (ONLINE[u.username]) tags.push(`<span class="pill on" title="${esc(ONLINE[u.username].where.map(w => `${w.block} · z ${w.z}`).join("\n"))}">在线 · z ${ONLINE[u.username].where[0].z}</span>`);
+    if (!u.has_password) tags.push('<span class="pill" title="试用模式下填名字自动建的，没有密码">试用 · 无密码</span>');
+    if (u.must_change_password) tags.push('<span class="pill warn" title="拿着初始密码，还没改">待改密码</span>');
+    if (u.n_sessions) tags.push(`<span class="muted" style="font-size:11px">${u.n_sessions} 处登录</span>`);
+    return tags.join(" ");
+  }
+  function render() {
+    const q = $("um-q").value.trim().toLowerCase(), role = $("um-role").value, st = $("um-state").value;
+    const rows = USERS.filter(u => (!q || u.username.includes(q) || (u.display_name || "").toLowerCase().includes(q))
+      && (!role || u.role === role)
+      && (!st || (st === "on" && u.is_active) || (st === "off" && !u.is_active) || (st === "online" && ONLINE[u.username])
+          || (st === "nopw" && !u.has_password) || (st === "must" && u.must_change_password)));
+    $("um-count").textContent = rows.length === USERS.length ? USERS.length : `${rows.length} / ${USERS.length}`;
+    $("users-rows").innerHTML = rows.map(u => {
+      const a = ACT[u.id] || ACT["u:" + u.username];
+      return `<tr class="${u.is_active ? "" : "user-off"}" data-id="${u.id}">
+        <td><b>${esc(u.display_name)}</b>${u.id === ME.id ? ' <span class="muted">（你）</span>' : ""}<div class="mono muted" style="font-size:11px">${esc(u.username)} · #${u.id}</div></td>
+        <td><select class="text role" data-id="${u.id}" ${u.id === ME.id ? "disabled" : ""} style="width:auto">${Object.entries(ROLE).map(([k, v]) => `<option value="${k}" ${k === u.role ? "selected" : ""}>${v}</option>`).join("")}</select></td>
+        <td>${state(u)}</td>
+        <td class="num mono">${a ? `${a.n} 笔<div class="muted" style="font-size:11px">${px(a.n_px)} 像素 · ${a.blocks.length} 块</div>` : '<span class="muted">—</span>'}</td>
+        <td class="mono muted" style="font-size:12px">${a && a.last ? `${when(a.last)}<div style="font-size:11px">${ago(a.last)}</div>` : "—"}</td>
+        <td class="mono muted" style="font-size:12px">${when(u.last_login_at)}</td>
+        <td><div class="actions um-acts"><button data-act="rename">改名</button><button data-act="reset">重置密码</button>${u.n_sessions && u.id !== ME.id ? '<button data-act="kick">强制下线</button>' : ""}${u.id === ME.id ? "" : `<button data-act="${u.is_active ? "off" : "on"}" class="${u.is_active ? "danger" : ""}">${u.is_active ? "停用" : "启用"}</button>`}<button data-act="log">记录</button></div></td></tr>`;
+    }).join("") || '<tr><td colspan="7" class="muted">没有符合条件的账号</td></tr>';
+  }
+  async function loadUsers() {
+    try {
+      const [r, act, ov] = await Promise.all([call("/api/v1/auth/users"), call("/api/v1/admin/activity").catch(() => ({people: []})), call("/api/v1/admin/overview").catch(() => ({online: []}))]);
+      USERS = r.users;
+      ACT = {};
+      for (const p of act.people) { if (p.by_id != null) ACT[p.by_id] = p; else if (p.by_user) ACT["u:" + p.by_user] = p; }
+      ONLINE = {};
+      for (const o of ov.online || []) if (o.user) ONLINE[o.user] = o;
+      render();
+    } catch (e) { say(e.message); }
+  }
+  ["um-q", "um-role", "um-state"].forEach(id => $(id).addEventListener("input", render));
+
   $("new-user").addEventListener("submit", async ev => {
     ev.preventDefault();
     const f = ev.target, body = {username: f.username.value.trim(), display_name: f.display_name.value.trim() || null, role: f.role.value, password: f.password.value || null};
     try {
       const r = await call("/api/v1/auth/users", {method: "POST", body: JSON.stringify(body)});
-      $("users-msg").textContent = `已创建 ${r.user.display_name}`;
-      if (r.temp_password) showTemp(r.user, r.temp_password); else $("temp-pw").hidden = true;
-      f.reset(); load();
-    } catch (e) { $("users-msg").textContent = e.message; }
+      say(`已创建 ${r.user.display_name}（登录名 ${r.user.username}）`);
+      showTemp(r.temp_password ? [r] : [], "初始密码");
+      f.reset(); refresh();
+    } catch (e) { say(e.message); }
+  });
+  $("bulk-user").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const f = ev.target;
+    try {
+      const r = await call("/api/v1/auth/users/bulk", {method: "POST", body: JSON.stringify({text: f.text.value, role: f.role.value})});
+      const bad = r.results.filter(x => !x.ok);
+      showTemp(r.results.filter(x => x.ok), `已创建 ${r.n_ok} 个账号`);
+      say(bad.length ? `有 ${bad.length} 行没建成：` + bad.map(b => `第 ${b.line} 行「${b.input}」${b.error}`).join("；") : `已创建 ${r.n_ok} 个账号`);
+      f.text.value = bad.map(b => b.input).join("\n");
+      refresh();
+    } catch (e) { say(e.message); }
   });
   $("users-rows").addEventListener("change", async ev => {
     const sel = ev.target.closest("select.role"); if (!sel) return;
-    try { await call(`/api/v1/auth/users/${sel.dataset.id}`, {method: "PATCH", body: JSON.stringify({role: sel.value})}); $("users-msg").textContent = "角色已更新"; }
-    catch (e) { $("users-msg").textContent = e.message; } finally { load(); }
+    const u = USERS.find(x => x.id === +sel.dataset.id);
+    if (sel.value === "admin" && !confirm(`把 ${u.display_name} 设成管理员？管理员能管所有账号。${u.has_password ? "" : "\n他现在没有密码，会自动发一个初始密码。"}`)) { sel.value = u.role; return; }
+    try { const r = await call(`/api/v1/auth/users/${sel.dataset.id}`, {method: "PATCH", body: JSON.stringify({role: sel.value})}); say(`${u.display_name} 现在是${ROLE[sel.value]}`); if (r.temp_password) showTemp([r], "管理员必须有密码：初始密码"); }
+    catch (e) { say(e.message); } finally { refresh(); }
   });
   $("users-rows").addEventListener("click", async ev => {
     const b = ev.target.closest("button[data-act]"); if (!b) return;
-    const id = b.dataset.id, row = b.closest("tr"), name = row.children[2].textContent;
+    const id = +b.closest("tr").dataset.id, u = USERS.find(x => x.id === id), name = u.display_name;
     try {
-      if (b.dataset.act === "reset") { if (!confirm(`给 ${name} 发一个新的初始密码？现有登录会全部退出。`)) return; const r = await call(`/api/v1/auth/users/${id}/reset-password`, {method: "POST"}); showTemp(r.user, r.temp_password); }
-      else { const on = b.dataset.act === "on"; if (!on && !confirm(`停用 ${name}？立刻退出其所有登录，历史记录保留。`)) return; await call(`/api/v1/auth/users/${id}`, {method: "PATCH", body: JSON.stringify({is_active: on})}); $("users-msg").textContent = on ? `已启用 ${name}` : `已停用 ${name}`; }
-    } catch (e) { $("users-msg").textContent = e.message; } finally { load(); }
+      if (b.dataset.act === "rename") {
+        const v = prompt(`「${name}」的显示名（改动记录里写的名字；以后的记录用新名字，旧记录不变）`, name);
+        if (v == null || !v.trim() || v.trim() === name) return;
+        await call(`/api/v1/auth/users/${id}`, {method: "PATCH", body: JSON.stringify({display_name: v.trim()})}); say(`已改名为 ${v.trim()}`);
+      } else if (b.dataset.act === "reset") {
+        if (!confirm(`给 ${name} 发一个新的初始密码？他现有的登录会全部退出。`)) return;
+        const r = await call(`/api/v1/auth/users/${id}/reset-password`, {method: "POST"}); showTemp([r], "新的初始密码");
+      } else if (b.dataset.act === "kick") {
+        if (!confirm(`让 ${name} 立刻下线？账号不受影响，重新登录就行。`)) return;
+        const r = await call(`/api/v1/auth/users/${id}/revoke-sessions`, {method: "POST"}); say(`${name} 的 ${r.n_revoked} 个登录已作废`);
+      } else if (b.dataset.act === "log") {
+        evUser = u; loadEvents(); $("ev-rows").scrollIntoView({block: "center", behavior: "smooth"}); return;
+      } else {
+        const on = b.dataset.act === "on";
+        if (!on && !confirm(`停用 ${name}？立刻退出其所有登录，历史记录保留。`)) return;
+        await call(`/api/v1/auth/users/${id}`, {method: "PATCH", body: JSON.stringify({is_active: on})}); say(on ? `已启用 ${name}` : `已停用 ${name}`);
+      }
+    } catch (e) { say(e.message); }
+    refresh();
   });
-  load();
+
+  // ------------------------------------------------ 账号操作记录
+  async function loadEvents() {
+    const qs = new URLSearchParams({limit: "200"});
+    if (evUser) qs.set("user_id", evUser.id);
+    if ($("ev-action").value) qs.set("action", $("ev-action").value);
+    try {
+      const r = await call("/api/v1/auth/events?" + qs);
+      const sel = $("ev-action");
+      if (sel.options.length === 1) for (const [k, v] of Object.entries(r.actions)) sel.add(new Option(v, k));
+      const who = $("ev-who");
+      who.hidden = !evUser;
+      if (evUser) { who.innerHTML = `只看 ${esc(evUser.display_name)} <a href="#" id="ev-clear">×</a>`; $("ev-clear").onclick = e => { e.preventDefault(); evUser = null; loadEvents(); }; }
+      $("ev-rows").innerHTML = r.events.map(e => `<tr class="${e.action === "login_failed" ? "um-bad" : ""}"><td class="mono" style="white-space:nowrap">${when(e.ts)}</td><td>${esc(e.action_name)}</td><td>${esc(e.actor || "—")}</td><td>${esc(e.target || "—")}</td><td style="font-size:12px">${esc(e.detail)}</td><td class="mono muted" style="font-size:11px">${esc(e.ip)}</td></tr>`).join("")
+        || '<tr><td colspan="6" class="muted">还没有记录</td></tr>';
+    } catch (e) { $("ev-rows").innerHTML = `<tr><td colspan="6" class="muted">${esc(e.message)}</td></tr>`; }
+  }
+  $("ev-action").addEventListener("change", loadEvents);
+
+  function refresh() { loadMode(); loadUsers(); loadEvents(); }
+  refresh();
+  setInterval(() => { if (!document.hidden) loadUsers(); }, 30000);
 })();
 </script>
 {% endblock %}

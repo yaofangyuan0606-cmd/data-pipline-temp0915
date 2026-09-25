@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 
 from emqc import auth
 from emqc.db import init_db, session_scope
-from emqc.db.models import AuthSession, User
+from emqc.db.models import AccountEvent, AppSetting, AuthSession, User
 from test_who import make_block
 
 PW = "correct-horse-8"
@@ -23,6 +23,8 @@ def auth_on(monkeypatch):
     with session_scope() as s:
         s.execute(delete(AuthSession))
         s.execute(delete(User))
+        s.execute(delete(AccountEvent))
+        s.execute(delete(AppSetting))
     auth._FAILS.clear()
     yield
     auth._FAILS.clear()
@@ -263,19 +265,28 @@ def test_open_mode_lets_anyone_in_by_name(block_api, monkeypatch):
 
     app, b, url = block_api
     monkeypatch.setattr(settings, "auth_open", True)
-    make_user("zhang", display="张三", role="annotator")
+    make_user("zhang", display="张三", role="annotator")          # 管理员建的号：有真正的密码
+    make_user("boss", role="admin")
     with TestClient(app) as c, TestClient(app) as d:
         assert c.get("/api/v1/auth/status").json()["auth_open"] is True
-        r = login(c, "zhang", "totally-wrong")
-        assert r.status_code == 200 and r.json()["user"]["username"] == "zhang", "现有账号：密码不看"
         r = login(d, "李四", "")
         assert r.status_code == 200
         u = r.json()["user"]
-        assert u["display_name"] == "李四" and u["username"].startswith("u-") and u["role"] == "reviewer" and u["must_change_password"] is False, "中文名当显示名，登录名用哈希，自动建成审核员"
+        assert u["display_name"] == "李四" and u["username"].startswith("u-") and u["role"] == "annotator" and u["must_change_password"] is False, \
+            "中文名当显示名，登录名用哈希，自动建成标注员"
+        assert u["has_password"] is False
         with TestClient(app) as e:
-            assert login(e, "李四", "another").json()["user"]["id"] == u["id"], "同一个名字永远对上同一个账号"
+            assert login(e, "李四", "anything").json()["user"]["id"] == u["id"], "试用账号：同一个名字永远对上同一个账号，密码不看"
         assert paint(d, url, 0, 1, "7").json()["edit"]["by"] == "李四", "改动照样记在名字下"
         assert d.get("/annotate", follow_redirects=False).status_code == 200
+        # 有密码的账号和管理员：试用模式下也要密码，不然谁填 boss 都能当管理员
+        r = login(c, "boss", "")
+        assert r.status_code == 401 and detail(r)["code"] == "need_password"
+        assert login(c, "boss", "totally-wrong").status_code == 401
+        assert login(c, "zhang", "totally-wrong").status_code == 401
+        r = login(c, "张三", "")
+        assert r.status_code == 401 and detail(r)["code"] == "need_password", "填显示名也对上 zhang，同样要密码"
+        assert login(c, "张三", PW).json()["user"]["username"] == "zhang"
         with TestClient(app) as e:
             assert login(e, "   ", "x").status_code == 401
         with session_scope() as s:
@@ -286,3 +297,60 @@ def test_open_mode_lets_anyone_in_by_name(block_api, monkeypatch):
     with TestClient(app) as c:
         assert login(c, "zhang", "totally-wrong").status_code == 401, "关掉试用模式立刻恢复校验"
         assert login(c, "zhang", "").status_code == 401
+        assert login(c, "张三", PW).status_code == 200, "正式模式下中文显示名也能当登录名"
+
+
+def test_admin_account_module(app, monkeypatch):
+    """管理员：批量建号、改名改角色、试用账号升管理员自动发密码、强制下线、切换登录方式、给没密码的人发密码、操作记录。"""
+    from emqc.config import settings
+
+    monkeypatch.setattr(settings, "auth_open", True)
+    make_user("boss", role="admin")
+    with TestClient(app) as admin, TestClient(app) as wang:
+        assert login(admin, "boss").status_code == 200
+        assert login(wang, "王五", "").status_code == 200                  # 试用账号
+        r = admin.post("/api/v1/auth/users/bulk", json={"text": "zhao, 赵六\n钱七,,审核员\nbad name!\n# 注释\nzhao\nsun,孙八,老板"})
+        assert r.status_code == 200, r.text
+        res = r.json()["results"]
+        assert [x["ok"] for x in res] == [True, True, False, False, False]
+        assert res[0]["user"]["username"] == "zhao" and res[0]["user"]["display_name"] == "赵六" and res[0]["user"]["role"] == "annotator"
+        assert res[1]["user"]["username"].startswith("u-") and res[1]["user"]["role"] == "reviewer" and len(res[1]["temp_password"]) >= 12
+        assert "已存在" in res[3]["error"] and "角色" in res[4]["error"]
+        with TestClient(app) as z:
+            r = login(z, "zhao", "")
+            assert r.status_code == 401 and detail(r)["code"] == "need_password", "管理员发了密码的账号要密码"
+            assert login(z, "zhao", res[0]["temp_password"]).json()["user"]["must_change_password"] is True
+        users = {u["display_name"]: u for u in admin.get("/api/v1/auth/users").json()["users"]}
+        assert users["王五"]["has_password"] is False and users["王五"]["n_sessions"] == 1
+        wid = users["王五"]["id"]
+        r = admin.patch(f"/api/v1/auth/users/{wid}", json={"display_name": "王五（外包）", "role": "admin"})
+        assert r.status_code == 200 and r.json()["temp_password"], "试用账号升管理员：顺手发初始密码"
+        assert r.json()["user"]["has_password"] is True and r.json()["user"]["must_change_password"] is True
+        assert wang.get("/api/v1/auth/me").status_code == 401, "发密码时其他登录作废"
+        r = admin.post(f"/api/v1/auth/users/{wid}/revoke-sessions")
+        assert r.status_code == 200
+        # 登录方式：运行中切换，优先于环境变量
+        lm = admin.get("/api/v1/auth/login-mode").json()
+        assert lm["mode"] == "open" and lm["n_without_password"] == 0
+        with TestClient(app) as x:
+            assert login(x, "新来的", "").status_code == 200
+        assert admin.get("/api/v1/auth/login-mode").json()["n_without_password"] == 1
+        issued = admin.post("/api/v1/auth/users/issue-passwords").json()["results"]
+        assert [i["user"]["display_name"] for i in issued] == ["新来的"] and issued[0]["temp_password"]
+        assert admin.put("/api/v1/auth/login-mode", json={"mode": "password"}).json()["mode"] == "password"
+        assert admin.get("/api/v1/auth/status").json()["auth_open"] is False
+        with TestClient(app) as x:
+            assert login(x, "陌生人", "").status_code == 401, "正式模式：不再自动建号"
+            assert login(x, "新来的", issued[0]["temp_password"]).status_code == 200
+        with TestClient(app) as x:
+            assert login(x, "zhao", "").status_code == 401
+            assert x.put("/api/v1/auth/login-mode", json={"mode": "open"}).status_code == 401
+        ev = admin.get("/api/v1/auth/events?limit=500").json()["events"]
+        acts = [e["action"] for e in ev]
+        for a in ("login", "login_failed", "create", "update", "reset_password", "revoke", "login_mode"):
+            assert a in acts, a
+        up = next(e for e in ev if e["action"] == "update")
+        assert "王五（外包）" in up["detail"] and "管理员" in up["detail"] and up["actor"] == "boss"
+        assert all("temp" not in (e["detail"] or "") for e in ev)
+        mine = admin.get(f"/api/v1/auth/events?user_id={wid}").json()["events"]
+        assert mine and all(wid in (e["actor_id"], e["target_id"]) for e in mine)
