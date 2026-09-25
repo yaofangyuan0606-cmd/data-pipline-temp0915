@@ -458,7 +458,7 @@
     try {
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/refine-edge`, editBody(z, { z, x, y, sensitivity }));
       await afterEdit(r, z);
-      flash(r.edit ? `已收回 ${r.edit.n_px.toLocaleString("zh-CN")} 像素到膜为止，Ctrl/⌘+Z 可撤销` : "这块的边缘已经贴着膜，不用修");
+      flash(r.edit ? `已收回膜外的 ${r.edit.n_px.toLocaleString("zh-CN")} 像素（停在膜的外侧），Ctrl/⌘+Z 可撤销` : "这块没有越过膜，不用修");
     } catch (err) { if (await stale(err, z)) return; flash("修缮失败：" + err.message, true); }
     finally { mergeBusy(false); }
   }

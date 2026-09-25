@@ -493,7 +493,7 @@ def paint(block_id: str, body: PaintIn, user=Depends(require_user)):
 
 @router.post("/blocks/{block_id}/refine-edge")
 def refine_edge(block_id: str, body: RefineIn, user=Depends(require_user)):
-    """修缮边缘：点到的标签块若压过了黑色的膜，往里收到膜为止（只收缩，收掉的像素清成背景，可撤销）。"""
+    """修缮边缘：点到的标签块若越过了黑色的膜，把膜外的部分收回，停在膜的外侧（只收缩，收掉的像素清成背景，可撤销）。"""
     b = _block(block_id)
     Z, H, W = b.shape_zyx
     if not (0 <= body.z < Z and 0 <= body.x < W and 0 <= body.y < H):
