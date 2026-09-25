@@ -354,3 +354,48 @@ def test_admin_account_module(app, monkeypatch):
         assert all("temp" not in (e["detail"] or "") for e in ev)
         mine = admin.get(f"/api/v1/auth/events?user_id={wid}").json()["events"]
         assert mine and all(wid in (e["actor_id"], e["target_id"]) for e in mine)
+
+
+def test_session_renewal_is_best_effort(app, monkeypatch):
+    """滑动续期是单独一条带条件的 UPDATE；写不成（MariaDB 并发时会报"记录在读之后被改过"）也不让请求失败。"""
+    from contextlib import contextmanager
+    from datetime import datetime, timedelta, timezone
+
+    import emqc.db.base as base
+
+    make_user("zhang")
+    old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=3)
+
+    def age_sessions():
+        with session_scope() as s:
+            for sess in s.scalars(select(AuthSession)):
+                sess.last_seen_at = old
+
+    with TestClient(app) as c:
+        assert login(c, "zhang").status_code == 200
+        age_sessions()
+        assert c.get("/api/v1/auth/me").status_code == 200
+        with session_scope() as s:
+            assert all(x.last_seen_at > old + timedelta(hours=2) for x in s.scalars(select(AuthSession))), "续上了"
+        age_sessions()
+        real, calls = base.session_scope, []
+
+        @contextmanager
+        def flaky():
+            calls.append(1)
+            raise RuntimeError("(1020, 'Record has changed since last read in table auth_sessions')")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(auth, "renew_session", auth.renew_session)
+        orig_renew = auth.renew_session
+
+        def renew_with_broken_db(sid, now):
+            monkeypatch.setattr(base, "session_scope", flaky)
+            try:
+                orig_renew(sid, now)
+            finally:
+                monkeypatch.setattr(base, "session_scope", real)
+
+        monkeypatch.setattr(auth, "renew_session", renew_with_broken_db)
+        assert c.get("/api/v1/auth/me").status_code == 200, "续期写不成，请求照样成功"
+        assert calls == [1]

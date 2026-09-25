@@ -248,9 +248,25 @@ def resolve_session(s: Session, raw: str | None) -> User | None:
     if user is None or not user.is_active:
         return None
     if now - sess.last_seen_at > timedelta(hours=1):
-        sess.last_seen_at = now
-        sess.expires_at = now + timedelta(days=settings.session_days)
+        renew_session(sess.id, now)
     return user
+
+
+def renew_session(session_id: int, now: datetime) -> None:
+    """滑动续期，单独一个小事务、一条带条件的 UPDATE：同一个人的几个请求同时到时只有一个真的写，其余什么都不做。
+    续期失败（比如 MariaDB 报"记录在读之后被改过"）只记一笔，绝不让这个请求失败——会话本身还有效。"""
+    from sqlalchemy import update
+
+    from emqc.db.base import session_scope
+
+    try:
+        with session_scope() as w:
+            w.execute(update(AuthSession).where(AuthSession.id == session_id, AuthSession.last_seen_at < now - timedelta(hours=1))
+                      .values(last_seen_at=now, expires_at=now + timedelta(days=settings.session_days)))
+    except Exception as e:  # noqa: BLE001 - best effort by design
+        import logging
+
+        logging.getLogger("emqc.auth").info("会话续期没写成（不影响这次请求）：%s", str(e).splitlines()[0][:200])
 
 
 def revoke_session(s: Session, raw: str | None) -> None:

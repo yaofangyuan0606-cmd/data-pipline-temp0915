@@ -37,12 +37,12 @@ async def _request_log(request: Request, call_next):
                                 status_code=500)
     ms = (time.perf_counter() - t0) * 1000
     try:
-        user = getattr(request.state, "user", None)
-        who = (user.username if user is not None else None)
         if response.status_code >= 500:
             log.warning("%s %s 返回 %s（%.0f ms）", request.method, request.url.path, response.status_code, ms)
-        logs.access(request.method, request.url.path, request.url.query, response.status_code, ms, who,
-                    auth.client_ip(request), rid)
+        logs.access(request.method, request.url.path, request.url.query, response.status_code, ms,
+                    getattr(request.state, "username", None), auth.client_ip(request), rid)
+    except Exception:  # 记日志本身出错也不能把请求搞挂
+        log.exception("请求日志没写成")
     finally:
         logs.request_id.reset(token)
     response.headers["X-Request-Id"] = rid

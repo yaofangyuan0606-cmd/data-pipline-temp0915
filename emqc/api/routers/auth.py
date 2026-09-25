@@ -39,6 +39,7 @@ def current_user(request: Request) -> User | None:
     if token:
         with session_scope() as s:
             request.state.user = auth.resolve_session(s, token)
+            request.state.username = request.state.user.username if request.state.user is not None else None   # 给请求日志用，不再碰 ORM 对象
     return request.state.user
 
 
