@@ -33,7 +33,7 @@ def test_dashboard_pages_fit_with_populated_tables(client, registered, qc_run, t
 
     urls = ["/", "/pipeline", "/runs", f"/runs/{qc_run}", f"/datasets/{registered}",
             f"/datasets/{registered}/blocks/z00000-00019", "/checks", "/traces", "/delivery",
-            "/patches", "/crawl", "/annotate/blocks", "/annotate/guide"]
+            "/patches", "/crawl", "/annotate/guide"]
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True, args=["--no-sandbox", "--no-proxy-server"],
                                      env=dict(os.environ, TMPDIR=str(tmp_path)))

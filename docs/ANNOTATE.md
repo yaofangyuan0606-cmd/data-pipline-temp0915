@@ -2,7 +2,7 @@
 
 需要用 SAM 圈选并补充标签时，请看 [SAM 切片补标使用指南](SAM_USER_GUIDE.md)。
 
-页面：独立的「切片标注」工作区（侧栏顶部与「数据清洗」切换）——`/annotate` 标注工作台（全宽，按 `?` 看快捷键）、`/annotate/compare` 前后对比与溯源、`/annotate/blocks` 数据块列表（形状、分割、改动数、数据目录与工作目录）、`/annotate/guide` 使用说明。数据源由 `EMQC_ANNOTATE_ROOT` 指定（可用 `EMQC_ANNOTATE_EXTRA_ROOTS` 以分号追加更多根目录），
+页面：独立的「切片标注」工作区（侧栏顶部与「数据清洗」切换）——`/annotate` 标注工作台（全宽，按 `?` 看快捷键）、`/annotate/compare` 前后对比与溯源、`/annotate/guide` 使用说明。数据源由 `EMQC_ANNOTATE_ROOT` 指定（可用 `EMQC_ANNOTATE_EXTRA_ROOTS` 以分号追加更多根目录），
 该目录下每个含 `em.npy` 的子目录是一个数据块，H01 交付的 `blocks/h01/<block>/` 布局直接可用。
 
 **数据目录是只读的。** 页面写出的一切——`seg_edit.npy` 工作副本、`edits/` 逐次记录、`edits.jsonl` 摘要、`created_labels.json` 新建标签——都放在

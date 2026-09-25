@@ -334,7 +334,7 @@ def test_fractional_edit_coordinates_are_rejected(block):
     assert data["warnings"] and data["sources"]["manual"]["pixels"] == 0
 
 
-def test_block_list_page_handles_unreadable_history(block, monkeypatch):
+def test_block_list_handles_unreadable_history(block, monkeypatch):
     from fastapi.testclient import TestClient
     from emqc.api.app import app
     from emqc.api.routers import annotate
@@ -345,11 +345,11 @@ def test_block_list_page_handles_unreadable_history(block, monkeypatch):
     store._blocks[block.id] = block
     monkeypatch.setattr(annotate, "get_store", lambda **kwargs: store)
     with TestClient(app) as client:
-        response = client.get("/annotate/blocks")
+        response = client.get("/api/v1/annotate/blocks")
         assert response.status_code == 200
-        assert "1 个块的记录异常，未计入" in response.text
-        assert "查看对比" in response.text and "记录异常" in response.text
-        assert (block.work / "edits.jsonl").read_text() == '{"n":1,'
+        row = next(b for b in response.json()["blocks"] if b["block_id"] == block.id)
+        assert row["history_error"] and row["n_edits"] is None, "a corrupt history is reported, not counted"
+        assert (block.work / "edits.jsonl").read_text() == '{"n":1,', "reading the list never rewrites the history"
 
 
 def test_slice_undo_trims_per_voxel_labels_in_legacy_block_record(block):

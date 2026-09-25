@@ -15,7 +15,7 @@ Tailscale 挂载目录 (EMQC_DATA_ROOT)
           │                       └──────────────────────────────────────────────────┘
           ▼
   FastAPI  ─ 数据清洗工作区：控制台 (/pipeline) ─ 看板 (/)  ─ REST (/api/v1/…)  ─ 算法侧实时切块 (/api/v1/data/…, 写 serve_log)
-           ─ 切片标注工作区：工作台 (/annotate) ─ 数据块 (/annotate/blocks) ─ 说明 (/annotate/guide)，见 docs/ANNOTATE.md
+           ─ 切片标注工作区：工作台 (/annotate) ─ 前后对比 (/annotate/compare) ─ 说明 (/annotate/guide)，见 docs/ANNOTATE.md
 ```
 
 - **不重切不落盘**：QC 只保存缩略图和数字；算法要数据时按坐标从源卷即时读取。

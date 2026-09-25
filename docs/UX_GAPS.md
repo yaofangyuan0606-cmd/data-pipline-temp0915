@@ -535,9 +535,9 @@
 
 **61. 任务与审核闭环：指派、提交→审核→驳回/通过、验收后锁定并冻结快照、我的待办与通知**（工作量：大，最小版为中）
 - 现在的体验：
-  - 数据块页没有指派人和状态列（`annotate_blocks.html:19`）；`Block.status` 是 QC 流水线的状态（`models.py:160`）。
+  - 没有按数据块的指派人和状态（原「数据块」列表页已于 2026-09-25 删除）；`Block.status` 是 QC 流水线的状态（`models.py:160`）。
   - 写接口里没有 submit/accept（`annotate.py:494-643`）。
-  - 下游直接读一直在变的 `seg_edit.npy`（`annotate_blocks.html:44`）；`gt_annotation` 资产类型和 `Block.label_version` 都没有被写入（`models.py:85,155`）。
+  - 下游直接读一直在变的 `seg_edit.npy`；`gt_annotation` 资产类型和 `Block.label_version` 都没有被写入（`models.py:85,155`）。
 - 参考工具：CVAT 的 Job 有 Stage、State、Assignee；webKnossos 的 Task；CAVE 按时间点 materialize 出带版本号的快照。
 - 建议改法：
   - 新建 `annot_tasks` 表（z 段、assignee、reviewer、state、round）。
