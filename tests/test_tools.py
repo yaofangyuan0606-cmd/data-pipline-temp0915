@@ -553,3 +553,30 @@ def test_refine_edge_api(client_tools):
     assert r.status_code in (200, 422), r.text
     r = c.post(url + "/paint", json={"z": 0, "points": [[10, 10]], "radius": 1, "new_id": "0", "only_id": "0"})
     assert r.status_code == 422, "只擦背景没有意义"
+
+
+def test_refine_edge_keeps_dark_organelles_inside_the_cell(tmp_path):
+    """细胞里的暗色细胞器（深色膜 + 浅色内部，像线粒体）属于细胞内部，修缮时一个像素都不能动；只收跨过膜溢出去的部分。"""
+    from emqc.annotate.boundary import pull_back_to_membrane
+
+    em, left, right = two_cells()
+    em = em.copy()
+    em[34:48, 8:24] = 18                               # an organelle: 2-px dark membrane ...
+    em[36:46, 10:22] = 200                             # ... around a light interior
+    em[6:16, 30:42] = 18                               # a second one touching nothing but cytoplasm
+    em[8:14, 32:40] = 200
+    seg = np.zeros(em.shape, np.uint64)
+    seg[2:-2, 2:57] = 7                                # the left cell, spilling across the wall at x 48-49 into the right cell
+    inside = left.copy()
+    region = pull_back_to_membrane(seg == 7, em, 4, 4, 0.5)
+    assert region[36:46, 10:22].all() and region[34:48, 8:24].all(), "环状细胞器（含浅色内部）整个留下"
+    assert region[8:14, 32:40].all() and region[6:16, 30:42].all()
+    assert not region[10:50, 51:57].any(), "跨过膜溢到右边细胞的部分收掉"
+    assert (region & inside).sum() / inside.sum() > 0.98, "细胞本体基本原样"
+    b = _cells_block(tmp_path, seg)
+    np.save(b.path / "em.npy", np.repeat(em.T[:, :, None], 2, axis=2))
+    b = Block(b.path, tmp_path / "work")
+    rec = b.refine_edge(0, 4, 4)
+    plane = b.seg_slice(0)
+    assert rec is not None and (plane[36:46, 10:22] == 7).all() and (plane[8:14, 32:40] == 7).all()
+    assert (plane[10:50, 51:57] == 0).all()

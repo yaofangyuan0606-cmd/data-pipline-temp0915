@@ -84,3 +84,52 @@ def refine_mask(mask: np.ndarray, em: np.ndarray, points=(), labels=(), sensitiv
     filled = ndimage.binary_fill_holes(region)
     region |= filled & (b | mask)
     return assign_membrane(region, b, np.ones_like(b), reach)
+
+
+def pull_back_to_membrane(mask: np.ndarray, em: np.ndarray, x: int, y: int, sensitivity: float = 0.5,
+                          depth: int = 10, bright_share: float = 0.5) -> np.ndarray:
+    """修缮边缘：一块标签（`mask`）跨过黑膜溢到邻居身上时，把溢出去的那一层收回来。只动最外层，细胞里面的一律不管。
+
+    1. 「膜」只认明显比周围暗的线（比局部暗 `thr` 个标准差以上，1 像素的断口先补上）。膜把标签分成若干片。
+    2. 细胞本体 = 点击处那一片，加上所有离标签外沿超过 `depth` 像素的片——也就是说，只有贴着外沿、
+       不到 `depth` 厚的薄片才可能被收；细胞里面的东西（线粒体等暗色细胞器、被它们隔开的胞质）永远是本体。
+    3. 膜上的像素归离它最近的那一片。每个贴边的薄片（连同归它的膜），看它和标签外面接触的地方：
+       大多是亮的胞质（超过 `bright_share`）→ 标签是从邻居的胞质里切出来的，跨过膜溢出去了，收掉；
+       大多是暗的膜 → 它和外面之间隔着细胞膜，是细胞自己的，留下。
+    4. 被留下部分完全围住的洞补回来。
+
+    `sensitivity` 0–1：越高，越浅的暗线也算膜，收得越积极。只收缩、从不扩张；返回留下的部分（`mask` 的子集）。"""
+    mask = np.asarray(mask, bool)
+    if not mask.any():
+        return np.zeros_like(mask)
+    score = membraneness(em)
+    thr = 2.0 - 1.2 * float(np.clip(sensitivity, 0.0, 1.0))      # 0 → 2.0σ（只认很黑的膜），0.5 → 1.4σ，1 → 0.8σ
+    barrier = ndimage.binary_closing(score > thr, structure=np.ones((3, 3), bool)) & mask
+    pieces, n = ndimage.label(mask & ~barrier)
+    if n == 0:
+        return mask.copy()                                  # 整块都在膜上：没有"里面"可言，不动
+    inside = ndimage.distance_transform_edt(mask)           # 到标签外沿的距离
+    deep = np.zeros(n + 1, bool)
+    deep[np.unique(pieces[inside > depth])] = True
+    deep[0] = False
+    if 0 <= y < pieces.shape[0] and 0 <= x < pieces.shape[1] and pieces[y, x]:
+        deep[pieces[y, x]] = True                           # 点击的那一片总是本体
+    if not deep[1:].any():                                  # 细得没有"深处"的标签：取最大的那一片当本体
+        sizes = np.bincount(pieces.ravel()); sizes[0] = 0
+        deep[int(sizes.argmax())] = True
+    _, (iy, ix) = ndimage.distance_transform_edt(pieces == 0, return_indices=True)
+    owner = np.where(mask, pieces[iy, ix], 0)               # 膜上的像素归离它最近的那一片
+    region = mask & deep[owner]
+    outside = ~mask
+    dark = score > thr
+    for k, sl in enumerate(ndimage.find_objects(owner), start=1):
+        if sl is None or deep[k]:
+            continue
+        sl = tuple(slice(max(0, s.start - 1), s.stop + 1) for s in sl)
+        piece = owner[sl] == k
+        ring = ndimage.binary_dilation(piece, structure=np.ones((3, 3), bool)) & ~piece
+        touch = ring & outside[sl]
+        n_out = int(touch.sum())
+        if n_out == 0 or (touch & ~dark[sl]).sum() / n_out < bright_share:
+            region[sl] |= piece                             # 隔着细胞膜或被包在里面：细胞自己的，留下
+    return ndimage.binary_fill_holes(region) & mask

@@ -369,6 +369,7 @@
   function idAt(x, y) { const e = S.cache.get(S.z); if (!e || !e.idx || !inside(x, y)) return null; return e.ids[e.idx[y * S.W + x]]; }
 
   function status() {
+    if (S.radiusDrag) return;
     const nz = S.info ? S.info.shape_zyx[0] : 0;
     let s = `z ${S.z} / ${nz - 1}`;
     if (S.hoverXY) { const [x, y] = S.hoverXY; const id = idAt(x, y); s += ` · x ${x} y ${y}` + (id != null ? ` · id ${id}` : ""); }
@@ -419,9 +420,17 @@
     render(); status(); segList(); prefetch(); await history;
   }
   let wheelAcc = 0;
+  let radiusAcc = 0;
   function onWheel(ev, p) {
     ev.preventDefault();
     if (ev.ctrlKey || ev.metaKey) { const r = p.stage.getBoundingClientRect(); zoomAt(Math.exp(-ev.deltaY * 0.002), ev.clientX - r.left, ev.clientY - r.top); return; }
+    // Alt + 滚轮（触控板上是 Alt + 两指上下滑）：画笔 / 橡皮下改半径，向上变大。MacBook 触控板在按住普通键（如 Tab）时
+    // 会忽略移动，修饰键不受影响，所以这是触控板上最顺手的调法
+    if (ev.altKey && (S.tool === "brush" || S.tool === "erase")) {
+      radiusAcc += -(ev.deltaY || ev.deltaX); const step = ev.deltaMode === 1 ? 1 : 25;
+      if (Math.abs(radiusAcc) >= step) { const n = Math.trunc(radiusAcc / step); radiusAcc -= n * step; setBrush(S.brush + n); flashRadius(); }
+      return;
+    }
     wheelAcc += ev.deltaY; const step = ev.deltaMode === 1 ? 1 : 40;   // one section per notch, not per pixel
     if (Math.abs(wheelAcc) >= step) { const n = Math.trunc(wheelAcc / step); wheelAcc -= n * step; goZ(S.z + n, true); }
   }
@@ -870,7 +879,7 @@
       if (ev.button === 0 && nearCurtain(x)) { S.curtainDrag = true; return; }
       const painting = S.tool === "brush" || S.tool === "erase";
       // 按住 Tab 拖动：改画笔半径（向右变大、向左变小），不落笔
-      if (S.radiusDrag && ev.button === 0) return;     // 按住 Tab 调半径时按下左键也不落笔
+      if (S.radiusDrag) { if (S.radiusDrag.sticky) endRadius(); return; }   // 调半径时按下鼠标不落笔；单击结束「点一下 Tab」进入的调半径模式
       // 画笔 / 橡皮下右键 = 擦当前颜色；平移用中键、空格或 H
       if (ev.button === 2 && painting && !S.spacePan) { if (inside(x, y) && !S.mergeBusy) strokeStart(x, y, true); return; }
       if (ev.button === 2 || ev.button === 1 || S.tool === "pan" || S.spacePan) { S.drag = { x: ev.clientX, y: ev.clientY, tx: S.tx, ty: S.ty }; for (const q of P) q.stage.classList.add("panning"); return; }
@@ -898,7 +907,11 @@
     let pending = false;
     p.stage.addEventListener("mousemove", ev => {
       S.lastClientX = ev.clientX;
-      if (S.radiusDrag) { setBrush(S.radiusDrag.r + Math.round((ev.clientX - S.radiusDrag.x) / 4)); return; }
+      if (S.radiusDrag) {
+        if (!S.radiusDrag.moved && Math.abs(ev.clientX - S.radiusDrag.x) < 2) return;
+        if (!S.radiusDrag.moved) { S.radiusDrag.moved = true; S.radiusDrag.x = ev.clientX; S.radiusDrag.r = S.brush; }
+        setBrush(S.radiusDrag.r + Math.round((ev.clientX - S.radiusDrag.x) / 4)); return;
+      }
       if (S.drag) { S.tx = S.drag.tx + ev.clientX - S.drag.x; S.ty = S.drag.ty + ev.clientY - S.drag.y; applyView(); return; }
       const previous = S.hoverXY, [x, y] = toImg(ev, p); S.hoverXY = inside(x, y) ? [x, y] : null; S.hoverPane = i;
       if (S.samStart) {
@@ -937,6 +950,7 @@
     else if (k === "PageUp") { ev.preventDefault(); goZ(S.z - 10, true); }
     else if (k === "PageDown") { ev.preventDefault(); goZ(S.z + 10, true); }
     else if (k === "Home") goZ(0); else if (k === "End") goZ(S.info.shape_zyx[0] - 1);
+    else if (k === "Escape" && S.radiusDrag) { setBrush(S.radiusDrag.r0 ?? S.radiusDrag.r); endRadius(); }
     else if (k === "Escape") { if (S.ngMode || S.tool.startsWith("sam")) setTool("pick"); mergeArm(null); clearSAM(); clearRepair(); renderHi(); }
     else if (k === "m") setTool("merge");
     else if (k.toLowerCase() === "u" && !ev.repeat) toggle3D("point", S.hoverXY);
@@ -951,8 +965,13 @@
     else if (k === "Tab") {
       ev.preventDefault(); S.tabHeld = true;
       if (S.tool === "brush" || S.tool === "erase") {
-        // 画笔 / 橡皮：按住 Tab 左右移动鼠标（按不按左键都行）就改半径，向右大、向左小；松开 Tab 结束
-        if (!S.radiusDrag) { S.radiusDrag = { x: S.lastClientX, r: S.brush }; for (const q of P) q.stage.classList.add("resizing"); renderHi(); }
+        // 画笔 / 橡皮下两种用法：
+        //   鼠标：按住 Tab 左右移动（按不按左键都行），松开 Tab 结束；
+        //   触控板：MacBook 按住普通键时会忽略触控板移动，所以「点一下 Tab」就进入调半径模式，松开后左右移动，
+        //   单击或再按一次 Tab 结束，Esc 恢复原来的半径。
+        if (ev.repeat) return;
+        if (S.radiusDrag?.sticky) { endRadius(); return; }                 // 调半径模式里再按 Tab：结束
+        if (!S.radiusDrag) { S.radiusDrag = { x: S.lastClientX, r: S.brush, r0: S.brush, moved: false, sticky: false }; for (const q of P) q.stage.classList.add("resizing"); renderHi(); radiusHint(); }
       } else if (!S.blink) { S.blink = true; render(); }
     }
     else if (k === "n") newId();
@@ -964,10 +983,28 @@
   });
   document.addEventListener("keyup", ev => {
     if (ev.key === " ") { S.spacePan = false; if (S.tool !== "pan") for (const q of P) q.stage.classList.remove("pan"); }
-    if (ev.key === "Tab") { S.tabHeld = false; endRadius(); if (S.blink) { S.blink = false; render(); } }
+    if (ev.key === "Tab") {
+      S.tabHeld = false;
+      if (S.radiusDrag && !S.radiusDrag.sticky) {
+        if (S.radiusDrag.moved) endRadius();                               // 按住移动过：松开就结束
+        else { S.radiusDrag.sticky = true; S.radiusDrag.x = S.lastClientX; radiusHint(); }   // 没移动（触控板）：留在调半径模式
+      }
+      if (S.blink) { S.blink = false; render(); }
+    }
   });
 
-  function endRadius() { if (!S.radiusDrag) return; S.radiusDrag = null; for (const q of P) q.stage.classList.remove("resizing"); renderHi(); }
+  function endRadius() { if (!S.radiusDrag) return; S.radiusDrag = null; for (const q of P) q.stage.classList.remove("resizing"); renderHi(); status(); }
+  function radiusHint() {
+    $("an-status").textContent = S.radiusDrag?.sticky
+      ? `调半径 ${S.brush} px：左右移动鼠标，单击或再按 Tab 结束，Esc 取消`
+      : `调半径 ${S.brush} px：按住 Tab 左右移动鼠标；触控板上点一下 Tab 再移动，或 Alt+两指上下滑`;
+  }
+  let radiusFlash = null;
+  function flashRadius() {                         // Alt+滚轮调完，圈旁的数字停留一会儿
+    if (!S.radiusDrag) { S.radiusDrag = { x: S.lastClientX, r: S.brush, r0: S.brush, moved: true, sticky: false, wheel: true }; for (const q of P) q.stage.classList.add("resizing"); }
+    renderHi(); radiusHint();
+    clearTimeout(radiusFlash); radiusFlash = setTimeout(() => { if (S.radiusDrag?.wheel) endRadius(); }, 900);
+  }
   // 切走窗口时按键的 keyup 收不到：别让 Tab 状态卡住
   window.addEventListener("blur", () => { S.tabHeld = false; endRadius(); if (S.blink) { S.blink = false; render(); } });
   // 侧栏的滑条、复选框、单选、下拉框用完就把焦点还给图像，快捷键立刻接着能用
@@ -1060,7 +1097,7 @@
   }
 
   // ------------------------------------------------------------------ controls
-  function setBrush(v) { S.brush = Math.max(0, Math.min(60, v | 0)); $("an-brush").value = S.brush; $("an-brush-v").textContent = S.brush; renderHi(); }
+  function setBrush(v) { S.brush = Math.max(0, Math.min(60, v | 0)); $("an-brush").value = S.brush; $("an-brush-v").textContent = S.brush; renderHi(); if (S.radiusDrag) radiusHint(); }
   document.querySelectorAll(".tool").forEach(b => b.addEventListener("click", () => setTool(b.dataset.tool)));
   $("an-brush").addEventListener("input", ev => setBrush(+ev.target.value));
   $("an-newid").addEventListener("click", newId);
