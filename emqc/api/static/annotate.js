@@ -24,7 +24,7 @@
     samNeighbour: null, repair: null, repairMask: null,
     historySequence: 0, ngMode: null, ngRequest: null, ngSequence: 0, ngWindow: null, ngTimer: null,
     who: "", hbTimer: null, revs: new Map(), undoTarget: null,
-    tabHeld: false, radiusDrag: null,
+    tabHeld: false, radiusDrag: null, lastClientX: 0,
   };
   // 登录用户（服务端按会话记标注人；这里只用于显示和"是不是我"的判断）。没开登录的实例是 null → 页面里填名字。
   const ME = window.EMQC_USER || null;
@@ -291,8 +291,14 @@
     const [x, y] = S.hoverXY, lw = 1 / S.zoom;
     if (S.tool === "brush" || S.tool === "erase") for (const p of panes()) {
       const g = p.gHi; g.beginPath(); g.arc(x + 0.5, y + 0.5, S.brush + 0.5, 0, Math.PI * 2);
-      g.lineWidth = lw; g.strokeStyle = S.tool === "erase" ? "#ff6b6b" : css(colorOf(S.cur)); g.stroke();
+      g.lineWidth = S.radiusDrag ? 2 * lw : lw; g.strokeStyle = S.tool === "erase" ? "#ff6b6b" : css(colorOf(S.cur)); g.stroke();
       g.strokeStyle = "rgba(0,0,0,.6)"; g.lineWidth = lw / 2; g.stroke();
+      if (S.radiusDrag) {                                  // 调半径时在圈旁写出数值，不用去看左栏
+        const fs = 13 / S.zoom, tx = x + S.brush + 6 / S.zoom, ty = y - S.brush;
+        g.font = `600 ${fs}px sans-serif`; g.textAlign = "left"; g.textBaseline = "bottom";
+        g.lineWidth = 3 / S.zoom; g.strokeStyle = "rgba(0,0,0,.75)"; g.strokeText(`${S.brush} px`, tx, ty);
+        g.fillStyle = "#fff"; g.fillText(`${S.brush} px`, tx, ty);
+      }
     }
     if (S.view === "side") panes().forEach((p, i) => {            // linked cursor: cross-hair in the pane you are *not* in
       if (i === S.hoverPane) return;
@@ -864,7 +870,7 @@
       if (ev.button === 0 && nearCurtain(x)) { S.curtainDrag = true; return; }
       const painting = S.tool === "brush" || S.tool === "erase";
       // 按住 Tab 拖动：改画笔半径（向右变大、向左变小），不落笔
-      if (S.tabHeld && ev.button === 0 && painting) { S.radiusDrag = { x: ev.clientX, r: S.brush }; if (S.blink) { S.blink = false; render(); } return; }
+      if (S.radiusDrag && ev.button === 0) return;     // 按住 Tab 调半径时按下左键也不落笔
       // 画笔 / 橡皮下右键 = 擦当前颜色；平移用中键、空格或 H
       if (ev.button === 2 && painting && !S.spacePan) { if (inside(x, y) && !S.mergeBusy) strokeStart(x, y, true); return; }
       if (ev.button === 2 || ev.button === 1 || S.tool === "pan" || S.spacePan) { S.drag = { x: ev.clientX, y: ev.clientY, tx: S.tx, ty: S.ty }; for (const q of P) q.stage.classList.add("panning"); return; }
@@ -891,6 +897,7 @@
     });
     let pending = false;
     p.stage.addEventListener("mousemove", ev => {
+      S.lastClientX = ev.clientX;
       if (S.radiusDrag) { setBrush(S.radiusDrag.r + Math.round((ev.clientX - S.radiusDrag.x) / 4)); return; }
       if (S.drag) { S.tx = S.drag.tx + ev.clientX - S.drag.x; S.ty = S.drag.ty + ev.clientY - S.drag.y; applyView(); return; }
       const previous = S.hoverXY, [x, y] = toImg(ev, p); S.hoverXY = inside(x, y) ? [x, y] : null; S.hoverPane = i;
@@ -914,11 +921,14 @@
     if (S.samBox[2] <= S.samBox[0] || S.samBox[3] <= S.samBox[1]) { S.samBox = null; renderHi(); return; }
     predictSAM();
   });
-  window.addEventListener("mouseup", () => { S.curtainDrag = false; S.radiusDrag = null; if (S.drag) { S.drag = null; for (const q of P) q.stage.classList.remove("panning"); } if (S.stroke) strokeEnd(); });
+  window.addEventListener("mouseup", () => { S.curtainDrag = false; if (S.drag) { S.drag = null; for (const q of P) q.stage.classList.remove("panning"); } if (S.stroke) strokeEnd(); });
 
   // ------------------------------------------------------------------ keyboard
+  // 只有文字输入框里的按键归输入框；滑条、复选框、下拉框被点过之后，快捷键照样能用（以前点一下半径滑条，
+  // 之后的 Tab、A/Z、D 全都失灵，Tab 还会被浏览器拿去切焦点）
+  const typing = el => el instanceof Element && (el.isContentEditable || el.matches("textarea, input:not([type]), input[type=text], input[type=number], input[type=search], input[type=password], input[type=email], input[type=url]"));
   document.addEventListener("keydown", ev => {
-    if (ev.target instanceof Element && ev.target.matches("input,select,textarea")) return;
+    if (typing(ev.target)) return;
     if (S.mergeBusy) return;
     const k = ev.key;
     if ((ev.ctrlKey || ev.metaKey) && k.toLowerCase() === "z") { ev.preventDefault(); undo(); return; }
@@ -938,7 +948,13 @@
     else if (k === "g") setFade(!S.fade);
     else if (k === ",") setOpacity(S.opacity - 0.05); else if (k === ".") setOpacity(S.opacity + 0.05);
     else if (k === "c") { $("an-curtain").checked = S.curtain = !S.curtain; if (S.curtain && !S.curtainX) S.curtainX = S.W >> 1; render(); }
-    else if (k === "Tab") { ev.preventDefault(); S.tabHeld = true; if (!S.blink && !S.radiusDrag) { S.blink = true; render(); } }
+    else if (k === "Tab") {
+      ev.preventDefault(); S.tabHeld = true;
+      if (S.tool === "brush" || S.tool === "erase") {
+        // 画笔 / 橡皮：按住 Tab 左右移动鼠标（按不按左键都行）就改半径，向右大、向左小；松开 Tab 结束
+        if (!S.radiusDrag) { S.radiusDrag = { x: S.lastClientX, r: S.brush }; for (const q of P) q.stage.classList.add("resizing"); renderHi(); }
+      } else if (!S.blink) { S.blink = true; render(); }
+    }
     else if (k === "n") newId();
     else if (k === "l") neighbourPick();
     else if (k === "0") fit(); else if (k === "1") { S.zoom = 1; applyView(); }
@@ -948,8 +964,17 @@
   });
   document.addEventListener("keyup", ev => {
     if (ev.key === " ") { S.spacePan = false; if (S.tool !== "pan") for (const q of P) q.stage.classList.remove("pan"); }
-    if (ev.key === "Tab") { S.tabHeld = false; if (S.blink) { S.blink = false; render(); } }
+    if (ev.key === "Tab") { S.tabHeld = false; endRadius(); if (S.blink) { S.blink = false; render(); } }
   });
+
+  function endRadius() { if (!S.radiusDrag) return; S.radiusDrag = null; for (const q of P) q.stage.classList.remove("resizing"); renderHi(); }
+  // 切走窗口时按键的 keyup 收不到：别让 Tab 状态卡住
+  window.addEventListener("blur", () => { S.tabHeld = false; endRadius(); if (S.blink) { S.blink = false; render(); } });
+  // 侧栏的滑条、复选框、单选、下拉框用完就把焦点还给图像，快捷键立刻接着能用
+  document.querySelectorAll(".vast-panel").forEach(panel => panel.addEventListener("change", ev => {
+    const el = ev.target;
+    if (el instanceof HTMLElement && el.matches("select, input[type=range], input[type=checkbox], input[type=radio]")) { el.blur(); P[0].stage.focus({ preventScroll: true }); }
+  }));
 
   // ------------------------------------------------------------------ side panels
   function segList() {
