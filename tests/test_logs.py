@@ -79,6 +79,22 @@ def test_lifecycle_detects_a_previous_run_that_did_not_stop(monkeypatch):
     logs.on_shutdown()
 
 
+def test_a_live_process_sharing_the_log_dir_is_not_a_crash(monkeypatch):
+    import subprocess as sp
+    import sys as _sys
+
+    sent = []
+    monkeypatch.setattr(logs, "alert", lambda key, text, **kw: sent.append(key) or True)
+    other = sp.Popen([_sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        with open(logs._lifecycle_path(), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": "2026-01-01T00:00:00+00:00", "event": "start", "pid": other.pid}) + "\n")
+        assert logs.on_startup(8765) is None and "unclean" not in sent, "另一个实例还在跑，不是崩溃"
+    finally:
+        other.kill(); other.wait()
+    logs.on_shutdown()
+
+
 def test_supervisor_records_crashes_and_restarts(tmp_path):
     root = Path(__file__).resolve().parents[1]
     marker = tmp_path / "runs"

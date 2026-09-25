@@ -153,7 +153,10 @@ def on_startup(port: int | None = None) -> dict | None:
     """记一笔启动；上一次如果既没正常退出、也没被守护脚本记下退出，补记"上次没有正常退出"并告警。返回那条补记（或 None）。"""
     last = next(iter(read_lifecycle(1)), None)
     unclean = None
-    if last and last.get("event") == "start":
+    if last and last.get("event") == "start" and _alive(last.get("pid")):
+        # 上一条"启动"的进程还活着：是另一个进程（第二个实例、命令行工具）用了同一个日志目录，不是崩溃
+        logging.getLogger("emqc").warning("日志目录 %s 还有一个在运行的进程（pid %s），不同实例请用不同的 EMQC_LOG_DIR", log_dir(), last.get("pid"))
+    elif last and last.get("event") == "start":
         unclean = lifecycle_event("unclean", prev_pid=last.get("pid"), prev_start=last.get("ts"),
                                   note="上次没有正常退出（被强杀、内存不够被系统杀掉、或机器重启）")
         logging.getLogger("emqc").error("上次运行（pid %s，%s 启动）没有正常退出", last.get("pid"), last.get("ts"))
@@ -164,6 +167,24 @@ def on_startup(port: int | None = None) -> dict | None:
 
     lifecycle_event("start", version=__version__, commit=_git_commit(), port=port, deployment=settings.deployment_name or None)
     return unclean
+
+
+def _alive(pid) -> bool:
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0 or pid == os.getpid():
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True                 # 进程在，只是不属于我们
+    except OSError:
+        return False
+    return True
 
 
 def on_shutdown() -> None:
