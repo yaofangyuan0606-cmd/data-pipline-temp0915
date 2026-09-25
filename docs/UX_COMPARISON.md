@@ -30,7 +30,7 @@
 
 | 维度 | VAST | webKnossos | Neuroglancer (+FlyWire) | ImageJ/Fiji (Labkit·TrakEM2) | napari | 我们 |
 |---|---|---|---|---|---|---|
-| **导航与翻片** | Up/A 上一片、Down/Z 下一片；S/X 跳 N 片（N=Max Paint Depth）；Q/E 跳 128；缩放即切 mip；坐标历史 64 条，粘贴任意三个数字即跳；边缘侧滚动条拖动翻片 | 滚轮/F·D 翻片并夹在数据范围内；H/G 调步长；Ctrl/Alt+滚轮缩放；xy·yz·xz+3D 四视口常驻；视图编进 URL | 滚轮 ±1、Shift+滚轮 ±10、`,` `.`；四面板共享中心点；空格轮换布局；坐标框粘贴即跳；右键置中 | ImageJ `<` `>` ←→，Alt 跳 9；Labkit(BDV) 滚轮翻 z，Shift ×10 / Ctrl ×0.1；TrakEM2 `,` `.` 翻层、Ctrl+滚轮缩放、前后层预载 | 滑块/方向键翻片；按住 Space 临时平移；插件 nD-annotator 给 A/D 翻片、Ctrl+滚轮 | 滚轮/↑↓/W·S 单步，PgUp/Dn 十步，Home/End，连播；Ctrl+滚轮缩放；中键/空格/H 平移（画笔模式下右键是擦）；缓存 24 片预取 ±3；A/Z 翻片（2026-09-24 加）。无可调步长、无坐标跳转、无位置历史 |
+| **导航与翻片** | Up/A 上一片、Down/Z 下一片；S/X 跳 N 片（N=Max Paint Depth）；Q/E 跳 128；缩放即切 mip；坐标历史 64 条，粘贴任意三个数字即跳；边缘侧滚动条拖动翻片 | 滚轮/F·D 翻片并夹在数据范围内；H/G 调步长；Ctrl/Alt+滚轮缩放；xy·yz·xz+3D 四视口常驻；视图编进 URL | 滚轮 ±1、Shift+滚轮 ±10、`,` `.`；四面板共享中心点；空格轮换布局；坐标框粘贴即跳；右键置中 | ImageJ `<` `>` ←→，Alt 跳 9；Labkit(BDV) 滚轮翻 z，Shift ×10 / Ctrl ×0.1；TrakEM2 `,` `.` 翻层、Ctrl+滚轮缩放、前后层预载 | 滑块/方向键翻片；按住 Space 临时平移；插件 nD-annotator 给 A/D 翻片、Ctrl+滚轮 | ↑↓/A·Z 单步，连播；滚轮缩放；中键/空格/H 平移（画笔模式下右键是擦）；缓存 24 片预取 ±3；A/Z 翻片（2026-09-24 加）。无可调步长、无坐标跳转、无位置历史 |
 | **画笔/橡皮语义** | Paint All / Background / Parent 三态 (I/O/P)；按住 Delete 或左右键同按=擦；Background 下画只落空白、擦只擦当前色；Tab+拖改笔径（≤1023 px）；每笔后自动填闭合轮廓；EM 亮度蒙版 + Contiguous only | Overwrite everything / Only overwrite empty 两个持久化单选，按住 Ctrl 临时反转；Only-empty 下擦除只擦当前 id；擦除是独立工具或 Ctrl+Shift+拖；Shift+滚轮或 Shift+I/O 改半径，小/中/大预设；闭环自动填充；一笔没改到像素弹 toast | 核心版无画笔无橡皮；FlyWire 走图合并/切割而不是像素 | Labkit 按住 D 画/E 擦，默认擦掉该像素所有标签，勾 overlapping 后只擦当前；按住工具键滚轮改直径 ±10%；TrakEM2 Alt+拖擦、Shift 点填洞、Overlap/Exclude/Erode 三态、Shift+滚轮改笔径且屏幕像素恒定 | 数字键 1–7 切工具；B「保留标签」：画只落 0、擦只擦切到橡皮前选中的 id；`[` `]` 半径 ±1；X 当前 id⇄背景互换 | 画笔 B 只补空白，右键擦、Ctrl/⌘+点击拾取；橡皮（右键或 E）只擦当前 id；半径滑块、`[` `]`、按住 Tab 拖动；修缮边缘 R 把跨过黑膜的部分收回（以上均 2026-09-24 加）。无闭环自动填充、无亮度蒙版 |
 | **快捷键与修饰键** | 「按住即变、松开即回」：Ctrl 平移、Shift 拾色、Delete 擦、Tab 笔径、H 隐藏叠加、U solo；Keyboard Shortcuts 窗口列全表；Control Buttons 1–0 可配置为任意操作或粘性修饰键 | 和弦 Ctrl+K,x 直达工具；W 循环工具；底部状态栏随工具与 Shift/Ctrl/Alt 实时写出左键/右键/拖动含义；26.07 起除鼠标键外全部可按账号重绑并有对话框 | 两层表 key→action，JSON/Python 可覆盖；H 帮助面板自动列出当前绑定；Ctrl+P 命令面板；Esc 退工具、Enter 提交、Backspace 退一点 | 各插件各一套；TrakEM2 字母键不能加 Ctrl（被 ImageJ 截走）；无统一自定义 | 数字键切模式；Space 临时平移；偏好里可改绑 | 单字母切模式 (P/F/B/E/M/N/L)，Alt+点击拾取，Ctrl+Z 撤销。无速查表、无自定义、无状态栏提示、无「按住临时变工具」 |
 | **选择与合并/切分** | Shift+点击拾取；Collect 归入文件夹（可逆、以父色预览）→ Weld 才真正重编体素；Split 拖一条线自动找最小截面平面；Fill 3D 六邻域洪水、可跨层按源层蒙版填 | Shift+点击拾取、Ctrl+I 复制 id；校对工具 Shift 合并 / Ctrl Min-Cut 拆分 / Multi-cut 红蓝点 Enter 执行；Merger Mode 非破坏合并；Split Segments 工具集用 3D 曲面 + 受限填充拆分 | 双击选体、Shift+双击星标；Seg 面板 id/前缀/正则搜索；FlyWire M 两点合并、C 两点切、Ctrl 撒红蓝点 Split Preview 后提交，后台最大流最小割 | MorphoLibJ Label Edition 点选合并、半径 1 腐蚀/膨胀、按大小/触边删标签、Reset；TrakEM2 Shift+Alt 删岛、f 填洞、c/v 跨片复制；Labkit R 删连通域 | 拾色器 5/L；填充 contiguous；多边形工具；无专用合并/拆分 | P/Alt+点击拾取；F 连通填充、Shift+F 整片同 id；M 两次点击直接合并落盘；批量删除勾选+确认；SAM 点选/框选 + 贴膜边界。无拆分工具、无合并预览、无形态学清理 |
@@ -48,7 +48,7 @@
 1. **安全网是同类里最好的一档**：改动即保存 + 写时复制（`seg_edit.npy`）+ 逐笔 npz 精确撤销。VAST 没有 Undo 且不自动保存（手册直言有人开几天没存丢了工作，来源: https://lichtman.rc.fas.harvard.edu/vast/ Manual §1/§2.2.2）；Labkit 完全无撤销（来源: https://github.com/juglab/labkit-ui/issues/70）；Paintera 绘制无撤销只能清画布（来源: https://github.com/saalfeldlab/paintera/blob/master/README.md）；Neuroglancer 核心版无撤销。只有 webKnossos 和 TrakEM2/napari 在这一点上不输我们，而它们中只有 webKnossos 同时做到了自动保存。
 2. **多人归属与冲突检测开箱即有**：账号/角色、每笔记作者、切片版本号冲突检测、同块在线提示。VAST、Fiji 全家族、napari、Paintera、KNOSSOS 都没有账号概念（来源: https://pmc.ncbi.nlm.nih.gov/articles/PMC9546337/ 综述明确把离线工具与网页多人工具分开）。和 webKnossos 比，我们缺前置锁；和 FlyWire/CAVE 比，我们缺规模，但「谁改的」这一层我们已经有。
 3. **溯源页是独有的**：前后对比页（逐像素 diff、双线描边、改动列表、操作流水含撤销、CSV/JSON 导出）在对标工具中没有直接对应物。webKnossos 的版本列表只有一句描述没有像素级 diff；CAVE 的 change log 是 API 不是页面；VAST/Fiji/napari 根本不记逐笔。
-4. **AI 辅助已经在工作流里**：SAM 点选/框选 + 贴合膜边界、邻片取色 (L)、插值修补损坏切片。VAST 没有 SAM；Fiji 要装 SAMJ 才有（来源: https://arxiv.org/abs/2506.02783）；webKnossos 的 Quick Select 与 Paintera 的 A 模式与我们同级。
+4. **AI 辅助已经在工作流里**：SAM 点选/框选 + 贴合膜边界、邻片取色 (L)。VAST 没有 SAM；Fiji 要装 SAMJ 才有（来源: https://arxiv.org/abs/2506.02783）；webKnossos 的 Quick Select 与 Paintera 的 A 模式与我们同级。
 5. **零安装、浏览器端**：与 webKnossos、Neuroglancer、CATMAID 同一阵营；VAST 是 Windows 单机、Fiji/napari/Paintera/KNOSSOS 需本地安装与 Java/Python 环境。
 6. **显示层小功能齐全**：透明度/渐变/对比滑块、并排视图、只画边界、悬停高亮、连播、「看这一点」跳 Neuroglancer 3D。这一块与对标工具持平，不是差距所在。
 
@@ -91,7 +91,7 @@
 - **工作量**：小。
 
 #### P0-3　A/Z 翻片与可调步长（需求 4）
-- **差距**：翻片键在右手（↑↓/PgUp/PgDn）或 W/S；没有步长设置；没有坐标跳转与位置历史。
+- **差距**：已支持 ↑↓/A·Z；没有步长设置；没有坐标跳转与位置历史。
 - **参考做法**：VAST Up/A 上一片、Down/Z 下一片，S/X 跳 N 片且 N 与跨片填充深度联动，Q/E 跳 128（来源: https://lichtman.rc.fas.harvard.edu/vast/ Manual §B.5 表 B.2）。webKnossos F/D 翻片、H/G 调步长、26.10 起滚轮夹在数据集范围内（来源: https://docs.webknossos.org/webknossos/keyboard_shortcuts.html）。KNOSSOS Jump Frames 可设、Shift+F/D 跳 10 片（来源: https://knossos.app/documentation）。
 - **建议怎么做**：A = 上一片、Z = 下一片、Shift+A/Z = 跳 N 片（默认 10，与 PgUp/Dn 共用，可在设置里改，状态栏显示当前步长）；`event.target` 是 input/textarea 时不劫持；Z 单独按不与 Ctrl+Z 撞；翻片夹在切片范围内。顺手加坐标框「粘贴任意含三个数字的文本即跳转」（VAST §3.1.4，Neuroglancer 也有，来源: https://tutorial.microns-explorer.org/neuroglancer-basic.html）。
 - **工作量**：小。
@@ -127,7 +127,7 @@
 - **工作量**：中。
 
 #### P1-2　所有慢/批量操作走「预览 → Enter/Esc」且可取消
-- **差距**：SAM 贴合、插值修补、Shift+F 整片、批量删除直接落盘，只能事后撤。
+- **差距**：SAM 预览后应用，批量删除有确认框；整片填充落盘后可撤销。
 - **参考做法**：wK Quick Select 参数实时预览、Enter 接受；Paintera 形状插值 Ctrl+P 预览、Enter 提交、Esc 放弃（来源: https://github.com/saalfeldlab/paintera/blob/master/README.md）；Labkit 3D 误填充卡死一分钟、无法取消、丢整层的事故说明长操作必须可取消且先登记撤销（来源: https://github.com/juglab/labkit-ui/issues/93）。
 - **建议怎么做**：统一一个「待确认层」：候选像素高亮、显示数量、Enter 写入为一笔、Esc 丢弃；后端长任务返回 job id 可取消，前端进度条。
 - **工作量**：中。
@@ -139,9 +139,9 @@
 - **工作量**：小（URL）+ 中（锁）。
 
 #### P1-4　跨片能力的最便宜版本：关键片插值 + Z 填充
-- **差距**：没有 3D 编辑，每片都要画一遍；「插值修补」只用于损坏切片。
+- **差距**：没有 3D 编辑，每片都要画一遍；损坏切片插值功能已移除。
 - **参考做法**：VAST Max Paint Depth（≤±8 片）只填上下相邻已画区域的重叠部分、只在画时触发不在擦时，翻片步长与之联动（来源: https://lichtman.rc.fas.harvard.edu/vast/ Manual §4.1.2）；webKnossos 两片各画同一 id 后按 V 生成中间片（来源: https://docs.webknossos.org/webknossos/volume_annotation/tools.html#volume-interpolation）；TrakEM2 Interpolate gaps，用户反馈复杂画笔轮廓插值可达数小时、多边形几乎瞬时（来源: https://forum.image.sc/t/42636）；Paintera S 模式按距离变换插值。
-- **建议怎么做**：把「插值修补」泛化为「隔 N 片画一次，中间自动填」，结果标为待复查、只填空白；轮廓先简化再插值；步长 N 与 P0-3 的翻片步长共用。
+- **建议怎么做**：后续可独立设计「隔 N 片画一次，中间自动填」，结果标为待复查、只填空白；轮廓先简化再插值；步长 N 与 P0-3 的翻片步长共用。
 - **工作量**：中。
 
 #### P1-5　标签面板：id 列表、显隐、跳转、统计

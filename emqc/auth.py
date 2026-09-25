@@ -342,4 +342,3 @@ def event_dict(e: AccountEvent) -> dict:
     return {"id": e.id, "ts": iso(e.ts), "action": e.action,
             "action_name": ACTIONS.get(e.action, e.action), "actor_id": e.actor_id, "actor": e.actor_name,
             "target_id": e.target_id, "target": e.target_name, "detail": e.detail, "ip": e.ip}
-

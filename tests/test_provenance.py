@@ -1,4 +1,6 @@
 """Current per-pixel provenance, exact ids, undo, exports, and read-only comparison."""
+from annotation_data import historical_interpolation
+
 import base64
 import csv
 import io
@@ -63,7 +65,7 @@ def test_mixed_labels_last_writer_undo_and_interpolation(block):
     block.apply_mask(0, mask(block, (2, 1)), BIG, {}, kind="paint")
     repaired = np.zeros(block.shape_zyx[1:], np.uint64)
     repaired[2, 4], repaired[2, 5] = BIG, 99
-    block.apply_labels(0, repaired, mask(block, (4, 2), (5, 2)), {"interpolated": True, "source_sections": [1, 2]})
+    historical_interpolation(block, 0, repaired, mask(block, (4, 2), (5, 2)), {"interpolated": True, "source_sections": [1, 2]})
     data = report(block, 0)
     row = next(r for r in data["labels"] if r["id"] == str(BIG))
     assert row["before_px"] == 10 and row["current_px"] == 13 and row["mixed"]
@@ -90,7 +92,7 @@ def test_repair_preserves_unchanged_provenance_and_undo(block):
     proposal = np.zeros(block.shape_zyx[1:], np.uint64)
     proposal[1, 2] = 7  # Already matches a manual edit: it remains manual.
     proposal[1, 4] = 99
-    rec = block.apply_labels(0, proposal, np.ones(proposal.shape, bool),
+    rec = historical_interpolation(block, 0, proposal, np.ones(proposal.shape, bool),
                              {"interpolated": True, "source_sections": [1, 2]})
     assert rec["n_px"] == 1
     after = comparison(block, 0)
@@ -102,7 +104,7 @@ def test_repair_preserves_unchanged_provenance_and_undo(block):
         assert sources[1, x] == SOURCES.index(source)
     assert after["report"]["sources"]["interpolation"]["pixels"] == 1
     assert after["report"]["removed_px"] == 0
-    assert block.apply_labels(0, proposal, np.ones(proposal.shape, bool), {}) is None
+    assert historical_interpolation(block, 0, proposal, np.ones(proposal.shape, bool), {}) is None
     assert comparison(block, 0) == after
     block.undo()
     assert comparison(block, 0) == before

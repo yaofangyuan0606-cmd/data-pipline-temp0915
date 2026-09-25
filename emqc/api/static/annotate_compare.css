@@ -99,7 +99,7 @@
   .cmp-block { max-width: 100%; }
 }
 
-.cmp-play { display: flex; align-items: center; gap: 8px; }
+.cmp-play { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
 .cmp-play select { width: auto; }
 .cmp-play span { font-size: 12px; white-space: nowrap; }
 .cmp-dir[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-line); }

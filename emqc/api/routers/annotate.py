@@ -338,59 +338,6 @@ def labels_json(block_id: str, z: int):
     return JSONResponse(table, headers={"Cache-Control": "no-store"})
 
 
-class RepairPreviewIn(BaseModel):
-    z: int = Field(ge=0)
-    dark: int = Field(default=12, ge=0, le=255)     # "destroyed" means at or below this grey level
-
-
-class TokenOnlyIn(EditIn):
-    token: str = Field(min_length=32, max_length=32)
-
-
-@router.get("/blocks/{block_id}/repair/scan")
-def repair_scan(block_id: str, dark: int = 12):
-    """Which sections look destroyed, so the annotator does not have to hunt for them."""
-    from emqc.annotate.interpolate import detect_damage
-
-    b = _block(block_id)
-    out = []
-    for z in range(b.shape_zyx[0]):
-        m = detect_damage(b.em_slice(z), dark)
-        f = float(m.mean())
-        if f > 0:
-            out.append({"z": z, "fraction": round(f, 4), "whole": bool(f > 0.97)})
-    return {"block_id": b.id, "dark": dark, "n": len(out), "sections": out}
-
-
-@router.post("/blocks/{block_id}/repair/preview")
-def repair_preview(block_id: str, body: RepairPreviewIn):
-    """修补损坏切片: the labels the cells would have carried across the destroyed area, as a preview."""
-    from emqc.annotate.interpolate import service as repair_service
-
-    b = _block(block_id)
-    if not 0 <= body.z < b.shape_zyx[0]:
-        raise HTTPException(404, "z outside the block")
-    try:
-        return repair_service.preview(b, body.z, body.dark)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
-
-
-@router.post("/blocks/{block_id}/repair/apply")
-def repair_apply(block_id: str, body: TokenOnlyIn, user=Depends(require_user)):
-    from emqc.annotate.interpolate import service as repair_service
-
-    b = _block(block_id)
-    actor = _who(body, user)
-    try:
-        with b.lock:
-            rec = repair_service.apply(b, body.token, by=actor)
-            rev = _rev(b, rec.get("z")) if isinstance(rec, dict) else None
-    except ValueError as e:
-        raise HTTPException(409, str(e))
-    return _edit_response(b, rec, rev)
-
-
 @router.get("/blocks/{block_id}/neuroglancer/block")
 def neuroglancer_block(block_id: str, z: int = 0):
     """A link that opens the WHOLE block in the 3D viewer, with its outline drawn.
@@ -661,6 +608,17 @@ def edits(block_id: str, limit: int = 50, z: int | None = None):
         return {"n": len(e), "edits": e[-limit:][::-1], "editors": b.editors(records=e),
                 "rev": b.slice_rev(z) if z is not None else None}
     except (ValueError, IndexError, OSError) as err:
+        raise HTTPException(422, str(err))
+
+
+@router.get("/blocks/{block_id}/edits/{edit_n}/mask.png")
+def edit_mask(block_id: str, edit_n: int, z: int = Query(ge=0)):
+    b = _block(block_id, read_only=True)
+    try:
+        return Response(b.edit_mask_png(edit_n, z), media_type="image/png", headers={"Cache-Control": "no-store"})
+    except (KeyError, IndexError) as err:
+        raise HTTPException(404, str(err))
+    except (ValueError, OSError) as err:
         raise HTTPException(422, str(err))
 
 

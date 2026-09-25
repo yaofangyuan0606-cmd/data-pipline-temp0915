@@ -499,6 +499,32 @@ class Block:
             previous = rec["n"]
         return records
 
+    def edit_mask_png(self, n: int, z: int) -> bytes:
+        """Read an active edit's footprint in display coordinates, including erased pixels."""
+        self._check_z(z)
+        with self.lock:
+            rec = next((rec for rec in self.edits() if rec["n"] == n), None)
+            if rec is None or (rec.get("z") is not None and rec["z"] != z):
+                raise KeyError("本片没有这笔改动，可能已撤销")
+            with np.load(self.work_path(f"{EDIT_DIR}/{n:06d}.npz"), allow_pickle=False) as data:
+                xs, ys = data["xs"].astype(np.intp), data["ys"].astype(np.intp)
+                zs = data["zs"] if "zs" in data.files else np.full(xs.shape, int(data["z"]))
+                if xs.shape != ys.shape or xs.shape != zs.shape or xs.ndim != 1:
+                    raise ValueError("改动像素记录格式无效")
+                xs, ys = xs[zs == z], ys[zs == z]
+            if not xs.size:
+                raise KeyError("本片没有这笔改动")
+            h, w = self.shape_zyx[1:]
+            if np.any((xs < 0) | (xs >= w) | (ys < 0) | (ys >= h)):
+                raise ValueError("改动像素超出本片范围")
+            mask = np.zeros((h, w), dtype=bool)
+            mask[ys, xs] = True
+            edge = mask & ~ndimage.binary_erosion(mask)
+            rgba = np.zeros((h, w, 4), dtype=np.uint8)
+            rgba[mask] = [255, 214, 10, 100]
+            rgba[edge] = [255, 214, 10, 235]
+            return _png(Image.fromarray(rgba))
+
     def _record(self, kind: str, z: int | None, xs: np.ndarray, ys: np.ndarray, old, new_id: int, extra: dict | None = None,
                 zs: np.ndarray | None = None, by: "str | Actor | None" = None) -> dict:
         """Persist one edit: every changed voxel (x, y, z) and the id it had before. `z` is the section shown in the
@@ -511,7 +537,7 @@ class Block:
             zs = np.full(xs.shape, int(z), dtype=np.uint16)
         np.savez_compressed(self._edit_dir() / f"{n:06d}.npz", z=-1 if z is None else int(z), xs=xs.astype(np.uint16), ys=ys.astype(np.uint16),
                             zs=zs.astype(np.uint16), old=np.asarray(old), new=np.asarray(new_id))
-        many = np.ndim(new_id) > 0                  # a repair writes a different id per pixel
+        many = np.ndim(new_id) > 0                  # historical edits may write a different id per pixel
         rec = {"n": n, "kind": kind, "z": (None if z is None else int(z)), "n_px": int(xs.size),
                "new_id": (f"{int(np.unique(new_id).size)} 个 id" if many else str(int(new_id))),
                "old_id": (str(int(old)) if np.ndim(old) == 0 else None), "n_slices": int(np.unique(zs).size),
@@ -652,40 +678,6 @@ class Block:
             old = seg[xs, ys, z].copy()
             rec = self._record(kind, z, xs, ys, old, new_id, metadata, by=by)
             seg[xs, ys, z] = new_id
-            seg.flush()
-            self._invalidate(z)
-            return rec
-
-    def apply_labels(self, z: int, labels: np.ndarray, where: np.ndarray, metadata: dict, by: str | None = None) -> dict | None:
-        """Write many different ids at once, inside `where` — what repairing a destroyed section needs.
-
-        Unlike every other operation this one has no single new id, so the record keeps the whole array of new ids
-        in the npz alongside the old ones. Undo only ever reads `old`, so older records replay unchanged.
-
-        A 0 in `labels` means "I do not know", never "this is background": pixels the interpolation did not claim
-        keep whatever they had. Without that rule a repair over a wrongly-detected hole would silently wipe the
-        delivered labels under it, which is the one thing this operation must never do."""
-        self._check_z(z)
-        labels = np.asarray(labels)
-        where = np.asarray(where, bool)
-        if labels.shape != self.shape_zyx[1:] or where.shape != labels.shape:
-            raise ValueError("labels/where shape does not match the displayed slice")
-        with self.lock:
-            if not self.has_seg:
-                raise ValueError("block has no seg.npy")
-            limits = np.iinfo(self._seg_ro.dtype)
-            if labels.size and (labels.min() < 0 or labels.max() > limits.max):
-                raise ValueError("label id is outside the segmentation dtype range")
-            plane = self._plane_ro(z)
-            changed = where & (labels != plane) & (labels != 0)      # 0 = unclaimed, so leave the pixel alone
-            xs, ys = self._disk_idx(changed)
-            if not xs.size:
-                return None
-            seg = self._seg_writable()
-            old = seg[xs, ys, z].copy()
-            new = labels.T[xs, ys].astype(seg.dtype)      # labels are in the displayed frame
-            rec = self._record("repair", z, xs, ys, old, new, metadata, by=by)
-            seg[xs, ys, z] = new
             seg.flush()
             self._invalidate(z)
             return rec

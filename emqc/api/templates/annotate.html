@@ -28,7 +28,7 @@
       <button class="tool" data-tool="pan" aria-pressed="false" title="平移 (H · 中键拖动 · 空格+拖动)"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>平移 <kbd>H</kbd></button>
     </div>
     <div class="vast-mergehint muted" id="an-merge-hint" hidden></div>
-    <div class="field" style="margin-top:8px"><label>画笔半径 <span class="mono" id="an-brush-v">4</span> px <span class="muted">[ ] · 按住 Tab 左右移动鼠标 · 触控板：点一下 Tab 再移动，或 Alt+两指上下滑</span></label><input id="an-brush" type="range" min="0" max="60" value="4"></div>
+    <div class="field" style="margin-top:8px"><label>画笔半径 <span class="mono" id="an-brush-v">4</span> px <span class="muted">[ ] · 按住 Tab 左右移动鼠标 · 触控板：点一下 Tab 再移动</span></label><input id="an-brush" type="range" min="0" max="60" value="4"></div>
 
     <div class="vast-sec">当前标签</div>
     <div class="vast-cur"><span class="sw" id="an-cur-sw"></span><span class="mono" id="an-cur-id">未选择</span></div>
@@ -52,21 +52,16 @@
     <div class="vast-list" id="an-sam-neighbour-list" style="margin-top:6px;max-height:150px" hidden></div>
     <div class="muted" id="an-sam-result" role="status" style="font-size:12px;margin-top:6px"></div>
 
-    <div class="vast-sec">切片修补</div>
-    <div class="actions"><button id="an-rp-scan" title="扫描整块，列出图像被毁的切片">扫描损坏</button><button id="an-rp-prev" title="用上下相邻切片的细胞形状插值，补回这一片丢失的标签">检测并预览</button></div>
-    <div class="actions" style="margin-top:6px"><button id="an-rp-apply" class="primary" disabled>应用修补</button></div>
-    <div class="muted" id="an-rp-info" style="font-size:12px;margin-top:6px">插值补标签。绿：新增 · 斜纹：不确定 · 红：保留原样。</div>
-
     <div class="vast-sec">3D</div>
     <div class="actions"><button id="an-ng" aria-pressed="false" title="启用后点击图像查看；再次点击取消 (U)">看这一点 <kbd>U</kbd></button><button id="an-ng-block" aria-pressed="false" title="打开整块 3D；再次点击关闭">看整块</button></div>
     <div class="muted" id="an-ng-info" style="font-size:12px;margin-top:6px"></div>
 
     <div class="vast-sec">翻页</div>
     <div class="vast-z">
-      <button id="an-prev" title="↑ / 滚轮">◀</button>
+      <button id="an-prev" title="↑ / A">◀</button>
       <input id="an-z" type="number" class="text mono" min="0" value="0" title="切片序号 z，从 0 起算">
       <span class="mono muted" id="an-nz">/ 0</span>
-      <button id="an-next" title="↓ / 滚轮">▶</button>
+      <button id="an-next" title="↓ / Z">▶</button>
     </div>
     <input id="an-zr" type="range" min="0" max="0" value="0" style="width:100%">
     <div class="actions" style="margin-top:6px"><button id="an-play">▶ 连播</button><label class="muted" style="font-size:12px">速度 <input id="an-fps" type="number" class="text mono" value="8" min="1" max="60" style="width:54px"> 张/秒</label></div>
@@ -82,7 +77,7 @@
       <div class="vast-canvas"><canvas></canvas><canvas></canvas><canvas></canvas></div>
       <div class="vast-label mono side-only">EM</div>
       <div class="vast-status mono" id="an-status">加载中…</div>
-      <div class="vast-hint mono">滚轮翻片 · Ctrl+滚轮缩放 · 右键平移</div>
+      <div class="vast-hint mono">滚轮缩放 · ↑↓ / A Z 翻片 · 中键 / 空格拖动平移</div>
     </div>
     <div class="vast-stage off" id="an-stage2" tabindex="0">
       <div class="vast-canvas"><canvas></canvas><canvas></canvas><canvas></canvas></div>
@@ -119,6 +114,7 @@
     </dialog>
 
     <div class="vast-sec">本片改动</div>
+    <div class="muted" style="font-size:12px">点击记录高亮改动区域 · Esc 取消</div>
     <div class="vast-list vast-edits" id="an-edits"></div>
   </aside>
 </div>
@@ -143,8 +139,8 @@
   <div class="an-help-head"><b>快捷键与操作</b><span class="spacer"></span><a href="/annotate/guide">完整说明 ›</a><button id="an-help-close" title="关闭 (Esc)" autofocus>✕</button></div>
   <div class="an-help-grid">
     <section><h3>看图</h3>
-      <div class="kbd-row"><kbd>滚轮</kbd> / <kbd>A</kbd><kbd>Z</kbd> / <kbd>W</kbd><kbd>S</kbd> / <kbd>↑</kbd><kbd>↓</kbd> 翻 z</div>
-      <div class="kbd-row"><kbd>Ctrl</kbd>+<kbd>滚轮</kbd> 缩放 · <kbd>0</kbd> 适合窗口 · <kbd>1</kbd> 1:1</div>
+      <div class="kbd-row"><kbd>A</kbd><kbd>Z</kbd> / <kbd>↑</kbd><kbd>↓</kbd> 翻 z</div>
+      <div class="kbd-row"><kbd>滚轮</kbd> 缩放 · <kbd>0</kbd> 适合窗口 · <kbd>1</kbd> 1:1</div>
       <div class="kbd-row"><kbd>右键拖动</kbd> / <kbd>H</kbd> 平移</div>
       <div class="kbd-row"><kbd>V</kbd> 叠加 ⇄ 并排 · <kbd>C</kbd> 对比滑块</div>
       <div class="kbd-row"><kbd>Tab</kbd> 按住隐藏分割（画笔、橡皮下按住 Tab 左右移动鼠标是调半径） · <kbd>G</kbd> 透明度渐变 · <kbd>,</kbd> <kbd>.</kbd> 步进</div>
@@ -157,9 +153,8 @@
       <div class="kbd-row"><kbd>Q</kbd> 拾取（任何工具下 <kbd>Alt</kbd>+点击；旧键 P 仍可用）</div>
       <div class="kbd-row"><kbd>F</kbd> 填充连通区域 · <kbd>Shift</kbd>+点击改整片同 id</div>
       <div class="kbd-row">清除：擦除连通区域 · Shift+点击清除本片同标签</div>
-      <div class="kbd-row">切片修补：相邻切片插值补标签，预览后应用</div>
       <div class="kbd-row"><kbd>M</kbd> 合并：先点 A，再点 B，B 改为 A 的标签</div>
-      <div class="kbd-row"><kbd>D</kbd> 画笔（旧键 B 仍可用）：左键涂、<b>右键擦当前颜色</b>、<kbd>Ctrl</kbd>+点击拾取 · <kbd>E</kbd> 橡皮只擦当前颜色 · <kbd>[</kbd> <kbd>]</kbd> 或 <b>按住 <kbd>Tab</kbd> 左右移动鼠标</b>改半径（触控板：点一下 <kbd>Tab</kbd> 再移动、单击结束；或 <kbd>Alt</kbd>+两指上下滑）</div>
+      <div class="kbd-row"><kbd>D</kbd> 画笔（旧键 B 仍可用）：左键涂、<b>右键擦当前颜色</b>、<kbd>Ctrl</kbd>+点击拾取 · <kbd>E</kbd> 橡皮只擦当前颜色 · <kbd>[</kbd> <kbd>]</kbd> 或 <b>按住 <kbd>Tab</kbd> 左右移动鼠标</b>改半径（触控板：点一下 <kbd>Tab</kbd> 再移动、单击结束）</div>
       <div class="kbd-row"><kbd>R</kbd> 修缮边缘：点一下标签块，只收最外层漏过黑膜的部分，细胞内部的黑色细胞器不动</div>
       <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>
       <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销 · 「全部撤销」一次撤掉本片全部改动（先确认）</div>

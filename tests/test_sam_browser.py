@@ -63,6 +63,7 @@ def browser_for(tmp_path, data):
                                              env=dict(os.environ, TMPDIR=str(root)))
                 try:
                     page = browser.new_page(viewport={"width": 1600, "height": 1200})
+                    page.add_init_script("localStorage.setItem('emqc.annotator', 'browser-test')")
                     page_errors = []
                     page.on("pageerror", lambda error: page_errors.append(error))
                     page.goto(base_url + "/annotate?block=" + data.name, wait_until="domcontentloaded")
@@ -148,9 +149,13 @@ def test_sam_click_starts_target_modifiers_refine_it(tmp_path):
         for name in ("切割", "分离", "智能填充"):
             assert name not in page.locator("#an-help").text_content()
         page.locator("#an-stage").focus()
-        for key in ("k", "x", "d", "Enter"):
+        for key in ("k", "x", "Enter"):
             page.keyboard.press(key)
             assert page.locator(".tool.active").get_attribute("data-tool") == "pick"
+        page.keyboard.press("d")
+        assert page.locator(".tool.active").get_attribute("data-tool") == "brush"
+        page.keyboard.press("q")
+        assert page.locator(".tool.active").get_attribute("data-tool") == "pick"
         assert page.locator("#an-nedit").inner_text() == "0 次改动"
 
         def predict(route):
@@ -240,7 +245,7 @@ def test_current_and_new_labels_in_browser(tmp_path):
         label = page.locator('#an-cur-id').inner_text()
         row = page.locator(f'#an-segs [data-id="{label}"]')
         assert row.locator('.n').inner_text() == '未使用'
-        assert page.locator('#an-rp-apply').is_disabled()
+        assert page.locator('[id^="an-rp-"]').count() == 0
         assert row.locator('.sw').evaluate('(e) => e.style.backgroundColor') not in colors
         assert page.locator('#an-segs .row[data-id]').count() == before + 1
         assert created.locator(f'[data-id="{label}"]').count() == 1
