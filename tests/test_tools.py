@@ -580,3 +580,16 @@ def test_refine_edge_keeps_dark_organelles_inside_the_cell(tmp_path):
     plane = b.seg_slice(0)
     assert rec is not None and (plane[36:46, 10:22] == 7).all() and (plane[8:14, 32:40] == 7).all()
     assert (plane[10:50, 51:57] == 0).all()
+
+
+def test_refine_edge_peels_paint_that_sits_on_the_black_membrane():
+    """画笔越过细胞壁（黑）涂到邻居一点：压在黑膜上的那层剥掉，膜外那一小块跟着去掉；细胞本身和里面的暗块不动。"""
+    from emqc.annotate.boundary import pull_back_to_membrane
+
+    em, left, right = two_cells()
+    mask = left.copy()
+    mask[20:28, 48:53] = True                          # a stroke across the wall (x 48-49) and 3 px into the right cell
+    region = pull_back_to_membrane(mask, em, 20, 30, 0.5)
+    assert not region[20:28, 48:53].any(), "膜上和膜外的部分都收回来"
+    assert (region & left).sum() == left.sum(), "细胞本身一个像素都不少（连同里面的暗块）"
+    assert pull_back_to_membrane(left, em, 20, 30, 0.5).sum() == left.sum(), "贴着膜的标签不动"
