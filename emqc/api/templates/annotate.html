@@ -18,9 +18,9 @@
 
     <div class="vast-sec">工具</div>
     <div class="vast-toolgrid">
-      <button class="tool active" data-tool="pick" aria-pressed="true" title="拾取颜色 (P / Alt+点击)"><svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M13 6l5 5"/></svg>拾取 <kbd>P</kbd></button>
+      <button class="tool active" data-tool="pick" aria-pressed="true" title="拾取颜色 (Q，旧键 P · 任何工具下 Alt+点击 · 画笔和橡皮下 Ctrl/⌘+点击)"><svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M13 6l5 5"/></svg>拾取 <kbd>Q</kbd></button>
       <button class="tool" data-tool="fill" aria-pressed="false" title="填充连通区域 (F)；Shift+点击填充本片同标签"><svg viewBox="0 0 24 24"><path d="M7 3l10 10-6 6L3 11z"/><path d="M17 13c1.5 2 2 3.2 2 4a2 2 0 11-4 0c0-.8.5-2 2-4z"/></svg>填充 <kbd>F</kbd></button>
-      <button class="tool" data-tool="brush" aria-pressed="false" title="画笔 (B)：左键涂当前颜色（只补空白）· 右键擦当前颜色 · Ctrl/⌘+点击拾取颜色 · 按住 Tab 拖动改半径"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔 <kbd>B</kbd></button>
+      <button class="tool" data-tool="brush" aria-pressed="false" title="画笔 (D，旧键 B)：左键涂当前颜色（只补空白）· 右键擦当前颜色 · Ctrl/⌘+点击拾取颜色 · 按住 Tab 拖动改半径"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔 <kbd>D</kbd></button>
       <button class="tool" data-tool="erase" aria-pressed="false" title="橡皮 (E)：只擦当前颜色的像素，压到邻居身上不会把邻居擦掉 · 按住 Tab 拖动改半径"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮 <kbd>E</kbd></button>
       <button class="tool" data-tool="merge" aria-pressed="false" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并 <kbd>M</kbd></button>
       <button class="tool" data-tool="clear" aria-pressed="false" title="清除连通区域；Shift+点击清除本片同标签"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M14 20h6"/></svg>清除</button>
@@ -149,17 +149,17 @@
       <div class="kbd-row"><kbd>V</kbd> 叠加 ⇄ 并排 · <kbd>C</kbd> 对比滑块</div>
       <div class="kbd-row"><kbd>Tab</kbd> 按住隐藏分割 · <kbd>G</kbd> 透明度渐变 · <kbd>,</kbd> <kbd>.</kbd> 步进</div>
       <div class="kbd-row"><kbd>O</kbd> 只画边界</div>
-      <div class="kbd-row"><kbd>P</kbd> 拾取 · <kbd>B</kbd> 画笔 · <kbd>F</kbd> 填充 · <kbd>E</kbd> 橡皮 · <kbd>M</kbd> 合并 · <kbd>H</kbd> 平移</div>
+      <div class="kbd-row"><kbd>Q</kbd> 拾取 · <kbd>D</kbd> 画笔 · <kbd>F</kbd> 填充 · <kbd>E</kbd> 橡皮 · <kbd>M</kbd> 合并 · <kbd>H</kbd> 平移</div>
       <div class="kbd-row"><kbd>L</kbd> 邻片取色 <span class="muted">本片漏标时，取最近一张有标签的邻片在光标处的颜色</span></div>
       <div class="kbd-row"><kbd>U</kbd> 查看光标处 3D · 再按取消</div>
     </section>
     <section><h3>改标签</h3>
-      <div class="kbd-row"><kbd>P</kbd> 拾取（任何工具下 <kbd>Alt</kbd>+点击）</div>
+      <div class="kbd-row"><kbd>Q</kbd> 拾取（任何工具下 <kbd>Alt</kbd>+点击；旧键 P 仍可用）</div>
       <div class="kbd-row"><kbd>F</kbd> 填充连通区域 · <kbd>Shift</kbd>+点击改整片同 id</div>
       <div class="kbd-row">清除：擦除连通区域 · Shift+点击清除本片同标签</div>
       <div class="kbd-row">切片修补：相邻切片插值补标签，预览后应用</div>
       <div class="kbd-row"><kbd>M</kbd> 合并：先点 A，再点 B，B 改为 A 的标签</div>
-      <div class="kbd-row"><kbd>B</kbd> 画笔：左键涂、<b>右键擦当前颜色</b>、<kbd>Ctrl</kbd>+点击拾取 · <kbd>E</kbd> 橡皮只擦当前颜色 · <kbd>[</kbd> <kbd>]</kbd> 或 <b>按住 <kbd>Tab</kbd> 拖动</b>改半径</div>
+      <div class="kbd-row"><kbd>D</kbd> 画笔（旧键 B 仍可用）：左键涂、<b>右键擦当前颜色</b>、<kbd>Ctrl</kbd>+点击拾取 · <kbd>E</kbd> 橡皮只擦当前颜色 · <kbd>[</kbd> <kbd>]</kbd> 或 <b>按住 <kbd>Tab</kbd> 拖动</b>改半径</div>
       <div class="kbd-row"><kbd>R</kbd> 修缮边缘：点一下标签块，压过黑膜的部分收回到膜</div>
       <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>
       <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销 · 「全部撤销」一次撤掉本片全部改动（先确认）</div>

@@ -930,7 +930,8 @@
     else if (k === "Escape") { if (S.ngMode || S.tool.startsWith("sam")) setTool("pick"); mergeArm(null); clearSAM(); clearRepair(); renderHi(); }
     else if (k === "m") setTool("merge");
     else if (k.toLowerCase() === "u" && !ev.repeat) toggle3D("point", S.hoverXY);
-    else if (k === "p") setTool("pick"); else if (k === "f") setTool("fill"); else if (k === "b") setTool("brush"); else if (k === "e") setTool("erase"); else if (k === "h") setTool("pan"); else if (k === "r") setTool("refine");
+    // 右手握鼠标，高频工具放左手：Q 拾取、D 画笔，挨着 E 橡皮、F 填充、R 修缮。P、B 保留作旧键位
+    else if (k === "q" || k === "p") setTool("pick"); else if (k === "f") setTool("fill"); else if (k === "d" || k === "b") setTool("brush"); else if (k === "e") setTool("erase"); else if (k === "h") setTool("pan"); else if (k === "r") setTool("refine");
     else if (k === "[") setBrush(S.brush - 1); else if (k === "]") setBrush(S.brush + 1);
     else if (k === "o") { $("an-outline").checked = S.outline = !S.outline; render(); }
     else if (k === "v") setView(S.view === "side" ? "overlay" : "side");
