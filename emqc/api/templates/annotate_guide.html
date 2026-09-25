@@ -5,7 +5,7 @@
 {% block topright %}<a class="btn primary" href="/annotate">打开工作台</a>{% endblock %}
 {% block content %}
 <div class="page-head"><div class="grow"><div class="eyebrow">Annotation · guide</div><h1>使用说明</h1>
-<p class="sub">工作台参照 Harvard VAST 的看图习惯：EM 做底图，分割按透明度盖在上面，滚轮翻 z，一手看图一手改标签。这一页把工具、快捷键和数据去向说清楚；工作台里按 <kbd>?</kbd> 有精简版。</p></div></div>
+<p class="sub">工作台参照 Harvard VAST 的看图习惯：EM 做底图，分割按透明度盖在上面，滚轮缩放、↑↓ / A Z 翻 z，一手看图一手改标签。这一页把工具、快捷键和数据去向说清楚；工作台里按 <kbd>?</kbd> 有精简版。</p></div></div>
 
 <div class="grid c2">
 <div class="card">
@@ -17,8 +17,8 @@
     <dt>闪烁</dt><dd>按住 <kbd>Tab</kbd> 临时隐藏分割，松开恢复。</dd>
     <dt>边界</dt><dd><kbd>O</kbd> 只画每个分段的轮廓，不填色。</dd>
     <dt>3D</dt><dd>“看这一点”启用后点击图像；U 可直接查看光标处。“看整块”打开块范围。按钮高亮表示启用，再次点击或 Esc 取消并关闭查看器；切换工具、切片、数据块也会取消。</dd>
-    <dt>翻页</dt><dd>滚轮或 <kbd>↑</kbd> <kbd>↓</kbd>；左栏「连播」按设定速度连续翻 z，用来顺着看一个细胞的走向。</dd>
-    <dt>缩放 / 平移</dt><dd><kbd>Ctrl</kbd>+滚轮缩放，<kbd>0</kbd> 适合窗口，<kbd>1</kbd> 1:1；右键拖动或 <kbd>H</kbd> 平移。</dd>
+    <dt>翻页</dt><dd><kbd>↑</kbd> / <kbd>A</kbd> 上一片，<kbd>↓</kbd> / <kbd>Z</kbd> 下一片；左栏「连播」按设定速度连续翻 z，用来顺着看一个细胞的走向。</dd>
+    <dt>缩放 / 平移</dt><dd>滚轮向上放大、向下缩小，<kbd>0</kbd> 适合窗口，<kbd>1</kbd> 1:1；中键拖动、空格+拖动或 <kbd>H</kbd> 平移。</dd>
   </dl>
 </div>
 <div class="card">
@@ -34,7 +34,8 @@
     <dt>撤销 <kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>只回退当前切片最近一次改动，其他切片保持不变；每次改动记录了每个像素的旧 id。多人时只能撤自己的：最近一笔是别人的会先弹确认，确认后才撤并记入操作流水。</dd>
     <dt>登录与标注人</dt><dd>先登录（右上角显示你的名字和角色），每一笔改动由服务端记在你的账号下：本片改动列表、前后对比页的「改了哪些地方」、鼠标读数、导出表里都能看到是谁改的。管理员在「用户管理」里建号；拿初始密码登录要先改密码。角色：管理员管账号、审核员能撤别人的改动、标注员只能撤自己的。</dd>
     <dt>多人同时标注</dt><dd>各自对着自己加载的画面下手，服务端按<b>切片版本号</b>兜底：别人在你之后改过这一片，你的这一笔会被拒绝，页面自动刷新后再操作一次即可；右栏会显示同块在线的人，有人也在本片时变色提醒。建议按块或按 z 段分工。</dd>
-    <dt>本片分段</dt><dd>分为“新建标签”和“已有标签”两组；新建标签涂色后仍留在新建组，尚未涂色的显示“未使用”。点一行选中，搜索框同时过滤两组。</dd>
+    <dt>本片改动</dt><dd>点击一条记录，同时高亮列表行和该笔改动的像素区域，包括已擦除的位置；不改变当前画笔标签。Esc、翻片、切块或撤销清除高亮。</dd>
+    <dt>本片分段</dt><dd>分为“新建标签”和“已有标签”两组；新建标签涂色后仍留在新建组，尚未涂色的显示“未使用”。点一行后，列表和图像中的该标签区域同时高亮；未使用标签只高亮列表。搜索框同时过滤两组。Esc、翻片或切块取消高亮。</dd>
   </dl>
 </div>
 </div>
@@ -80,6 +81,7 @@
   ('POST', '/api/v1/annotate/blocks/{b}/undo?z=0', '撤销本片最近一次'),
   ('POST', '/api/v1/annotate/blocks/{b}/new-id?z=0', '从最大 id 之后分配，跳过本片重复颜色'),
   ('GET', '/api/v1/annotate/blocks/{b}/edits?z=0', '本片改动记录'),
+  ('GET', '/api/v1/annotate/blocks/{b}/edits/{n}/mask.png?z=0', '只读高亮该笔改动在本片的区域'),
 ] %}<tr><td><span class="pill {{ 'on' if m == 'POST' }}">{{ m }}</span></td><td class="mono">{{ p }}</td><td>{{ d }}</td></tr>{% endfor %}
 </tbody></table></div>
 <p class="muted" style="font-size:12px">细节见仓库里的 <span class="mono">docs/ANNOTATE.md</span>。</p>

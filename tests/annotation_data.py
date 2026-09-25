@@ -23,3 +23,19 @@ def write_pairs(path):
     np.save(path / "seg.npy", seg)
     (path / "meta.json").write_text(json.dumps({"dataset": {"id": "pair-regression"}}))
     return seg
+
+
+def historical_interpolation(block, z, labels, where, metadata):
+    """Recreate an old record for read/undo compatibility tests only."""
+    with block.lock:
+        changed = where & (labels != block.seg_slice(z)) & (labels != 0)
+        xs, ys = block._disk_idx(changed)
+        if not xs.size:
+            return None
+        seg = block._seg_writable()
+        new = labels.T[xs, ys].astype(seg.dtype)
+        rec = block._record("repair", z, xs, ys, seg[xs, ys, z].copy(), new, metadata)
+        seg[xs, ys, z] = new
+        seg.flush()
+        block._invalidate(z)
+        return rec

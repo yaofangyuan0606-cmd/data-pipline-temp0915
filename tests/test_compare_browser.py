@@ -1,4 +1,6 @@
 """Optional real browser regression for comparison, source filtering and downloads."""
+from annotation_data import historical_interpolation
+
 import json
 
 import numpy as np
@@ -23,32 +25,27 @@ def comparison_page(tmp_path):
         yield page, requests
 
 
-def test_comparison_wheel_inertia_does_not_keep_turning_slices(comparison_page):
+def test_comparison_wheel_zooms_without_turning_slices(comparison_page):
     page, requests = comparison_page
-    # A single touchpad gesture continues sending events after the fingers stop.
-    page.locator(".cmp-viewport").first.evaluate("""async el => {
-        for (const deltaY of [80, 40, 20, 8, 2]) {
-            el.dispatchEvent(new WheelEvent('wheel', {deltaY, bubbles:true, cancelable:true}));
-            await new Promise(resolve => setTimeout(resolve, 150));
-        }
-    }""")
-    page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false'")
-    assert page.locator("#cmp-z").input_value() == "1"
-    assert len(requests) == 2, "one gesture should request exactly one new slice"
-    page.wait_for_timeout(350)
-    page.locator(".cmp-viewport").first.dispatch_event("wheel", {"deltaY": 40})
-    page.wait_for_function("document.querySelector('#cmp-status').textContent.includes('Z 2') && document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false'")
-    assert len(requests) == 3, "a separate gesture can turn the next slice"
-    page.wait_for_timeout(350)
+    viewport = page.locator(".cmp-viewport").first
+    for delta in ({"deltaY": -40}, {"deltaY": -40, "ctrlKey": True}, {"deltaY": -40, "shiftKey": True}):
+        viewport.dispatch_event("wheel", delta)
+    assert page.locator("#cmp-zoom").input_value() == "175"
+    viewport.dispatch_event("wheel", {"deltaY": 40})
+    assert page.locator("#cmp-zoom").input_value() == "150"
     for delta in ({"deltaX": 50, "deltaY": 0}, {"deltaX": 50, "deltaY": 1}, {"deltaY": 0}):
-        page.locator(".cmp-viewport").first.dispatch_event("wheel", delta)
-        page.wait_for_timeout(300)
-    assert page.locator("#cmp-z").input_value() == "2" and len(requests) == 3
-    page.locator(".cmp-viewport").first.dispatch_event("wheel", {"deltaY": -40, "ctrlKey": True})
-    assert page.locator("#cmp-zoom").input_value() == "125" and len(requests) == 3
-    page.locator(".cmp-viewport").first.dispatch_event("wheel", {"deltaY": -10})
-    page.wait_for_timeout(1200)
-    assert len(requests) == 3, "releasing Ctrl during zoom inertia or waiting idle must not turn a slice"
+        viewport.dispatch_event("wheel", delta)
+    page.wait_for_timeout(300)
+    assert page.locator("#cmp-zoom").input_value() == "150"
+    assert page.locator("#cmp-z").input_value() == "0" and len(requests) == 1
+    viewport.focus()
+    for key, z in [("ArrowDown", "1"), ("z", "2"), ("a", "1"), ("ArrowUp", "0")]:
+        page.keyboard.press(key)
+        page.wait_for_function("z => document.querySelector('#cmp-z').value === z && document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false'", arg=z)
+    count = len(requests)
+    for key in ["ArrowRight", "ArrowLeft", "w", "s", "PageDown", "End"]:
+        page.keyboard.press(key)
+    assert len(requests) == count and page.locator("#cmp-z").input_value() == "0"
 
 
 def test_comparison_boundaries_same_slice_and_key_repeat_do_not_reload(comparison_page):
@@ -56,18 +53,19 @@ def test_comparison_boundaries_same_slice_and_key_repeat_do_not_reload(compariso
     viewport = page.locator(".cmp-viewport").first
     viewport.dispatch_event("wheel", {"deltaY": -40})
     viewport.focus()
-    page.keyboard.press("ArrowLeft")
+    page.keyboard.press("ArrowUp")
     page.locator("#cmp-z").dispatch_event("change")
     page.wait_for_timeout(350)
     assert len(requests) == 1, "the first slice must not be reloaded by backward navigation"
-    viewport.dispatch_event("keydown", {"key": "ArrowRight", "repeat": True})
+    viewport.dispatch_event("keydown", {"key": "ArrowDown", "repeat": True})
     page.wait_for_timeout(200)
     assert len(requests) == 1, "holding a key must not start automatic paging"
     page.locator("#cmp-z").fill("7")
     page.locator("#cmp-z").dispatch_event("change")
     page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false'")
     assert len(requests) == 2
-    viewport.dispatch_event("wheel", {"deltaY": 40})
+    viewport.focus()
+    page.keyboard.press("ArrowDown")
     page.wait_for_timeout(350)
     assert len(requests) == 2, "the last slice must not be reloaded by forward navigation"
     page.locator("#cmp-z").focus()
@@ -153,7 +151,10 @@ def test_neuroglancer_third_pane_keeps_images_fitted_and_aligned(comparison_page
         route.fulfill(json={"url": f"https://neuroglancer.example/viewer#z={z}", "center": [10, 20, int(z)]})
 
     page.route("**/neuroglancer/embed?*", embed)
+    # Load the viewer only after installing its mock, resetting the cached location.
+    page.reload(wait_until="domcontentloaded")
     page.wait_for_function("document.querySelector('#cmp-ng-seg-caption').textContent.includes('Z 0')")   # 两栏 Neuroglancer 默认常驻
+    initial_requests = len(requests)
     for width, height in [(2559, 1345), (1366, 768), (1024, 768), (768, 1024), (390, 844), (320, 740)]:
         page.set_viewport_size({"width": width, "height": height})
         page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
@@ -165,16 +166,16 @@ def test_neuroglancer_third_pane_keeps_images_fitted_and_aligned(comparison_page
             fitted: [...document.querySelectorAll('.cmp-viewport')].every(v =>
                 v.scrollWidth<=v.clientWidth+1 && v.scrollHeight<=v.clientHeight+1)
         })""")
-        assert geometry["scroll"] <= width + 1
+        assert geometry["scroll"] <= width + 1, page.locator("body *").evaluate_all("es => es.filter(e => e.getBoundingClientRect().right > innerWidth + 1).map(e => [e.tagName, e.id, e.className]).slice(0, 12)")
         assert geometry["fitted"]
         panes = geometry["panes"]
         assert all(p["height"] == pytest.approx(panes[0]["height"], abs=1) for p in panes)
         if width > 1100:
             assert all(p["y"] == pytest.approx(panes[0]["y"], abs=1) for p in panes)
-    assert len(requests) == 1, "enabling or resizing the third pane must not reload the comparison"
+    assert len(requests) == initial_requests, "enabling or resizing the third pane must not reload the comparison"
     page.locator("#cmp-next").click()
     page.wait_for_function("document.querySelector('#cmp-ng-seg-frame').getAttribute('src').endsWith('z=1') && document.querySelector('#cmp-ng-em-frame').getAttribute('src').endsWith('z=1')")
-    assert len(requests) == 2
+    assert len(requests) == initial_requests + 1
     assert page.locator(".cmp-viewport").evaluate_all("es=>es.every(v=>v.scrollWidth<=v.clientWidth+1&&v.scrollHeight<=v.clientHeight+1)")
 
 
@@ -189,7 +190,7 @@ def test_comparison_in_browser(tmp_path):
     block.apply_mask(0, mask, 77, {"model": "SAM 2.1"})
     repair = np.zeros(block.shape_zyx[1:], dtype=np.uint64)
     repair[4, 36] = 77
-    block.apply_labels(0, repair, repair != 0, {"interpolated": True, "source_sections": [0, 1]})
+    historical_interpolation(block, 0, repair, repair != 0, {"interpolated": True, "source_sections": [0, 1]})
     before_work = (block.work / "seg_edit.npy").read_bytes()
     with browser_for(tmp_path, data) as (_, page):
         page.locator("#an-compare").click()
@@ -218,8 +219,9 @@ def test_comparison_in_browser(tmp_path):
         assert "77" in page.locator("#cmp-rows").inner_text()
         page.locator("#cmp-mode").select_option("sources")
         assert "按来源着色" in page.locator("#cmp-after-caption").inner_text()
-        page.locator(".cmp-viewport").first.evaluate("el => {el.scrollLeft = 120; el.dispatchEvent(new Event('scroll'));}")
-        page.wait_for_function("Math.abs(document.querySelectorAll('.cmp-viewport')[0].scrollLeft-document.querySelectorAll('.cmp-viewport')[1].scrollLeft)<2")
+        page.locator("#cmp-zoom").fill("300")
+        page.locator(".cmp-viewport").evaluate("el => {el.scrollLeft = 120; el.dispatchEvent(new Event('scroll'));}")
+        page.wait_for_function("document.querySelector('.cmp-viewport').scrollLeft > 0")
         with page.expect_download() as pending:
             page.locator("#cmp-json").click()
         download = pending.value

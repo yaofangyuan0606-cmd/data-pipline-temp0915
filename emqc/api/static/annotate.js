@@ -21,7 +21,7 @@
     cache: new Map(), loading: new Map(), cacheVersion: 0, hoverXY: null, hoverPane: 0, regionEntry: null, regions: [],
     playing: null, drag: null, stroke: null, mergeFirst: null, mergeBusy: false, spacePan: false, curtainDrag: false,
     samPoints: [], samLabels: [], samBox: null, samStart: null, samPreview: null, samMask: null, samRequest: null, samSequence: 0,
-    samNeighbour: null, repair: null, repairMask: null,
+    samNeighbour: null, selection: null, selectionSequence: 0,
     historySequence: 0, ngMode: null, ngRequest: null, ngSequence: 0, ngWindow: null, ngTimer: null,
     who: "", hbTimer: null, revs: new Map(), undoTarget: null,
     tabHeld: false, radiusDrag: null, lastClientX: 0,
@@ -110,14 +110,14 @@
     return p;
   }
   function prefetch() { for (const d of [1, -1, 2, -2, 3, -3]) { const z = S.z + d; if (z >= 0 && z < S.info.shape_zyx[0]) fetchZ(z).catch(() => {}); } }
-  function invalidate(z) { S.cache.delete(z); S.loading.delete(z); if (z === S.z) clearRegions(); }
+  function invalidate(z) { S.cache.delete(z); S.loading.delete(z); if (z === S.z) { clearRegions(); if (S.selection?.kind === "edit") clearSelection(); } }
   function dropAll() { S.cacheVersion++; S.cache.clear(); S.loading.clear(); clearRegions(); }
 
   // ------------------------------------------------------------------ 标注人：每一笔改动记在谁名下
   // 平台没有账号，"谁"就是标注员在右上角填的名字：存在本机浏览器里，每次写入随请求带给服务端，写进每条记录。
   const WHO_KEY = "emqc.annotator";
   const when = ts => typeof ts === "string" && ts.length >= 16 ? ts.slice(11, 16) : "刚才";
-  const editLabel = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "修补·插值" : e.kind === "refine" ? "修缮边缘" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : e.only_id ? "擦除" : "涂抹";
+  const editLabel = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "插值（历史）" : e.kind === "refine" ? "修缮边缘" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : e.only_id ? "擦除" : "涂抹";
   function cleanWho(v) { return String(v || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64); }
   function setWho(v, save = true) {
     S.who = cleanWho(v);
@@ -156,7 +156,7 @@
     if (z === S.z) await goZ(z, true, true);              // 已经翻到别的片就只作废缓存，不把人拽回去
     return true;
   }
-  // SAM 应用 / 修补应用被拒（409：这一片在预览之后变了）：同样刷新这一片，让人看到最新画面再决定
+  // SAM 应用被拒（409：这一片在预览之后变了）：同样刷新这一片，让人看到最新画面再决定
   function refreshIfConflict(err, z) { if (err.status === 409) { invalidate(z); if (z === S.z) goZ(z, true, true); } }
   // 撤销撞上别人的改动（409 not_yours）：说清楚是谁几点改的，确认了才带 force 再撤
   function undoAsk(latest) {
@@ -276,10 +276,10 @@
     const e = S.cache.get(S.z); if (!e) return;
     const pin = S.mergeFirst && S.mergeFirst.z === S.z ? regionAt(e, ...S.mergeFirst.xy) : null;
     const hover = S.hover && S.hoverXY ? regionAt(e, ...S.hoverXY) : null;
+    drawSelection(e);
     if (pin) drawRegion(pin, [255, 214, 10], 90);
     if (hover && (!pin || !pin.mask[S.hoverXY[1] * S.W + S.hoverXY[0]])) drawRegion(hover, [255, 255, 255], 60);
     drawSAM();
-    if (S.repairMask && !S.blink) for (const p of panes()) p.gHi.drawImage(S.repairMask, 0, 0);
     if (S.view === "overlay" && S.curtain) {
       const g = P[0].gHi, cx = S.curtainX + 0.5, lw = 1 / S.zoom;
       g.lineWidth = 3 * lw; g.strokeStyle = "rgba(0,0,0,.55)"; g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, S.H); g.stroke();
@@ -407,7 +407,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) { if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); clearRepair(); clearNeighbourList("an-neighbour-list"); clearTimeout(S.hbTimer); S.hbTimer = setTimeout(heartbeat, 1500); }
+    if (z !== S.z) { if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); clearSelection(); clearNeighbourList("an-neighbour-list"); clearTimeout(S.hbTimer); S.hbTimer = setTimeout(heartbeat, 1500); }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     $("an-compare").href = `/annotate/compare?block=${encodeURIComponent(S.block)}&z=${z}`;
@@ -418,12 +418,12 @@
     if (S.z !== z || S.block !== block || S.cache.get(z) !== entry) return;
     render(); status(); segList(); prefetch(); await history;
   }
-  let wheelAcc = 0;
   function onWheel(ev, p) {
     ev.preventDefault();
-    if (ev.ctrlKey || ev.metaKey) { const r = p.stage.getBoundingClientRect(); zoomAt(Math.exp(-ev.deltaY * 0.002), ev.clientX - r.left, ev.clientY - r.top); return; }
-    wheelAcc += ev.deltaY; const step = ev.deltaMode === 1 ? 1 : 40;   // one section per notch, not per pixel
-    if (Math.abs(wheelAcc) >= step) { const n = Math.trunc(wheelAcc / step); wheelAcc -= n * step; goZ(S.z + n, true); }
+    if (!ev.deltaY || Math.abs(ev.deltaX) >= Math.abs(ev.deltaY)) return;
+    const r = p.stage.getBoundingClientRect();
+    const delta = ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? r.height : 1);
+    zoomAt(Math.exp(-Math.max(-500, Math.min(500, delta)) * 0.002), ev.clientX - r.left, ev.clientY - r.top);
   }
 
   // ------------------------------------------------------------------ tools
@@ -432,14 +432,20 @@
     clear3D();
     if (t.startsWith("sam") && S.tool === t) t = "pick";
     if (!t.startsWith("sam")) clearSAM();
-    clearRepair();                       // 修补是整片操作，切到任何画笔工具都说明注意力已经离开它
     S.tool = t; mergeArm(null);
     if ((t === "merge" || t === "ng" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     document.querySelectorAll(".tool").forEach(b => { const active = b.dataset.tool === t; b.classList.toggle("active", active); b.setAttribute("aria-pressed", String(active)); });
     for (const p of P) { p.stage.classList.toggle("pan", t === "pan"); p.stage.dataset.tool = t; }   // 光标跟着工具走（见 style.css）
     renderHi();
   }
-  function setCur(id) { S.cur = String(id); $("an-cur-id").textContent = S.cur === "0" ? "未选择" : S.cur; $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur)); status(); segList(); samButtons(); }
+  function setCur(id, highlight = false) {
+    clearSelection();
+    S.cur = String(id);
+    if (highlight && S.cur !== "0") S.selection = { kind: "label", id: S.cur };
+    $("an-cur-id").textContent = S.cur === "0" ? "未选择" : S.cur;
+    $("an-cur-sw").style.background = S.cur === "0" ? "transparent" : css(colorOf(S.cur));
+    status(); segList(); samButtons(); renderHi();
+  }
   // 修缮边缘：点一下标签块，压过黑膜、跨到邻居身上的部分收回来（只收缩，收掉的清成背景，可撤销）
   async function refineAt(x, y) {
     if (S.mergeBusy || !ensureWho()) return;
@@ -502,7 +508,6 @@
     S.mergeBusy = on;
     document.querySelectorAll(".vast-tools button, .vast-tools input, .vast-tools select").forEach(el => el.disabled = on);
     samButtons();
-    $("an-rp-apply").disabled = on || !S.repair?.n_px;
   }
   async function mergeInto(x, y) {
     if (S.mergeBusy || !ensureWho()) return;
@@ -608,54 +613,10 @@
   async function newId() {
     if (S.mergeBusy || !S.info?.has_seg) return;
     mergeBusy(true);
-    try { const id = await reserveLabel(); setCur(id); flash(`已新建标签 ${id}`); }
+    try { const id = await reserveLabel(); $("an-search").value = ""; setCur(id, true); flash(`已新建标签 ${id}，涂色后显示高亮区域`); }
     catch (err) { flash("新建失败: " + err.message, true); }
     finally { mergeBusy(false); }
   }
-
-  // ------------------------------------------------------------------ 修补损坏切片
-  // The image inside a black cut is gone for good and is never fabricated; what gets filled back are the labels,
-  // interpolated from the cells' shapes on the nearest good sections either side. Preview first, then apply.
-  async function repairScan() {
-    if (!S.block) return;
-    const el = $("an-rp-info");
-    el.textContent = "正在扫描整块…";
-    try {
-      const r = await getJSON(`${API}/blocks/${encodeURIComponent(S.block)}/repair/scan`);
-      if (!r.n) { el.textContent = "整块没有检测到损坏切片。"; return; }
-      const list = r.sections.slice(0, 12).map(s => `<a href="#" data-z="${s.z}">z${s.z}</a> ${(s.fraction * 100).toFixed(0)}%${s.whole ? "(整片)" : ""}`).join("、");
-      el.innerHTML = `${r.n} 片有损坏：${list}${r.n > 12 ? " …" : ""}`;
-      el.querySelectorAll("a[data-z]").forEach(a => a.addEventListener("click", ev => { ev.preventDefault(); goZ(+a.dataset.z); }));
-    } catch (err) { el.textContent = "扫描失败：" + err.message; }
-  }
-  async function repairPreview() {
-    if (!S.block || S.mergeBusy) return;
-    const el = $("an-rp-info");
-    el.textContent = "正在按上下切片插值…";
-    $("an-rp-apply").disabled = true; S.repair = null;
-    try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/repair/preview`, { z: S.z });
-      S.repairMask = await loadImg(r.mask_png); S.repair = r;
-      $("an-rp-apply").disabled = !r.n_px;
-      el.textContent = `可补 ${r.n_px} 像素 · 不确定 ${r.uncertain_px} 像素 · 保留 ${r.unfilled_px} 像素。`
-        + `参考切片 ${r.source_sections.join("、")}。` + (r.note || "");
-    } catch (err) { S.repair = null; S.repairMask = null; el.textContent = "预览失败：" + err.message; }
-    finally { renderHi(); }
-  }
-  async function repairApply() {
-    if (!S.repair || S.mergeBusy || !ensureWho()) return;
-    const z = S.z, token = S.repair.token;
-    mergeBusy(true);
-    try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/repair/apply`, editBody(z, { token }));
-      await afterEdit(r, z);
-      flash(r.edit ? `已补 ${r.edit.n_px} 像素的标签（插值，可 Ctrl+Z 撤销）` : "没有需要改动的像素");
-    } catch (err) { flash("修补失败：" + err.message, true); refreshIfConflict(err, z); }
-    finally { S.repair = null; S.repairMask = null; $("an-rp-apply").disabled = true; mergeBusy(false); renderHi(); }
-  }
-  $("an-rp-scan").addEventListener("click", repairScan);
-  $("an-rp-prev").addEventListener("click", repairPreview);
-  $("an-rp-apply").addEventListener("click", repairApply);
 
   // ------------------------------------------------------------------ 3D viewing, cancellable while links are loading
   function clear3D() {
@@ -704,15 +665,6 @@
     } finally { if (sequence === S.ngSequence) S.ngRequest = null; }
   }
 
-  // The repair proposal is pinned to one section and one revision of the labels; leaving that context must take the
-  // green overlay and the 应用 button with it, or a stale proposal stays on screen looking applicable.
-  const RP_HINT = `插值补标签。绿：新增 · 斜纹：不确定 · 红：保留原样。`;
-  function clearRepair() {
-    if (!S.repair && !S.repairMask) return;
-    S.repair = null; S.repairMask = null;
-    const a = $("an-rp-apply"); if (a) a.disabled = true;
-    const el = $("an-rp-info"); if (el) el.innerHTML = RP_HINT;
-  }
   async function clearAt(x, y, whole) {                     // 清除: set to background, then re-colour with any tool
     const keep = S.cur;
     S.cur = "0";
@@ -930,14 +882,13 @@
   document.addEventListener("keydown", ev => {
     if (typing(ev.target)) return;
     if (S.mergeBusy) return;
+    if (!S.info || ev.defaultPrevented) return;
     const k = ev.key;
     if ((ev.ctrlKey || ev.metaKey) && k.toLowerCase() === "z") { ev.preventDefault(); undo(); return; }
-    if (k === "ArrowUp" || k === "w" || k === "a") { ev.preventDefault(); goZ(S.z - 1, true); }
-    else if (k === "ArrowDown" || k === "s" || k === "z") { ev.preventDefault(); goZ(S.z + 1, true); }
-    else if (k === "PageUp") { ev.preventDefault(); goZ(S.z - 10, true); }
-    else if (k === "PageDown") { ev.preventDefault(); goZ(S.z + 10, true); }
-    else if (k === "Home") goZ(0); else if (k === "End") goZ(S.info.shape_zyx[0] - 1);
-    else if (k === "Escape") { if (S.ngMode || S.tool.startsWith("sam")) setTool("pick"); mergeArm(null); clearSAM(); clearRepair(); renderHi(); }
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (k === "ArrowUp" || k.toLowerCase() === "a") { ev.preventDefault(); if (!ev.repeat) goZ(S.z - 1, true); }
+    else if (k === "ArrowDown" || k.toLowerCase() === "z") { ev.preventDefault(); if (!ev.repeat) goZ(S.z + 1, true); }
+    else if (k === "Escape") { if (S.ngMode || S.tool.startsWith("sam")) setTool("pick"); mergeArm(null); clearSAM(); clearSelection(); renderHi(); }
     else if (k === "m") setTool("merge");
     else if (k.toLowerCase() === "u" && !ev.repeat) toggle3D("point", S.hoverXY);
     // 右手握鼠标，高频工具放左手：Q 拾取、D 画笔，挨着 E 橡皮、F 填充、R 修缮。P、B 保留作旧键位
@@ -987,17 +938,67 @@
     $("an-nseg").textContent = `${ids.length} 个`;
     const group = (key, title, labels) => `<section class="vast-label-group" data-label-group="${key}" aria-labelledby="an-labels-${key}">`
       + `<div class="vast-list-heading" id="an-labels-${key}"><span>${title}</span><span class="muted mono">${labels.length}</span></div>`
-      + labels.slice(0, 400).map(([id, n, k]) => `<div class="row ${id === S.cur ? "cur" : ""}${S.bulk?.has(id) ? " bulk-on" : ""}" data-id="${id}" data-k="${k}">${S.bulk ? `<input type="checkbox" class="bulk-box" ${S.bulk.has(id) ? "checked" : ""} tabindex="-1">` : ""}<span class="sw" style="background:${css(colorOf(id))}"></span><span class="id" title="${id}">${id}</span><span class="n">${n || "未使用"}</span></div>`).join("")
+      + labels.slice(0, 400).map(([id, n, k]) => `<div class="row ${id === S.cur ? "cur" : ""}${S.bulk?.has(id) ? " bulk-on" : ""}" data-id="${id}" data-k="${k}" role="button" tabindex="0" aria-pressed="false">${S.bulk ? `<input type="checkbox" class="bulk-box" ${S.bulk.has(id) ? "checked" : ""} tabindex="-1">` : ""}<span class="sw" style="background:${css(colorOf(id))}"></span><span class="id" title="${id}">${id}</span><span class="n">${n || "未使用"}</span></div>`).join("")
       + (!labels.length ? `<div class="vast-list-note">${q ? "无匹配标签" : "暂无"}</div>` : "")
       + (labels.length > 400 ? `<div class="vast-list-note">还有 ${labels.length - 400} 个，请搜索</div>` : "") + `</section>`;
     box.innerHTML = group("created", "新建标签", rows.filter(([id]) => created.has(id)))
       + group("existing", "已有标签", rows.filter(([id]) => !created.has(id)));
+    selectionRows();
   }
   $("an-segs").addEventListener("click", ev => {
     const r = ev.target.closest(".row[data-id]"); if (!r) return;
     if (S.bulk) { const id = r.dataset.id; S.bulk.has(id) ? S.bulk.delete(id) : S.bulk.add(id); segList(); bulkBar(); return; }
-    setCur(r.dataset.id);
+    setCur(r.dataset.id, true);
+    if (!(S.cache.get(S.z)?.ids.includes(r.dataset.id))) flash("这个标签在本片尚未使用，涂色后显示高亮区域");
   });
+  // List selection is independent of cursor hover and never writes labels.
+  function selectionRows() {
+    for (const row of document.querySelectorAll("#an-segs [data-id], #an-edits [data-edit]")) {
+      const selected = S.selection?.kind === "label" ? row.dataset.id === S.selection.id
+        : S.selection?.kind === "edit" && row.dataset.edit === String(S.selection.n);
+      row.classList.toggle("selected", !!selected);
+      row.setAttribute("aria-pressed", String(!!selected));
+    }
+  }
+  function clearSelection() { S.selectionSequence++; S.selection = null; selectionRows(); }
+  function drawSelection(e) {
+    const selected = S.selection;
+    if (!selected || S.blink) return;
+    if (selected.kind === "label" && selected.entry !== e) {
+      selected.entry = e;
+      const k = e.ids.indexOf(selected.id), W = S.W, H = S.H;
+      const canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
+      const g = canvas.getContext("2d"), img = g.createImageData(W, H), d = img.data;
+      if (k > 0 && e.idx) for (let i = 0; i < e.idx.length; i++) {
+        if (e.idx[i] !== k) continue;
+        const x = i % W, y = Math.floor(i / W);
+        const edge = x === 0 || y === 0 || x === W - 1 || y === H - 1 || e.idx[i - 1] !== k || e.idx[i + 1] !== k || e.idx[i - W] !== k || e.idx[i + W] !== k;
+        d.set([255, 214, 10, edge ? 235 : 100], i * 4);
+      }
+      g.putImageData(img, 0, 0); selected.image = canvas;
+    }
+    if (selected.image) for (const p of panes()) p.gHi.drawImage(selected.image, 0, 0);
+  }
+  $("an-edits").addEventListener("click", async ev => {
+    const row = ev.target.closest("[data-edit]"); if (!row) return;
+    clearSelection();
+    const block = S.block, z = S.z, sequence = S.selectionSequence, n = Number(row.dataset.edit);
+    S.selection = { kind: "edit", n }; selectionRows(); renderHi();
+    try {
+      const image = await loadImg(`${API}/blocks/${encodeURIComponent(block)}/edits/${n}/mask.png?z=${z}&rev=${S.revs.get(z) ?? 0}&selection=${sequence}`);
+      if (sequence !== S.selectionSequence || block !== S.block || z !== S.z) return;
+      S.selection.image = image; renderHi();
+    } catch (_) {
+      if (sequence !== S.selectionSequence || block !== S.block || z !== S.z) return;
+      clearSelection(); renderHi(); flash("无法读取这笔改动的区域，记录可能已被撤销", true);
+    }
+  });
+  for (const id of ["an-segs", "an-edits"]) $(id).addEventListener("keydown", ev => {
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches('[role="button"]')) {
+      ev.preventDefault(); ev.stopPropagation(); ev.target.click();
+    }
+  });
+
   // ---------------------------------------------------------------- 批量删除（只动本片）
   // 高频误触点，所以：先进入选择模式勾标签，再点「删除所选」，再在对话框里确认——三步，最后一步才写数据；
   // 写成一笔，Ctrl/⌘+Z 一次撤回。
@@ -1049,9 +1050,10 @@
       if (block !== S.block || z !== S.z || sequence !== S.historySequence) return;
       $("an-nedit").textContent = `${r.n} 次改动`;
       const label = editLabel;
-      // A repair writes a different id per pixel, so its new_id is the text "N 个 id" — there is no one colour for it.
+      // Historical multi-label edits have no single colour swatch.
       const swatch = e => /^\d+$/.test(String(e.new_id)) && e.new_id !== "0" ? css(colorOf(e.new_id)) : "transparent";
-      $("an-edits").innerHTML = r.edits.map(e => `<div class="row"><span class="sw" style="background:${swatch(e)}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${esc(e.new_id)}${e.by ? ` <span class="by">· ${esc(e.by)}</span>` : ""}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">本片还没有改动</span></div>`;
+      $("an-edits").innerHTML = r.edits.map(e => `<div class="row" data-edit="${e.n}" role="button" tabindex="0" aria-pressed="false" title="点击高亮这笔改动的区域"><span class="sw" style="background:${swatch(e)}"></span><span class="id">#${e.n} ${label(e)} ${e.z == null ? `${e.n_slices} 片` : "z" + e.z} → ${esc(e.new_id)}${e.by ? ` <span class="by">· ${esc(e.by)}</span>` : ""}</span><span class="n">${e.n_px}px</span></div>`).join("") || `<div class="row"><span class="n">本片还没有改动</span></div>`;
+      selectionRows();
       $("an-editors").textContent = r.editors?.length ? "改动人：" + r.editors.map(x => `${x.by || "未署名"} ×${x.n}`).join(" · ") : "";
     } catch (_) {
       if (block !== S.block || z !== S.z || sequence !== S.historySequence) return;
@@ -1067,6 +1069,7 @@
   $("an-prev").addEventListener("click", () => goZ(S.z - 1));
   $("an-next").addEventListener("click", () => goZ(S.z + 1));
   $("an-z").addEventListener("change", ev => goZ(+ev.target.value));
+  $("an-z").addEventListener("wheel", ev => ev.preventDefault(), { passive: false });
   $("an-zr").addEventListener("input", ev => goZ(+ev.target.value, true));
   $("an-undo").addEventListener("click", () => undo());
   $("an-play").addEventListener("click", () => {
@@ -1092,7 +1095,7 @@
   async function selectBlock(id) {
     if (S.mergeBusy) return;
     if (S.ngMode) setTool("pick");
-    clearSAM(); clearRepair();
+    clearSAM(); clearSelection();
     if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     S.block = id; S.createdIds = []; dropAll(); S.revs.clear(); S.hoverXY = null; mergeArm(null);
     const pr = $("an-presence"); pr.hidden = true; pr.innerHTML = ""; pr.classList.remove("same");

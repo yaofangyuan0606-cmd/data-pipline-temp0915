@@ -264,25 +264,6 @@ def test_sam_apply_is_stale_only_when_its_own_section_changed(tmp_path):
     assert service.apply(b, token, 9, by="张三")["by"] == "张三"
 
 
-def test_repair_apply_stamps_the_actor(tmp_path):
-    import time
-
-    from emqc.annotate.interpolate import service as repair
-    from emqc.annotate.sam import revision
-
-    b = make_block(tmp_path)
-    labels = np.zeros(b.shape_zyx[1:], np.uint64)
-    labels[3, 3] = 42
-    hole = np.zeros(b.shape_zyx[1:], bool)
-    hole[3, 3] = True
-    token = "b" * 32
-    repair.proposals[token] = {"path": str(b.path.resolve()), "work": str(b.work.resolve()), "z": 1, "labels": labels, "hole": hole,
-                               "revision": revision(b), "created": time.monotonic(), "sources": [0, 2], "dark": 12}
-    rec = repair.apply(b, token, by="张三")
-    assert rec["kind"] == "repair" and rec["by"] == "张三" and b.pick(1, 3, 3) == 42
-    assert b.audit_entries()[-1]["by"] == "张三" and b.editors(1)[0]["by"] == "张三"
-
-
 def test_presence_forgets_people_after_the_ttl(api):
     from emqc.api.routers import annotate
 

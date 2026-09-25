@@ -170,7 +170,7 @@
     $("legend").innerHTML = r.source_legend.map(s => `<span><i class="cmp-dot" style="background:${s.color}"></i>${esc(s.name)} <b>${fmt(r.sources[s.key].label_pixels)}</b> px</span>`).join("");
     $("policy").textContent = r.policy;
     $("warnings").hidden = !r.warnings.length; $("warnings").replaceChildren(...r.warnings.map(w => { const p = document.createElement("p"); p.textContent = w; return p; }));
-    const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", split:"切割 / 分离（历史）", sam:"SAM 应用", repair:"插值修补", refine:"边缘修缮", smartfill:"智能填充（历史）"};
+    const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", split:"切割 / 分离（历史）", sam:"SAM 应用", repair:"插值（历史）", refine:"边缘修缮", smartfill:"智能填充（历史）"};
     $("operations").innerHTML = r.operations.slice().reverse().map(e => `<tr><td>#${e.n} ${esc(kinds[e.kind] || e.kind)}</td><td>${esc(e.by ?? "未署名")}</td><td>${esc(names[e.source])}</td><td>${esc(e.ts || "—")}</td><td>${fmt(e.n_px_in_slice)}</td><td>${fmt(e.current_px)}</td><td>${esc(e.model || (e.source_sections ? `Z ${e.source_sections.join(", ")}` : "—"))}</td></tr>`).join("") || '<tr><td colspan="7">当前切片没有可读取的有效编辑记录。</td></tr>';
     rows();
   }
@@ -186,7 +186,7 @@
     try {
       const r = await json(`${API}/${encodeURIComponent(state.block)}/audit?z=${state.z}&limit=300`);
       if (auditFor !== key) return;
-      const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", sam:"SAM 应用", repair:"插值修补", refine:"边缘修缮", clear:"批量删除"};
+      const kinds = {paint:"画笔 / 橡皮", fill:"填充 / 清除", merge:"合并", sam:"SAM 应用", repair:"插值（历史）", refine:"边缘修缮", clear:"批量删除"};
       $("audit-rows").innerHTML = r.entries.map(e => `<tr class="${e.action === "undo" ? "cmp-undo" : ""}"><td>${e.seq}</td><td>${esc(e.ts || "—")}</td><td>${esc(e.by ?? "未署名")}</td><td>${e.action === "undo" ? `撤销 #${e.n}${e.forced ? "（强制）" : ""}` : `#${e.n} ${esc(kinds[e.kind] || e.kind || "")}${e.z == null ? " · 整块" : ""}`}</td><td>${fmt(e.n_px ?? 0)}</td><td>${e.action === "undo" ? esc(e.of ?? "未署名") : '<span class="muted">—</span>'}</td></tr>`).join("")
         || '<tr><td colspan="6" class="muted">这一片还没有任何操作。</td></tr>';
     } catch (err) { if (auditFor === key) { auditFor = ""; $("audit-rows").innerHTML = `<tr><td colspan="6" class="muted">读取失败：${esc(err.message)}</td></tr>`; } }
@@ -212,7 +212,7 @@
     $("z").value = state.z; $("z").max = block.nz-1; $("zmax").textContent = `/ ${block.nz-1}　共 ${block.nz} 片`;
     $("prev").disabled = state.z === 0; $("next").disabled = state.z === block.nz-1;
     $("status").textContent = `正在加载 ${state.block} · Z ${state.z}…`;
-    $("pixel").textContent = "滚轮翻片（一次手势一片） · Ctrl/⌘+滚轮缩放 · 拖动平移（两侧同步） · 移动鼠标查看标签与来源";
+    $("pixel").textContent = "滚轮缩放 · ↑↓ / A Z 翻片 · 拖动平移（两侧同步） · 移动鼠标查看标签与来源";
     document.querySelectorAll(".cmp-cursor, .cmp-ring").forEach(c => { c.hidden = true; });
     const params = new URLSearchParams({block:state.block, z:state.z});
     history.replaceState(null, "", `/annotate/compare?${params}`); $("edit").href = `/annotate?${params}`;
@@ -494,7 +494,7 @@
     if (play.timer) { clearInterval(play.timer); play.timer = setInterval(play.tick, Math.round(1000 / (+$("fps").value || 8))); }
   });
 
-  // ---------------------------------------------------------------- 缩放 / 滚轮翻 z / 拖动平移，和标注页一个习惯
+  // ---------------------------------------------------------------- 滚轮缩放 / 键盘翻 z / 拖动平移，和标注页一个习惯
   function layoutImages(reset = false) {
     if ($("images").hidden) return;
     const W = canvases[0].width, H = canvases[0].height;
@@ -532,20 +532,12 @@
   let ngResize = null;
   new ResizeObserver(() => { ngFit(); clearTimeout(ngResize); ngResize = setTimeout(ngSync, 300); }).observe($("ng-em-frame").parentElement);
   window.addEventListener("resize", () => layoutImages());
-  let wheelGesture = null;
   function onWheel(ev) {
-      // Horizontal swipes and zero-delta events are not requests to turn a slice.
-      if (!ev.deltaY || Math.abs(ev.deltaX) >= Math.abs(ev.deltaY)) return;
-      ev.preventDefault();
-      const first = wheelGesture === null;
-      clearTimeout(wheelGesture);
-      // Rearm after the gesture has stopped, not on a repeating timer during its inertia tail.
-      // Zoom shares this guard so releasing Ctrl during a gesture cannot turn a slice.
-      wheelGesture = setTimeout(() => { wheelGesture = null; }, 250);
-      if (ev.ctrlKey || ev.metaKey) { setZoom(state.zoom + (ev.deltaY < 0 ? 25 : -25)); return; }
-      if (first) load(state.z + (ev.deltaY > 0 ? 1 : -1));
+    ev.preventDefault();
+    if (!ev.deltaY || Math.abs(ev.deltaX) >= Math.abs(ev.deltaY)) return;
+    setZoom(state.zoom + (ev.deltaY < 0 ? 25 : -25));
   }
-  // 查看器栏的 iframe 不接鼠标，滚轮落在外层盒子上：同样翻 z，三栏一起动；拖动只属于我们自己的画布
+  // 三栏滚轮统一缩放，翻片只使用 ↑↓ / A Z 或翻页控件。
   document.querySelectorAll(".cmp-ngbox").forEach(box => box.addEventListener("wheel", onWheel, {passive: false}));
   viewports.forEach(viewport => {
     viewport.addEventListener("wheel", onWheel, {passive: false});
@@ -564,9 +556,9 @@
   $("csv").addEventListener("click", () => download("csv")); $("json").addEventListener("click", () => download("json"));
   document.addEventListener("keydown", e => {
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(e.target.tagName)) return;
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    if (["ArrowUp", "ArrowDown", "a", "z"].includes(e.key.length === 1 ? e.key.toLowerCase() : e.key)) {
       e.preventDefault();
-      if (!e.repeat) load(state.z+(e.key === "ArrowLeft" ? -1 : 1));
+      if (!e.repeat) load(state.z+(e.key === "ArrowUp" || e.key.toLowerCase() === "a" ? -1 : 1));
     }
     if (e.key === " " && !e.repeat) { e.preventDefault(); play.timer || play.controller ? stopPlay() : startPlay(play.lastMode); }
   });
@@ -608,7 +600,7 @@
     $("mark").setAttribute("aria-pressed", String(on));
     viewports.forEach(v => v.classList.toggle("cmp-marking", on));
     if (!on) hideMarkForm();
-    $("pixel").textContent = on ? "标记模式：点标注后图上的位置，写一句话钉在那里；再点「标记」退出" : "滚轮翻片（一次手势一片） · Ctrl/⌘+滚轮缩放 · 拖动平移（两侧同步） · 移动鼠标查看标签与来源";
+    $("pixel").textContent = on ? "标记模式：点标注后图上的位置，写一句话钉在那里；再点「标记」退出" : "滚轮缩放 · ↑↓ / A Z 翻片 · 拖动平移（两侧同步） · 移动鼠标查看标签与来源";
   }
   function openMarkForm(x, y, cx, cy) {
     const f = $("mark-form"); f.hidden = false; f.dataset.x = x; f.dataset.y = y;
