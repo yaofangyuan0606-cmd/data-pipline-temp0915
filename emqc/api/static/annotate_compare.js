@@ -565,7 +565,11 @@
   // ---------------------------------------------------------------- 标记与评论：钉在体素上的一句话 + 线程
   // 图上是编号图钉，下面是列表；同事打开带 mark= 的链接看到同一个点；AI agent 用同一套接口读写（评论 kind=agent 打「AI」标）。
   const MARKS = "/api/v1/annotate";
-  const fmtTime = ts => ts ? ts.replace("T", " ").slice(5, 16) : "";
+  const fmtTime = ts => {                                   // 接口给的是带时区的 UTC，按看的人的本地时间显示
+    if (!ts) return "";
+    const d = new Date(ts), p = n => String(n).padStart(2, "0");
+    return isNaN(d) ? ts.replace("T", " ").slice(5, 16) : `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
   const canDelete = m => !ME || ME.role === "admin" || (!!ME.user && m.created_by_user === ME.user);
   const labelAt = (x, y) => { const im = state.images, d = state.snapshot; if (!im?.indices?.[1] || !d?.after) return null; return d.after.ids[im.indices[1][y * canvases[0].width + x]] ?? null; };
   async function loadMarks(silent) {

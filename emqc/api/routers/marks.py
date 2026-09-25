@@ -27,7 +27,8 @@ def _now() -> datetime:
 
 
 def _iso(dt) -> str | None:
-    return dt.isoformat(timespec="seconds") if dt else None
+    """库里是不带时区的 UTC；接口给出带时区的时间（…+00:00），页面和 AI 助手都不会把它错当成本地时间。"""
+    return dt.replace(tzinfo=timezone.utc).isoformat(timespec="seconds") if dt else None
 
 
 class MarkIn(BaseModel):
