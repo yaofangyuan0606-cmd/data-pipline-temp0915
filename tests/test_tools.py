@@ -414,7 +414,8 @@ def test_refine_edge_pulls_a_label_back_to_the_membrane(tmp_path):
     rec = b.refine_edge(0, 20, 30, sensitivity=0.5)
     assert rec is not None and rec["kind"] == "refine" and rec["label"] == "7" and rec["new_id"] == "0"
     plane = b.seg_slice(0)
-    assert (plane[10:50, 50:57] == 0).all(), "跨过膜溢出去的部分被收掉"
+    assert (plane[10:50, 51:57] == 0).all(), "跨过膜溢出去的部分被收掉（膜外侧紧挨着的 1 像素是膜的模糊边，算膜）"
+    assert (plane[10:50, 48:50] == 7).all(), "膜本身留下：停在膜的外侧"
     assert (plane[10:50, 4:46] == 7).mean() > 0.97, "细胞内部基本原样（线粒体那种暗块也不该被挖掉）"
     assert (plane[22:28, 22:28] == 7).all(), "内部的暗块被补回来了"
     assert b.undo(0)["n"] == rec["n"] and (b.seg_slice(0)[10:50, 50:57] == 7).all()
@@ -463,14 +464,17 @@ def test_refine_edge_keeps_dark_organelles_inside_the_cell(tmp_path):
     assert (plane[10:50, 51:57] == 0).all()
 
 
-def test_refine_edge_peels_paint_that_sits_on_the_black_membrane():
-    """画笔越过细胞壁（黑）涂到邻居一点：压在黑膜上的那层剥掉，膜外那一小块跟着去掉；细胞本身和里面的暗块不动。"""
+def test_refine_edge_stops_at_the_outer_side_of_the_membrane():
+    """画笔越过细胞壁（黑）涂到邻居一点：膜外那一小块收回，压在膜上的部分留下——标签停在膜的外侧；细胞本身和里面的暗块不动。"""
     from emqc.annotate.boundary import pull_back_to_membrane
 
     em, left, right = two_cells()
     mask = left.copy()
     mask[20:28, 48:53] = True                          # a stroke across the wall (x 48-49) and 3 px into the right cell
     region = pull_back_to_membrane(mask, em, 20, 30, 0.5)
-    assert not region[20:28, 48:53].any(), "膜上和膜外的部分都收回来"
+    assert not region[20:28, 51:53].any(), "膜外的部分收回来（紧挨膜的 1 像素是膜的模糊边，算膜）"
+    assert region[20:28, 48:50].all(), "压在膜上的部分留下：停在膜的外侧"
     assert (region & left).sum() == left.sum(), "细胞本身一个像素都不少（连同里面的暗块）"
     assert pull_back_to_membrane(left, em, 20, 30, 0.5).sum() == left.sum(), "贴着膜的标签不动"
+    on_wall = left | (np.arange(96)[None, :] >= 48) & (np.arange(96)[None, :] < 50) & (np.arange(64)[:, None] >= 2) & (np.arange(64)[:, None] < 62)
+    assert pull_back_to_membrane(on_wall, em, 20, 30, 0.5).sum() == on_wall.sum(), "标签把整条膜都包进来也不动：膜算细胞的"

@@ -92,17 +92,48 @@ def _disk(r: int) -> np.ndarray:
 
 
 def pull_back_to_membrane(mask: np.ndarray, em: np.ndarray, x: int, y: int, sensitivity: float = 0.5) -> np.ndarray:
-    """修缮边缘：一块标签（`mask`）压到了黑膜上、或者跨过黑膜溢到外面时，把最外面这一层收回来；细胞里面的一律不管。
+    """修缮边缘：一块标签（`mask`）跨过黑色细胞膜、溢到膜外时，把膜外的部分收回来，停在膜的外侧——膜本身算细胞的，留下。
+    细胞里面的一律不管。
 
-    两步：先把越过很黑的膜、溢进亮胞质的薄片切掉（`_cut_bright_leaks`），再把压在外沿黑膜上的一层剥掉（`_peel_dark_rim`）。
-    离外沿 8 像素以外的像素永远不动；细胞里的暗色细胞器（线粒体、囊泡）不管贴不贴边都留下。
-    `sensitivity` 0–1：越高，越浅的暗线也算膜。只收缩、从不扩张；返回留下的部分（`mask` 的子集）。"""
+    三步：先把越过很黑的膜、溢进亮胞质的薄片切掉（`_cut_bright_leaks`）；再把压在外沿黑膜上的一层剥开，好把膜外断下来的
+    碎块分出来去掉（`_peel_dark_rim`）；最后把剥掉的膜从本体往外沿暗像素并回来，最多 `MEMBRANE_PX` 像素厚
+    （`_restore_membrane`）。所以最后收掉的只有膜外的部分。离外沿 10 像素左右以外的像素永远不动；细胞里的暗色细胞器
+    （线粒体、囊泡）不管贴不贴边都留下。`sensitivity` 0–1：越高，越浅的暗线也算膜。只收缩、从不扩张；返回留下的部分。"""
     mask = np.asarray(mask, bool)
     if not mask.any():
         return np.zeros_like(mask)
     score = membraneness(em)
     kept = _cut_bright_leaks(mask, score, x, y, sensitivity)
-    return _peel_dark_rim(kept, score, x, y, sensitivity)
+    kept = _peel_dark_rim(kept, score, x, y, sensitivity)
+    return _restore_membrane(mask, kept, score, sensitivity)
+
+
+MEMBRANE_PX = 6     # 并回来的膜最多这么厚：H01 上细胞膜大约 3～6 像素
+
+
+def _restore_membrane(mask: np.ndarray, kept: np.ndarray, score: np.ndarray, sensitivity: float = 0.5,
+                      reach: int = MEMBRANE_PX, loosen: float = 0.4, margin: int = 12) -> np.ndarray:
+    """第三步：标签停在膜的外侧。前两步收掉的像素里，从留下的本体出发、沿着暗像素（比剥膜时的门槛再松 `loosen` 个标准差）
+    走 `reach` 步以内够得到的，是细胞自己的膜，并回来；再往外的亮胞质不回来。"""
+    removed = mask & ~kept
+    if not removed.any() or not kept.any():
+        return kept
+    H, W = mask.shape
+    ys, xs = np.nonzero(removed)
+    y0, y1 = max(0, ys.min() - reach - margin), min(H, ys.max() + reach + margin + 1)
+    x0, x1 = max(0, xs.min() - reach - margin), min(W, xs.max() + reach + margin + 1)
+    dark = score[y0:y1, x0:x1] > 1.4 - 0.8 * float(np.clip(sensitivity, 0.0, 1.0)) - loosen
+    walk = removed[y0:y1, x0:x1] & dark
+    grown = kept[y0:y1, x0:x1].copy()
+    n8 = np.ones((3, 3), bool)
+    for _ in range(reach):
+        step = ndimage.binary_dilation(grown, structure=n8) & walk & ~grown
+        if not step.any():
+            break
+        grown |= step
+    out = kept.copy()
+    out[y0:y1, x0:x1] = grown
+    return ndimage.binary_fill_holes(out) & mask
 
 
 def _cut_bright_leaks(mask: np.ndarray, score: np.ndarray, x: int, y: int, sensitivity: float = 0.5,
@@ -150,7 +181,7 @@ def _cut_bright_leaks(mask: np.ndarray, score: np.ndarray, x: int, y: int, sensi
 def _peel_dark_rim(mask: np.ndarray, score_full: np.ndarray, x: int, y: int, sensitivity: float = 0.5,
                    rim: int = 8, depth: int = 10, slack: int = 2, organelle_r: int = 3, min_px: int = 6,
                    margin: int = 12) -> np.ndarray:
-    """第二步：压在外沿黑膜上的那一层剥掉，剥开后断下来的、漏进邻居的碎片一起去掉。
+    """第二步：压在外沿黑膜上的那一层剥开，剥开后断下来的、漏进邻居的碎片去掉（剥掉的膜在第三步并回来）。
 
     1. 剥膜。「暗」= 比局部暗 `thr` 个标准差以上。从标签外面的黑膜出发，把标签最外 `rim` 像素里、顺着暗像素直接够得到的
        部分剥掉——只剥"表层"：沿暗像素走过去的步数不能比直线进来的深度多 `slack` 步以上，顺着贴边细胞器钻进去的不剥。

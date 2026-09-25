@@ -24,7 +24,7 @@
       <button class="tool" data-tool="erase" aria-pressed="false" title="橡皮 (E)：只擦当前颜色的像素，压到邻居身上不会把邻居擦掉 · 按住 Tab 左右移动鼠标改半径（触控板：点一下 Tab 再移动）"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮 <kbd>E</kbd></button>
       <button class="tool" data-tool="merge" aria-pressed="false" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并 <kbd>M</kbd></button>
       <button class="tool" data-tool="clear" aria-pressed="false" title="清除连通区域；Shift+点击清除本片同标签"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M14 20h6"/></svg>清除</button>
-      <button class="tool" data-tool="refine" aria-pressed="false" title="修缮边缘 (R)：点一下标签块，只收最外层跨过黑膜漏到邻居身上的部分；细胞内部的黑色细胞器不动；灵敏度用 SAM 栏的「边界灵敏度」"><svg viewBox="0 0 24 24"><path d="M5 12c0-3.9 3.1-7 7-7s7 3.1 7 7-3.1 7-7 7-7-3.1-7-7z"/><path d="M8.5 12c0-1.9 1.6-3.5 3.5-3.5s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5-3.5-1.6-3.5-3.5z"/><path d="M12 5V2M12 22v-3M5 12H2M22 12h-3"/></svg>修缮 <kbd>R</kbd></button>
+      <button class="tool" data-tool="refine" aria-pressed="false" title="修缮边缘 (R)：点一下标签块，跨过黑膜溢到膜外的部分收回，停在膜的外侧（膜本身留下）；细胞内部的黑色细胞器不动；灵敏度用 SAM 栏的「边界灵敏度」"><svg viewBox="0 0 24 24"><path d="M5 12c0-3.9 3.1-7 7-7s7 3.1 7 7-3.1 7-7 7-7-3.1-7-7z"/><path d="M8.5 12c0-1.9 1.6-3.5 3.5-3.5s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5-3.5-1.6-3.5-3.5z"/><path d="M12 5V2M12 22v-3M5 12H2M22 12h-3"/></svg>修缮 <kbd>R</kbd></button>
       <button class="tool" data-tool="pan" aria-pressed="false" title="平移 (H · 中键拖动 · 空格+拖动)"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>平移 <kbd>H</kbd></button>
     </div>
     <div class="vast-mergehint muted" id="an-merge-hint" hidden></div>
@@ -155,7 +155,7 @@
       <div class="kbd-row">清除：擦除连通区域 · Shift+点击清除本片同标签</div>
       <div class="kbd-row"><kbd>M</kbd> 合并：先点 A，再点 B，B 改为 A 的标签</div>
       <div class="kbd-row"><kbd>D</kbd> 画笔（旧键 B 仍可用）：左键涂、<b>右键擦当前颜色</b>、<kbd>Ctrl</kbd>+点击拾取 · <kbd>E</kbd> 橡皮只擦当前颜色 · <kbd>[</kbd> <kbd>]</kbd> 或 <b>按住 <kbd>Tab</kbd> 左右移动鼠标</b>改半径（触控板：点一下 <kbd>Tab</kbd> 再移动、单击结束）</div>
-      <div class="kbd-row"><kbd>R</kbd> 修缮边缘：点一下标签块，只收最外层漏过黑膜的部分，细胞内部的黑色细胞器不动</div>
+      <div class="kbd-row"><kbd>R</kbd> 修缮边缘：点一下标签块，跨过黑膜溢到膜外的部分收回，停在膜的外侧；膜和细胞内部的黑色细胞器都不动</div>
       <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>
       <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销 · 「全部撤销」一次撤掉本片全部改动（先确认）</div>
       <div class="kbd-row">标注人：右上角填名字，每笔改动记下是谁改的 · 有人同时改这一片会提醒并自动刷新 · 只能撤销自己的改动</div>
