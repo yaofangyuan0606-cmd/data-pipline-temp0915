@@ -159,6 +159,8 @@ def browser(tmp_path):
             page = Browser(ws, f"http://127.0.0.1:{port}")
             page.call("Runtime.enable")
             page.call("Page.enable")
+            page.call("Page.addScriptToEvaluateOnNewDocument",
+                      source="localStorage.setItem('emqc.annotator', 'browser-test')")
             page.call("Network.enable")
             page.call("Fetch.enable", patterns=[{"urlPattern": "*", "requestStage": "Request"}])
             page.call("Page.navigate", url=f"http://127.0.0.1:{port}/annotate?block=pairs")

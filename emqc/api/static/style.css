@@ -418,3 +418,36 @@ tr.lg-4xx td { background: color-mix(in srgb, var(--medium) 8%, transparent); }
 .lg-table td { vertical-align: top; }
 .lg-msg { white-space: pre-wrap; word-break: break-word; font-size: 12.5px; max-width: 900px; }
 .lg-pre { white-space: pre-wrap; font-size: 11px; max-height: 320px; overflow: auto; background: var(--surface-2, var(--bg)); padding: 8px; border-radius: 6px; margin: 4px 0 0; }
+
+/* Seed strokes and their region use the same image coordinates as other tools. */
+.vast-stage[data-tool^="seed-"] { cursor: crosshair; }
+
+/* Keep the common seed workflow visible; occasional controls unfold in place. */
+.an-seed-panel { min-width: 0; }
+.an-seed-panel > .vast-sec { display: flex; justify-content: space-between; gap: 6px; letter-spacing: 0; }
+.an-seed-step { margin-top: 10px; }
+.an-seed-step-title { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 5px; font-size: 11px; }
+.an-seed-step-title b { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
+.an-seed-step-title b > span { display: inline-grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+.an-seed-step[aria-current="step"] .an-seed-step-title b { color: var(--accent-ink); }
+.an-seed-step[aria-current="step"] .an-seed-step-title b > span { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); }
+.an-seed-panel .vast-toolgrid > button { min-width: 0; padding: 6px 3px; font-size: 12px; min-height: 32px; }
+.an-seed-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; border: 1px solid rgba(0,0,0,.3); flex: none; }
+.an-seed-dot.fg { background: #39c977; }
+.an-seed-dot.bg { background: #ff5468; }
+.an-seed-hint { font-size: 11px; line-height: 1.6; margin: 5px 0; }
+.an-seed-secondary { display: flex; justify-content: space-between; gap: 6px; }
+.an-seed-secondary button { padding: 3px 7px; min-height: 28px; font-size: 11px; }
+.an-seed-result { margin-top: 8px; padding: 7px 8px; font-size: 12px; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; border-radius: var(--r-s); background: var(--surface-2); color: var(--text-2); border-left: 2px solid var(--border-2); }
+.an-seed-result[data-tone="ready"] { border-left-color: var(--accent-line); }
+.an-seed-result[data-tone="error"], .an-seed-result[data-tone="warning"] { border-left-color: var(--medium); color: var(--text); }
+.an-tool-options { margin-top: 9px; }
+.an-tool-options > summary { font-size: 11px; padding: 3px 0; }
+.an-tool-options .field { margin: 8px 0 4px; }
+.an-sam-panel > summary.vast-sec { letter-spacing: 0; font-size: 12px; padding: 7px 0; margin-top: 6px; }
+.an-sam-content { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.an-sam-content .vast-toolgrid { flex: none; }
+
+.vast-tools input[type="range"] { width: 100%; margin-inline: 0; }
+.an-label-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.an-label-actions button { padding: 6px 3px; font-size: 12px; }

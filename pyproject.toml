@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "EM Image QC platform: dataset registry, slice/serial-section QC pipeline, data API"
 requires-python = ">=3.11"
 dependencies = [
-  "numpy", "scipy", "pillow", "tifffile",
+  "numpy", "scipy", "scikit-image>=0.25,<0.27", "pillow", "tifffile",
   "fastapi", "uvicorn[standard]", "jinja2", "python-multipart",
   "sqlalchemy>=2.0", "pymysql", "cryptography<45", "pydantic-settings", "psutil", "paramiko", "bcrypt",
 ]

@@ -178,6 +178,45 @@ def sam_predict(block_id: str, body: SAMPredictIn):
         raise HTTPException(422, str(exc))
 
 
+class SeedStrokeIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    label: Literal[0, 1]
+    points: list[tuple[int, int]] = Field(min_length=1, max_length=512)
+
+
+class SeedPredictIn(EditIn):
+    model_config = {"extra": "forbid"}
+    z: int = Field(ge=0)
+    box: tuple[int, int, int, int]
+    strokes: list[SeedStrokeIn] = Field(min_length=1, max_length=64)
+    scale: float = Field(default=1.2, ge=0.6, le=3.0)
+
+
+@router.post("/blocks/{block_id}/seed/predict")
+def seed_predict(block_id: str, body: SeedPredictIn, user=Depends(require_user)):
+    from emqc.annotate.seeds import service
+    b = _block(block_id)
+    actor = _who(body, user)
+    try:
+        return service.predict(b, body.z, body.box, [s.model_dump() for s in body.strokes], body.scale, by=actor)
+    except (ValueError, IndexError) as exc:
+        raise HTTPException(422, str(exc))
+
+
+@router.post("/blocks/{block_id}/seed/apply")
+def seed_apply(block_id: str, body: SAMApplyIn, user=Depends(require_user)):
+    from emqc.annotate.seeds import service
+    b = _block(block_id)
+    actor = _who(body, user)
+    try:
+        with b.lock:
+            rec = service.apply(b, body.token, _int_id(body.new_id), by=actor)
+            rev = _rev(b, rec.get("z")) if isinstance(rec, dict) else None
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return _edit_response(b, rec, rev)
+
+
 class NeighbourLabelIn(BaseModel):
     z: int = Field(ge=0)
     x: int | None = Field(default=None, ge=0)

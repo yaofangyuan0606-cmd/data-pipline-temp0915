@@ -105,6 +105,7 @@ def test_real_sam_preview_apply_undo_in_browser(tmp_path):
     original = np.load(data / "seg.npy")
     work = tmp_path / "work" / "sample"
     with browser_for(tmp_path, data) as (adapter, page):
+        page.locator('#an-sam-panel > summary').click()
         page.locator('button[data-tool="sam"]').click()
         page.locator("#an-stage").scroll_into_view_if_needed()
         adapter.move((150, 200), click=True)
@@ -163,6 +164,7 @@ def test_sam_click_starts_target_modifiers_refine_it(tmp_path):
             route.fulfill(json={'token': 'a' * 32, 'candidate': 0, 'n_px': 1, 'seconds': .01,
                                 'mask_png': 'data:image/png;base64,' + base64.b64encode(png.getvalue()).decode()})
         page.route('**/sam/predict', predict)
+        page.locator('#an-sam-panel > summary').click()
         page.locator('button[data-tool="sam"]').click()
 
         def click(point, modifier=None):
@@ -297,16 +299,18 @@ def test_sam_cancel_during_prediction_ignores_late_result(tmp_path):
                 }), {status: 200, headers: {'Content-Type': 'application/json'}})); })
                 : realFetch(url, options);
         }''')
+        page.locator('#an-sam-panel > summary').click()
         page.locator('button[data-tool="sam"]').click()
         adapter.move((5, 5), click=True)
         page.wait_for_function('!!window.finishPrediction')
         assert page.locator('#an-sam-new').is_disabled()
-        page.locator('button[data-tool="sam"]').click()
+        page.locator('#an-sam-panel > summary').click()
+        page.wait_for_function("document.querySelector('[data-tool=pick]').getAttribute('aria-pressed') === 'true'")
         page.evaluate('window.finishPrediction()')
         page.wait_for_timeout(100)
         assert page.locator('button[data-tool="sam"]').get_attribute('aria-pressed') == 'false'
         assert page.locator('#an-sam-new').is_disabled()
-        assert '预览 10' not in page.locator('#an-sam-result').inner_text()
+        assert '预览 10' not in page.locator('#an-sam-result').text_content()
         assert not (tmp_path / 'work' / 'cancel' / 'seg_edit.npy').exists()
 
 
@@ -357,6 +361,7 @@ def test_3d_modes_toggle_and_close_viewer(tmp_path):
         assert point.get_attribute('aria-pressed') == 'false'
         # Switching to SAM cancels point mode; navigating cancels a viewer.
         point.click()
+        page.locator('#an-sam-panel > summary').click()
         page.locator('button[data-tool="sam"]').click()
         assert point.get_attribute('aria-pressed') == 'false'
         with page.expect_popup() as popup:

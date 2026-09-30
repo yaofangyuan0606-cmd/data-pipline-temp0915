@@ -23,18 +23,58 @@
       <button class="tool" data-tool="erase" aria-pressed="false" title="橡皮 (E)：只擦当前颜色的像素，压到邻居身上不会把邻居擦掉 · 按住 Tab 左右移动鼠标改半径（触控板：点一下 Tab 再移动）"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮 <kbd>E</kbd></button>
       <button class="tool" data-tool="merge" aria-pressed="false" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并 <kbd>M</kbd></button>
       <button class="tool" data-tool="clear" aria-pressed="false" title="清除连通区域；Shift+点击清除本片同标签"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M14 20h6"/></svg>清除</button>
-      <button class="tool" data-tool="refine" aria-pressed="false" title="修缮边缘 (R)：点一下标签块，跨过黑膜溢到膜外的部分收回，停在膜的外侧（膜本身留下）；细胞内部的黑色细胞器不动；灵敏度用 SAM 栏的「边界灵敏度」"><svg viewBox="0 0 24 24"><path d="M5 12c0-3.9 3.1-7 7-7s7 3.1 7 7-3.1 7-7 7-7-3.1-7-7z"/><path d="M8.5 12c0-1.9 1.6-3.5 3.5-3.5s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5-3.5-1.6-3.5-3.5z"/><path d="M12 5V2M12 22v-3M5 12H2M22 12h-3"/></svg>修缮 <kbd>R</kbd></button>
+      <button class="tool" data-tool="refine" aria-pressed="false" title="修缮边缘 (R)：点一下标签块，跨过黑膜溢到膜外的部分收回，停在膜的外侧（膜本身留下）；细胞内部的黑色细胞器不动；选中后可在工具下方调整灵敏度"><svg viewBox="0 0 24 24"><path d="M5 12c0-3.9 3.1-7 7-7s7 3.1 7 7-3.1 7-7 7-7-3.1-7-7z"/><path d="M8.5 12c0-1.9 1.6-3.5 3.5-3.5s3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5-3.5-1.6-3.5-3.5z"/><path d="M12 5V2M12 22v-3M5 12H2M22 12h-3"/></svg>修缮 <kbd>R</kbd></button>
       <button class="tool" data-tool="pan" aria-pressed="false" title="平移 (H · 中键拖动 · 空格+拖动)"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>平移 <kbd>H</kbd></button>
     </div>
+    <div id="an-refine-options" class="field" hidden>
+      <label for="an-refine-sens">修缮灵敏度 <span class="mono" id="an-refine-sens-v">50%</span></label>
+      <input id="an-refine-sens" type="range" min="0" max="100" value="50">
+    </div>
     <div class="vast-mergehint muted" id="an-merge-hint" hidden></div>
-    <div class="field" style="margin-top:8px"><label>画笔半径 <span class="mono" id="an-brush-v">4</span> px <span class="muted">[ ] · 按住 Tab 左右移动鼠标 · 触控板：点一下 Tab 再移动</span></label><input id="an-brush" type="range" min="0" max="60" value="4"></div>
+    <div id="an-brush-options" class="field" style="margin-top:8px" hidden><label>画笔半径 <span class="mono" id="an-brush-v">4</span> px <span class="muted">[ ] · 按住 Tab 左右移动鼠标 · 触控板：点一下 Tab 再移动</span></label><input id="an-brush" type="range" min="0" max="60" value="4"></div>
 
     <div class="vast-sec">当前标签</div>
     <div class="vast-cur"><span class="sw" id="an-cur-sw"></span><span class="mono" id="an-cur-id">未选择</span></div>
-    <div class="actions" style="margin-top:6px"><button id="an-newid" class="primary" title="新建标签 (N)">新建标签 <kbd>N</kbd></button><button id="an-neighbour-pick" title="L：本片这块是空的时候，取最近一张有标签的邻片在光标处的颜色">邻片取色 <kbd>L</kbd></button></div>
+    <div class="actions an-label-actions" style="margin-top:6px"><button id="an-newid" class="primary" title="新建标签 (N)">新建标签 <kbd>N</kbd></button><button id="an-neighbour-pick" title="L：本片这块是空的时候，取最近一张有标签的邻片在光标处的颜色">邻片取色 <kbd>L</kbd></button></div>
     <div class="vast-list" id="an-neighbour-list" style="margin-top:6px;max-height:150px" hidden></div>
 
-    <div class="vast-sec">SAM</div>
+    <section id="an-seed-panel" class="an-seed-panel" aria-labelledby="an-seed-heading">
+      <div class="vast-sec" id="an-seed-heading">种子分割 <span class="muted">只补空白 · 单片</span></div>
+      <div class="an-seed-step" id="an-seed-step-1" aria-current="step">
+        <div class="an-seed-step-title"><b><span>1</span> 选范围</b><span id="an-seed-range" class="muted">未选择</span></div>
+        <div class="vast-toolgrid">
+          <button class="tool" data-tool="seed-box" aria-pressed="false" title="拖框包住一个目标和周围少量组织；靠近图边会自动贴边。重新框选会清除种子">框选范围</button>
+          <button id="an-seed-full" title="选择完整切片，包含最外侧像素；适合目标贯穿图像边缘的情况">全片范围</button>
+        </div>
+      </div>
+      <div class="an-seed-step" id="an-seed-step-2">
+        <div class="an-seed-step-title"><b><span>2</span> 标目标</b><span class="muted">自动预览</span></div>
+        <div class="vast-toolgrid an-seed-markers">
+          <button class="tool" data-tool="seed-fg" aria-pressed="false" disabled title="在目标内部点一下或画短线；同一预览内的绿色种子属于同一个目标"><i class="an-seed-dot fg" aria-hidden="true"></i>目标</button>
+          <button class="tool" data-tool="seed-bg" aria-pressed="false" disabled title="在被误选的区域内点一下或画短线，排除邻居"><i class="an-seed-dot bg" aria-hidden="true"></i>排除</button>
+        </div>
+        <div class="an-seed-hint muted">点选或画短线 · Shift 临时排除</div>
+        <div class="an-seed-secondary"><button id="an-seed-back" disabled title="撤回最后一笔种子，不撤销已保存的标注">撤回一笔</button><button id="an-seed-clear" disabled title="清除范围和种子，重新框选；已保存标注不受影响">重新开始</button></div>
+      </div>
+      <div id="an-seed-result" class="an-seed-result" role="status" aria-live="polite" aria-atomic="true">框选一个目标，或选择全片范围。</div>
+      <div class="an-seed-step" id="an-seed-step-3">
+        <div class="an-seed-step-title"><b><span>3</span> 确认填色</b><span class="muted">可撤销</span></div>
+        <div class="vast-toolgrid">
+          <button id="an-seed-new" class="primary" disabled>填为新标签</button>
+          <button id="an-seed-apply" disabled>填为当前标签</button>
+        </div>
+      </div>
+      <details id="an-seed-options" class="an-tool-options">
+        <summary>调整边界</summary>
+        <div class="field"><label for="an-seed-scale">边界尺度 <span class="mono" id="an-seed-scale-v">1.2 px</span></label><input id="an-seed-scale" type="range" min="0.6" max="3" step="0.1" value="1.2"></div>
+        <p class="muted an-seed-hint">小值保留细膜，大值平滑噪声。松开滑条后自动更新预览。</p>
+        <button id="an-seed-predict" disabled>重新预览</button>
+      </details>
+    </section>
+
+    <details id="an-sam-panel" class="an-sam-panel">
+    <summary class="vast-sec">SAM <span class="muted">备用分割 · 展开使用</span></summary>
+    <div class="an-sam-content">
     <div class="muted" id="an-sam-status" style="font-size:12px">检查模型…</div>
     <div class="vast-toolgrid" style="margin-top:6px">
       <button class="tool" data-tool="sam" aria-pressed="false" title="点击选新目标；⌘/Ctrl+点击补点；Shift+点击排除">SAM 点选</button>
@@ -50,6 +90,9 @@
     <div class="muted" id="an-sam-neighbour-info" style="font-size:12px;margin-top:6px"></div>
     <div class="vast-list" id="an-sam-neighbour-list" style="margin-top:6px;max-height:150px" hidden></div>
     <div class="muted" id="an-sam-result" role="status" style="font-size:12px;margin-top:6px"></div>
+
+    </div>
+    </details>
 
     <div class="vast-sec">3D</div>
     <div class="actions"><button id="an-ng" aria-pressed="false" title="启用后点击图像查看；再次点击取消 (U)">看这一点 <kbd>U</kbd></button><button id="an-ng-block" aria-pressed="false" title="打开整块 3D；再次点击关闭">看整块</button></div>
@@ -184,5 +227,6 @@
     });
   })();
 </script>
+<script src="/static/annotate_seed.js?v={{ static_v('annotate_seed.js') }}" defer></script>
 <script src="/static/annotate.js?v={{ static_v('annotate.js') }}" defer></script>
 {% endblock %}
