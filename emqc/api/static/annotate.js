@@ -39,6 +39,9 @@
   $("an-notice-close").addEventListener("click", () => { $("flash").style.display = "none"; });
   const panes = () => (S.view === "side" ? P : [P[0]]);
   const segPanes = () => (S.view === "side" ? [P[1]] : (S.showSeg ? [P[0]] : []));   // where the segmentation is drawn
+  const seed = window.createAnnotationSeeds({state: S, api: API, panes, render: renderHi,
+    setTool, ensureWho, post: postJSON, editBody, loadImg: url => loadImg(url), busy: mergeBusy, reserveLabel,
+    afterEdit, setCur, refreshIfConflict});
   const nearCurtain = x => S.view === "overlay" && S.curtain && Math.abs(x - S.curtainX) <= 6 / S.zoom;
 
   // ------------------------------------------------------------------ colours: stable per id, everywhere
@@ -110,14 +113,14 @@
     return p;
   }
   function prefetch() { for (const d of [1, -1, 2, -2, 3, -3]) { const z = S.z + d; if (z >= 0 && z < S.info.shape_zyx[0]) fetchZ(z).catch(() => {}); } }
-  function invalidate(z) { S.cache.delete(z); S.loading.delete(z); if (z === S.z) { clearRegions(); if (S.selection?.kind === "edit") clearSelection(); } }
+  function invalidate(z) { S.cache.delete(z); S.loading.delete(z); if (z === S.z) { seed.clear(); clearRegions(); if (S.selection?.kind === "edit") clearSelection(); } }
   function dropAll() { S.cacheVersion++; S.cache.clear(); S.loading.clear(); clearRegions(); }
 
   // ------------------------------------------------------------------ 标注人：每一笔改动记在谁名下
   // 平台没有账号，"谁"就是标注员在右上角填的名字：存在本机浏览器里，每次写入随请求带给服务端，写进每条记录。
   const WHO_KEY = "emqc.annotator";
   const when = ts => typeof ts === "string" && ts.length >= 16 ? ts.slice(11, 16) : "刚才";
-  const editLabel = e => e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "插值（历史）" : e.kind === "refine" ? "修缮边缘" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : e.only_id ? "擦除" : "涂抹";
+  const editLabel = e => e.kind === "seed" ? "种子分割" : e.kind === "smartfill" ? "智能填充（历史）" : e.kind === "repair" ? "插值（历史）" : e.kind === "refine" ? "修缮边缘" : e.kind === "clear" ? (e.scope === "batch" ? `批量删除·${e.n_ids} 个` : "清除") : e.kind === "split" ? (e.mode === "line" ? "切割（历史）" : "分离（历史）") : e.kind === "sam" ? "SAM 分割" : e.kind === "merge" ? (e.scope === "component" ? "合并·两块" : e.scope === "block" ? "合并·整块" : "合并·本片") : e.kind === "fill" ? (e.whole_slice ? "整片" : "填充") : e.only_id ? "擦除" : "涂抹";
   function cleanWho(v) { return String(v || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64); }
   function setWho(v, save = true) {
     S.who = cleanWho(v);
@@ -279,7 +282,7 @@
     drawSelection(e);
     if (pin) drawRegion(pin, [255, 214, 10], 90);
     if (hover && (!pin || !pin.mask[S.hoverXY[1] * S.W + S.hoverXY[0]])) drawRegion(hover, [255, 255, 255], 60);
-    drawSAM();
+    drawSAM(); seed.draw();
     if (S.view === "overlay" && S.curtain) {
       const g = P[0].gHi, cx = S.curtainX + 0.5, lw = 1 / S.zoom;
       g.lineWidth = 3 * lw; g.strokeStyle = "rgba(0,0,0,.55)"; g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, S.H); g.stroke();
@@ -408,7 +411,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) { if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); clearSelection(); clearNeighbourList("an-neighbour-list"); clearTimeout(S.hbTimer); S.hbTimer = setTimeout(heartbeat, 1500); }
+    if (z !== S.z) { if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); seed.clear(); clearSelection(); clearNeighbourList("an-neighbour-list"); clearTimeout(S.hbTimer); S.hbTimer = setTimeout(heartbeat, 1500); }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     $("an-compare").href = `/annotate/compare?block=${encodeURIComponent(S.block)}&z=${z}`;
@@ -431,10 +434,15 @@
   function setTool(t) {
     if (S.mergeBusy) return;
     clear3D();
-    if (t.startsWith("sam") && S.tool === t) t = "pick";
+    if ((t.startsWith("sam") || t.startsWith("seed-")) && S.tool === t) t = "pick";
     if (!t.startsWith("sam")) clearSAM();
-    S.tool = t; mergeArm(null);
-    if ((t === "merge" || t === "ng" || t.startsWith("sam")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
+    seed.changeTool(t); S.tool = t; mergeArm(null);
+    if (t.startsWith("sam")) $("an-sam-panel").open = true;
+    else if (t.startsWith("seed-")) $("an-sam-panel").open = false;
+    $("an-refine-options").hidden = t !== "refine";
+    $("an-brush-options").hidden = t !== "brush" && t !== "erase";
+    seed.buttons();
+    if ((t === "merge" || t === "ng" || t.startsWith("sam") || t.startsWith("seed-")) && S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     document.querySelectorAll(".tool").forEach(b => { const active = b.dataset.tool === t; b.classList.toggle("active", active); b.setAttribute("aria-pressed", String(active)); });
     for (const p of P) { p.stage.classList.toggle("pan", t === "pan"); p.stage.dataset.tool = t; }   // 光标跟着工具走（见 style.css）
     renderHi();
@@ -453,7 +461,7 @@
     const id = idAt(x, y);
     if (id == null) return;
     if (id === "0") { flash("这里是背景：点到要修缮的标签上"); return; }
-    const z = S.z, sensitivity = (+$("an-sam-sens").value || 50) / 100;
+    const z = S.z, sensitivity = Number($("an-refine-sens").value) / 100;
     mergeBusy(true);
     try {
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/refine-edge`, editBody(z, { z, x, y, sensitivity }));
@@ -576,7 +584,7 @@
     } catch (err) { if (await stale(err, st.z)) return; flash("涂抹失败: " + err.message, true); invalidate(st.z); goZ(st.z, true); }
   }
   async function afterEdit(r, z) {
-    clearSAM();
+    clearSAM(); seed.clear();
     S.info.n_edits = r.n_edits;
     if (r.rev != null) S.revs.set(z, r.rev);
     invalidate(z); if (z === S.z) await goZ(z, true, true);
@@ -680,6 +688,7 @@
     $("an-newid").disabled = S.mergeBusy || !S.info?.has_seg;
     $("an-sam-new").disabled = disabled;
     $("an-sam-neighbour").disabled = disabled || !S.samNeighbour?.found;
+    seed.buttons();
   }
   function discardSAMPreview() { S.samPreview = null; S.samMask = null; S.samNeighbour = null; neighbourInfo(""); clearNeighbourList("an-sam-neighbour-list"); samButtons(); }
   function neighbourInfo(text) { const el = $("an-sam-neighbour-info"); if (el) el.textContent = text; }
@@ -803,6 +812,14 @@
     } catch (err) { discardSAMPreview(); $("an-sam-result").textContent = "应用失败：" + err.message; refreshIfConflict(err, z); }
     finally { mergeBusy(false); renderHi(); }
   }
+  $("an-refine-sens").addEventListener("input", ev => { $("an-refine-sens-v").textContent = ev.target.value + "%"; });
+  $("an-sam-panel").addEventListener("toggle", () => {
+    if (!$("an-sam-panel").open && S.tool.startsWith("sam")) {
+      // A hidden tool must not keep accepting clicks on the image.
+      if (S.mergeBusy) $("an-sam-panel").open = true;
+      else setTool("pick");
+    }
+  });
   $("an-sam-clear").addEventListener("click", clearSAM);
   $("an-sam-new").addEventListener("click", () => applySAM("new"));
   $("an-sam-apply").addEventListener("click", () => applySAM("cur"));
@@ -831,6 +848,7 @@
       if (S.mergeBusy) return;
       if (S.ngMode) { if (S.ngMode === "point") open3D([x, y]); return; }
       if (ev.altKey || S.tool === "pick" || (painting && (ev.ctrlKey || ev.metaKey))) { pick(x, y); return; }
+      if (seed.start(x, y, ev)) return;
       if (S.tool === "refine") { refineAt(x, y); return; }
       if (S.tool === "sam") {
         if (!ev.shiftKey && !ev.ctrlKey && !ev.metaKey) clearSAM();
@@ -858,6 +876,7 @@
       }
       if (S.drag) { S.tx = S.drag.tx + ev.clientX - S.drag.x; S.ty = S.drag.ty + ev.clientY - S.drag.y; applyView(); return; }
       const previous = S.hoverXY, [x, y] = toImg(ev, p); S.hoverXY = inside(x, y) ? [x, y] : null; S.hoverPane = i;
+      if (seed.move(x, y)) return;
       if (S.samStart) {
         const [sx,sy] = S.samStart, bx = Math.max(0,Math.min(S.W-1,x)), by = Math.max(0,Math.min(S.H-1,y));
         S.samBox = [Math.min(sx,bx),Math.min(sy,by),Math.max(sx,bx)+1,Math.max(sy,by)+1];
@@ -873,6 +892,7 @@
   }
   P.forEach(bindStage);
   window.addEventListener("mouseup", () => {
+    seed.finish();
     if (!S.samStart) return;
     S.samStart = null;
     if (S.samBox[2] <= S.samBox[0] || S.samBox[3] <= S.samBox[1]) { S.samBox = null; renderHi(); return; }
@@ -893,7 +913,7 @@
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     if (k === "ArrowUp" || k.toLowerCase() === "a") { ev.preventDefault(); if (!ev.repeat) goZ(S.z - 1, true); }
     else if (k === "ArrowDown" || k.toLowerCase() === "z") { ev.preventDefault(); if (!ev.repeat) goZ(S.z + 1, true); }
-    else if (k === "Escape") { if (S.radiusDrag) { setBrush(S.radiusDrag.r0 ?? S.radiusDrag.r); endRadius(); } if (S.ngMode || S.tool.startsWith("sam")) setTool("pick"); mergeArm(null); clearSAM(); clearSelection(); renderHi(); }
+    else if (k === "Escape") { if (S.radiusDrag) { setBrush(S.radiusDrag.r0 ?? S.radiusDrag.r); endRadius(); } if (S.ngMode || S.tool.startsWith("sam") || S.tool.startsWith("seed-")) setTool("pick"); mergeArm(null); clearSAM(); clearSelection(); renderHi(); }
     else if (k === "m") setTool("merge");
     else if (k.toLowerCase() === "u" && !ev.repeat) toggle3D("point", S.hoverXY);
     // 右手握鼠标，高频工具放左手：Q 拾取、D 画笔，挨着 E 橡皮、F 填充、R 修缮。P、B 保留作旧键位
@@ -1117,7 +1137,7 @@
   async function selectBlock(id) {
     if (S.mergeBusy) return;
     if (S.ngMode) setTool("pick");
-    clearSAM(); clearSelection();
+    clearSAM(); seed.clear(); clearSelection();
     if (S.playing) { clearInterval(S.playing); S.playing = null; $("an-play").textContent = "▶ 连播"; }
     S.block = id; S.createdIds = []; dropAll(); S.revs.clear(); S.hoverXY = null; mergeArm(null);
     const pr = $("an-presence"); pr.hidden = true; pr.innerHTML = ""; pr.classList.remove("same");
