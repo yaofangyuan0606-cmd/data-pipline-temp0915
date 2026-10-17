@@ -105,6 +105,10 @@
 .cmp-play span { font-size: 12px; white-space: nowrap; }
 .cmp-dir[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-line); }
 .cmp-play .cmp-dir { padding: 7px 10px; }
+/* 2026-10-15 用户要求：播放按钮整排不占位置（按空格照样能播放）；常规的「数据块 · Z · 改了多少像素」也不再占一行，
+   这一行只在有消息时出现（加载中、出错、审核动作的结果）。 */
+.cmp-play { display: none; }
+#cmp-status:empty { display: none; }
 
 /* 操作流水里的撤销行 */
 .cmp-undo td { color: var(--muted); }

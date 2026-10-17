@@ -195,7 +195,9 @@ def test_comparison_in_browser(tmp_path):
     with browser_for(tmp_path, data) as (_, page):
         page.locator("#an-compare").click()
         page.wait_for_function("document.querySelector('#cmp-page').getAttribute('aria-busy') === 'false' && !document.querySelector('#cmp-report').hidden")
-        assert page.locator("#cmp-status").inner_text().endswith("3 像素与原始分割不同")
+        # 常规的「数据块 · Z · 改了多少像素」不再占一行（2026-10-15 用户要求省空间）：状态行为空、不显示
+        assert page.locator("#cmp-status").inner_text() == ""
+        assert not page.locator("#cmp-status").is_visible()
         assert page.locator("#cmp-after").evaluate("c => [c.width,c.height]") == [64, 32]
         # Our single canvas outlines changes; the "before" pictures are the embedded viewer. The readout shows both labels.
         page.locator("#cmp-after").evaluate('''c => {
