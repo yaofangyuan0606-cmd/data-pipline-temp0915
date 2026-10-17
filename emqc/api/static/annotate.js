@@ -102,10 +102,11 @@
       const lab = S.info.has_seg ? await loadImg(`${API}/blocks/${b}/labels/${z}.png?v=${ver}&r=${tab?.rev ?? 0}`) : null;
       return [await emP, lab, tab];
     })().then(([em, lab, tab]) => {
-      if (tab && version === S.cacheVersion) { S.createdIds = tab.created_ids || []; if (tab.rev != null) S.revs.set(z, tab.rev); }
       // rev：这一片的版本号；改标签时随请求带回去，服务端据此知道我看到的是不是最新的
       const e = { em, idx: lab ? decodeIdx(lab) : null, ids: tab ? tab.ids : ["0"], counts: tab ? tab.counts : [], rev: tab && tab.rev != null ? tab.rev : null, segImgs: new Map() };
       if (version !== S.cacheVersion || S.loading.get(z) !== p) return e;
+      // 只让真正进缓存的那次读取改版本号：晚到的旧读取不能把版本号改回去，否则下一笔会带着过期的版本号被拒
+      if (tab) { S.createdIds = tab.created_ids || []; if (tab.rev != null) S.revs.set(z, tab.rev); }
       S.cache.set(z, e); S.loading.delete(z);
       while (S.cache.size > 24) { const k = S.cache.keys().next().value; if (k !== S.z) S.cache.delete(k); else break; }
       return e;
@@ -262,6 +263,7 @@
 
   function render() {
     const e = S.cache.get(S.z); if (!e) return;
+    S.shownKey = S.block + "|" + S.z;   // 画面上显示的是哪一块哪一片（落笔前核对，见 strokeStart）
     for (const p of P) { p.gEm.clearRect(0, 0, S.W, S.H); p.gSeg.clearRect(0, 0, S.W, S.H); }
     const p0 = P[0];
     if (S.showEm) p0.gEm.drawImage(e.em, 0, 0);
@@ -436,6 +438,7 @@
   // ------------------------------------------------------------------ tools
   function setTool(t) {
     if (S.mergeBusy) return;
+    endRadius();   // 换工具就结束调半径，免得新工具的第一下点击被吞掉
     clear3D();
     if ((t.startsWith("sam") || t.startsWith("seed-") || t === "bigfill") && S.tool === t) t = "pick";
     if (!t.startsWith("sam")) clearSAM();
@@ -546,6 +549,8 @@
   function strokeStart(x, y, erase = false) {
     if (!ensureWho()) return;
     erase = erase || S.tool === "erase";
+    // 刚翻片、新的一片还没画出来时落笔，会擦到看不见的那一片上：先等它显示出来
+    if (S.shownKey !== S.block + "|" + S.z) { flash("这一片还没加载完，请稍候再画"); return; }
     if (S.cur === "0") { flash(erase ? "先选要擦的颜色：Ctrl/⌘+点击拾取" : "请先选择或新建标签"); return; }
     S.stroke = { pts: [[x, y]], z: S.z, id: erase ? "0" : S.cur, only: erase ? S.cur : null };
     strokeDot(x, y);
@@ -584,6 +589,8 @@
     const st = S.stroke; S.stroke = null; if (!st) return;
     try {
       const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/paint`, editBody(st.z, { z: st.z, points: st.pts, radius: S.brush, new_id: st.id, only_id: st.only || undefined }));
+      // 没改到任何像素时说清楚原因（以前没有任何反应，看起来像橡皮失灵）
+      if (!r.edit) flash(st.id === "0" ? `这一笔没有擦掉像素：橡皮只擦当前标签 ${st.only}；要擦别的颜色，先 Ctrl/⌘+点击它` : "这一笔没有涂上：画笔只补空白，不覆盖已有标签");
       afterEdit(r, st.z);
     } catch (err) { if (await stale(err, st.z)) return; flash("涂抹失败: " + err.message, true); invalidate(st.z); goZ(st.z, true); }
   }
@@ -933,12 +940,12 @@
       if (ev.button === 0 && nearCurtain(x)) { S.curtainDrag = true; return; }
       const painting = S.tool === "brush" || S.tool === "erase";
       // 按住 Tab 拖动：改画笔半径（向右变大、向左变小），不落笔
-      if (S.radiusDrag) { if (S.radiusDrag.sticky) endRadius(); return; }   // 调半径时按下鼠标不落笔；单击结束「点一下 Tab」进入的调半径模式
+      if (S.radiusDrag) { if (S.radiusDrag.sticky) { endRadius(); flash(`已结束调半径（${S.brush} px），这一下没有落笔`); } return; }   // 调半径时按下鼠标不落笔；单击结束「点一下 Tab」进入的调半径模式
       // 画笔 / 橡皮下右键 = 擦当前颜色；平移用中键、空格或 H
-      if (ev.button === 2 && painting && !S.spacePan) { if (inside(x, y) && !S.mergeBusy) strokeStart(x, y, true); return; }
+      if (ev.button === 2 && painting && !S.spacePan) { if (inside(x, y)) { if (S.mergeBusy) flash("上一步还在保存，请稍候再擦"); else strokeStart(x, y, true); } return; }
       if (ev.button === 2 || ev.button === 1 || S.tool === "pan" || S.spacePan) { S.drag = { x: ev.clientX, y: ev.clientY, tx: S.tx, ty: S.ty }; for (const q of P) q.stage.classList.add("panning"); return; }
       if (ev.button !== 0 || !inside(x, y)) return;
-      if (S.mergeBusy) return;
+      if (S.mergeBusy) { if (painting) flash("上一步还在保存，请稍候再画"); return; }
       if (S.ngMode) { if (S.ngMode === "point") open3D([x, y]); return; }
       if (ev.altKey || S.tool === "pick" || (painting && (ev.ctrlKey || ev.metaKey))) { pick(x, y); return; }
       if (seed.start(x, y, ev)) return;
@@ -978,7 +985,8 @@
       }
       if (S.curtainDrag) { S.curtainX = Math.max(0, Math.min(S.W, x)); render(); return; }
       p.stage.style.cursor = nearCurtain(x) ? "col-resize" : "";
-      if (S.stroke) { if (S.hoverXY) strokeMove(x, y); return; }
+      // 拖出图像边缘时把点夹在边上，不丢点：丢了点，回到图里时会从出图处直线连过来，擦到没划过的地方
+      if (S.stroke) { strokeMove(Math.max(0, Math.min(S.W - 1, x)), Math.max(0, Math.min(S.H - 1, y))); return; }
       const changed = !previous || !S.hoverXY || previous[0] !== x || previous[1] !== y; status();
       if (!pending && (changed || S.view === "side" || S.tool === "brush" || S.tool === "erase")) { pending = true; requestAnimationFrame(() => { pending = false; renderHi(); }); }
     });
@@ -1000,10 +1008,11 @@
   const typing = el => el instanceof Element && (el.isContentEditable || el.matches("textarea, input:not([type]), input[type=text], input[type=number], input[type=search], input[type=password], input[type=email], input[type=url]"));
   document.addEventListener("keydown", ev => {
     if (typing(ev.target)) return;
-    if (S.mergeBusy) return;
+    if (S.mergeBusy) { if (!ev.repeat && !ev.ctrlKey && !ev.metaKey && !ev.altKey && "qpfdbehrmw".includes(ev.key)) flash("上一步还在保存，工具没有切换"); return; }
     if (!S.info || ev.defaultPrevented) return;
     const k = ev.key;
-    if ((ev.ctrlKey || ev.metaKey) && k.toLowerCase() === "z") { ev.preventDefault(); undo(); return; }
+    // 种子工具里 Ctrl/⌘+Z 先撤提示（种子、范围），撤完才撤销已保存的改动
+    if ((ev.ctrlKey || ev.metaKey) && k.toLowerCase() === "z") { ev.preventDefault(); if (seed.undoPrompt(ev.repeat)) return; undo(); return; }
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     if (k === "ArrowUp" || k.toLowerCase() === "a") { ev.preventDefault(); if (!ev.repeat) goZ(S.z - 1, true); }
     else if (k === "ArrowDown" || k.toLowerCase() === "z") { ev.preventDefault(); if (!ev.repeat) goZ(S.z + 1, true); }

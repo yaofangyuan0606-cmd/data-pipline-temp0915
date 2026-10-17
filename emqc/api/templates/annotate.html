@@ -44,7 +44,7 @@
       <div class="an-seed-step" id="an-seed-step-1" aria-current="step">
         <div class="an-seed-step-title"><b><span>1</span> 选范围</b><span id="an-seed-range" class="muted">未选择</span></div>
         <div class="vast-toolgrid">
-          <button class="tool" data-tool="seed-box" aria-pressed="false" title="拖框包住一个目标和周围少量组织；靠近图边会自动贴边。重新框选会清除种子">框选范围</button>
+          <button class="tool" data-tool="seed-box" aria-pressed="false" title="拖框包住一个目标和周围少量组织；靠近图边会自动贴边。填色后直接在图上拖框就能框下一处；还没画种子时点一下框外取消范围">框选范围</button>
           <button id="an-seed-full" title="选择完整切片，包含最外侧像素；适合目标贯穿图像边缘的情况">全片范围</button>
         </div>
       </div>
@@ -54,8 +54,8 @@
           <button class="tool" data-tool="seed-fg" aria-pressed="false" disabled title="在目标内部点一下或画短线；同一预览内的绿色种子属于同一个目标"><i class="an-seed-dot fg" aria-hidden="true"></i>目标</button>
           <button class="tool" data-tool="seed-bg" aria-pressed="false" disabled title="在被误选的区域内点一下或画短线，排除邻居"><i class="an-seed-dot bg" aria-hidden="true"></i>排除</button>
         </div>
-        <div class="an-seed-hint muted">点选或画短线 · Shift 临时排除</div>
-        <div class="an-seed-secondary"><button id="an-seed-back" disabled title="撤回最后一笔种子，不撤销已保存的标注">撤回一笔</button><button id="an-seed-clear" disabled title="清除范围和种子，重新框选；已保存标注不受影响">重新开始</button></div>
+        <div class="an-seed-hint muted">点选或画短线 · Shift 临时排除 · Ctrl/⌘+Z 撤回一笔</div>
+        <div class="an-seed-secondary"><button id="an-seed-back" disabled title="撤回最后一笔种子（Ctrl/⌘+Z），不撤销已保存的标注">撤回一笔</button><button id="an-seed-clear" disabled title="清除范围和种子，重新框选；已保存标注不受影响">重新开始</button></div>
       </div>
       <div id="an-seed-result" class="an-seed-result" role="status" aria-live="polite" aria-atomic="true">框选一个目标，或选择全片范围。</div>
       <div class="an-seed-step" id="an-seed-step-3">
@@ -215,9 +215,10 @@
       <div class="kbd-row"><kbd>M</kbd> 合并：先点 A，再点 B，B 改为 A 的标签</div>
       <div class="kbd-row"><kbd>D</kbd> 画笔（旧键 B 仍可用）：左键涂、<b>右键擦当前颜色</b>、<kbd>Ctrl</kbd>+点击拾取 · <kbd>E</kbd> 橡皮只擦当前颜色 · <kbd>[</kbd> <kbd>]</kbd> 或 <b>按住 <kbd>Tab</kbd> 左右移动鼠标</b>改半径（触控板：点一下 <kbd>Tab</kbd> 再移动、单击结束）</div>
       <div class="kbd-row"><kbd>R</kbd> 修缮边缘：点一下标签块，跨过黑膜溢到膜外的部分收回，停在膜的外侧；膜和细胞内部的黑色细胞器都不动</div>
+      <div class="kbd-row">种子分割：拖框选范围（填色后直接拖框框下一处，没画种子时点框外取消）· 点绿色目标 · Shift 排除 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 先逐笔撤种子、再取消范围</div>
       <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>
       <div class="kbd-row"><kbd>W</kbd> 大块填充：在没标注的大细胞里点一下出橙色预览，Ctrl/⌘ 补点，确认后才写；填好后「接着填上一片 / 下一片」</div>
-      <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销 · 「全部撤销」一次撤掉本片全部改动（先确认）</div>
+      <div class="kbd-row"><kbd>N</kbd> 新建标签 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销（种子分割里先撤提示）· 「全部撤销」一次撤掉本片全部改动（先确认）</div>
       <div class="kbd-row">标注人：右上角填名字，每笔改动记下是谁改的 · 有人同时改这一片会提醒并自动刷新 · 只能撤销自己的改动</div>
     </section>
   </div>

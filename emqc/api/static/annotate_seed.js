@@ -1,7 +1,8 @@
 /* Seed-assisted membrane segmentation. Preview state is separate from label edits. */
 window.createAnnotationSeeds = function (h) {
   const $ = id => document.getElementById(id), S = h.state;
-  const T = {box: null, strokes: [], drawing: null, start: null, preview: null, mask: null, neighbours: null, sequence: 0, request: null};
+  // touched：上次填色之后画过提示（框或种子）。这时 Ctrl/⌘+Z 只撤提示，不会落到「撤销已保存的改动」上（见 undoPrompt）。
+  const T = {box: null, strokes: [], drawing: null, start: null, preview: null, mask: null, neighbours: null, sequence: 0, request: null, touched: false};
   const message = (text, tone = 'hint') => {
     $('an-seed-result').textContent = text;
     $('an-seed-result').dataset.tone = tone;
@@ -53,17 +54,26 @@ window.createAnnotationSeeds = function (h) {
     discard(); message('框选一个目标，或选择全片范围。');
   }
   function changeTool(tool) {
-    if (!tool.startsWith('seed-')) clear();
+    if (!tool.startsWith('seed-')) { clear(); T.touched = false; }
   }
   function inBox(x, y) {
     return T.box && x >= T.box[0] + 2 && y >= T.box[1] + 2 && x < T.box[2] - 2 && y < T.box[3] - 2;
   }
+  function outside(x, y) {
+    return !T.box || x < T.box[0] || y < T.box[1] || x >= T.box[2] || y >= T.box[3];
+  }
   function start(x, y, ev) {
     if (!active()) return false;
-    if (S.tool === 'seed-box') {
+    T.touched = true;
+    // 连续框选：还没有范围，或范围里还没画种子时在框外按下，直接开始框下一处（不用再点「框选范围」）。
+    // 已经画了种子就不替换范围，免得手一抖把种子丢了。
+    if (S.tool === 'seed-box' || !T.box || (!T.strokes.length && outside(x, y))) {
       clear(); T.start = [x, y]; T.box = [x, y, x + 1, y + 1];
     } else {
-      if (!inBox(x, y)) { message('请先框定范围；种子应离框边至少 2 像素。'); return true; }
+      if (!inBox(x, y)) {
+        message(outside(x, y) ? '种子要画在黄框内；换范围请 Ctrl/⌘+Z 逐笔撤回，或点「重新开始」。' : '种子应离框边至少 2 像素。');
+        return true;
+      }
       if (T.strokes.length >= 64 || T.strokes.reduce((n, s) => n + s.points.length, 0) >= 7680) {
         message('种子较多，请撤回几笔或重新框选目标。'); return true;
       }
@@ -91,6 +101,9 @@ window.createAnnotationSeeds = function (h) {
   function finish() {
     if (T.start) {
       T.start = null;
+      if (T.box[2] - T.box[0] <= 1 && T.box[3] - T.box[1] <= 1) {   // 只点了一下、没有拖：当作取消范围
+        T.box = null; message('已取消范围；在图上按住拖动重新框选。'); buttons(); h.render(); return;
+      }
       // Snap near-edge drags to the true pixel bounds; a user need not land
       // the pointer exactly on the outermost row or column of the image.
       const snap = Math.max(1, Math.ceil(8 / S.zoom));
@@ -102,7 +115,8 @@ window.createAnnotationSeeds = function (h) {
       if (Math.min(x1 - x0, y1 - y0) < 8 || (x1 - x0) * (y1 - y0) > 1048576) {
         T.box = null; message('范围太小或太大：边长至少 8 像素，面积最多 1024×1024。', 'error'); buttons(); h.render(); return;
       }
-      h.setTool('seed-fg'); message('在目标内部点一下或画短线，松开后自动预览。');
+      if (S.tool !== 'seed-fg') h.setTool('seed-fg');   // 已经在「目标」时再调 setTool 会把工具切回拾取、清掉刚框好的范围
+      message('在目标内部点一下或画短线，松开后自动预览；Ctrl/⌘+Z 逐笔撤回。');
     } else if (T.drawing) { T.drawing = null; predict(); }
     buttons();
   }
@@ -185,7 +199,7 @@ window.createAnnotationSeeds = function (h) {
     try {
       const id = create ? await h.reserveLabel() : S.cur;
       const r = await h.post(`${h.api}/blocks/${encodeURIComponent(block)}/seed/apply`, h.editBody(z, {token, new_id: id}));
-      await h.afterEdit(r, z); h.setCur(id);
+      await h.afterEdit(r, z); h.setCur(id); T.touched = false;   // 填色后 Ctrl/⌘+Z 撤销的就是这次填色
       message(`已填色 ${r.edit?.n_px || 0} 像素，可撤销。翻片标同一对象时，继续「沿用当前标签」。`, 'ready');
     } catch (err) { discard(); h.refreshIfConflict(err, z); message('应用失败：' + err.message, 'error'); }
     finally { h.busy(false); h.render(); }
@@ -193,7 +207,7 @@ window.createAnnotationSeeds = function (h) {
   $('an-seed-full').addEventListener('click', () => {
     if (S.mergeBusy || !S.info) return;
     if (S.W * S.H > 1048576) { message('这张切片太大，请框选不超过 1024×1024 的区域。'); return; }
-    clear(); T.box = [0, 0, S.W, S.H];
+    clear(); T.box = [0, 0, S.W, S.H]; T.touched = true;
     if (S.tool !== 'seed-fg') h.setTool('seed-fg');
     message('已选完整切片，包括最外侧像素；请画绿色目标和红色排除种子。');
     buttons(); h.render();
@@ -204,7 +218,18 @@ window.createAnnotationSeeds = function (h) {
     if (S.tool !== 'seed-box') h.setTool('seed-box');
     h.render();
   });
-  $('an-seed-back').addEventListener('click', () => { if (!S.mergeBusy) { T.strokes.pop(); T.drawing = null; predict(); } });
+  function back() { T.strokes.pop(); T.drawing = null; predict(); }
+  // Ctrl/⌘+Z 在种子工具里先撤提示：先逐笔撤种子，再取消范围。上次填色之后画过提示，就一直不落到「撤销已保存的改动」，
+  // 免得撤一个点错的种子时，把刚填好的颜色撤掉。返回 true 表示这次按键已经处理了。
+  function undoPrompt(repeat) {
+    if (!active() || !(T.box || T.strokes.length || T.start || T.drawing || T.touched)) return false;
+    if (repeat || T.start || T.drawing || S.mergeBusy) return true;   // 按住不放不连撤；拖动中不撤
+    if (T.strokes.length) back();
+    else if (T.box) { clear(); h.render(); message('已取消范围；在图上按住拖动重新框选。'); }
+    else message('提示已全部撤回。要撤销已保存的填色，请点左栏「撤销」，或按 Esc 退出种子工具后再按 Ctrl/⌘+Z。');
+    return true;
+  }
+  $('an-seed-back').addEventListener('click', () => { if (!S.mergeBusy) back(); });
   $('an-seed-predict').addEventListener('click', predict);
   $('an-seed-new').addEventListener('click', () => apply(true));
   $('an-seed-apply').addEventListener('click', () => apply(false));
@@ -214,5 +239,5 @@ window.createAnnotationSeeds = function (h) {
   });
   $('an-seed-scale').addEventListener('change', predict);
   window.addEventListener('blur', () => { if (T.drawing || T.start) { clear(); h.render(); } });
-  return {clear, changeTool, buttons, draw, start, move, finish};
+  return {clear, changeTool, buttons, draw, start, move, finish, undoPrompt};
 };
