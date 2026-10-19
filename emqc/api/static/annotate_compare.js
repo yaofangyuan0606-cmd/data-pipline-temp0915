@@ -238,7 +238,7 @@
       ngSync();
       downloadButtons();
       const r = data.report;
-      $("status").textContent = `${state.block} · Z ${state.z} · ${em.width} × ${em.height} · ${!r.has_seg ? "此数据块没有分割标签，只显示原始电镜图" : r.changed_px ? `${fmt(r.changed_px)} 像素与原始分割不同` : "当前结果与原始分割一致"}`;
+      $("status").textContent = r.has_seg ? "" : `${state.block} 没有分割标签，只显示原始电镜图`;   // 常规信息不占一行，只留需要说明的情况
       if (changedBlock) state.zoom = 100;
       layoutImages(changedBlock);
     } catch (e) {
@@ -436,7 +436,7 @@
     RV.state = null; renderReview();                             // 播放中不能审：轻量帧没有内容哈希
     draw(); renderPins();
     $("z").value = z;
-    $("status").textContent = `${state.block} · Z ${z} · 动态播放 ${play.mode === "back" ? "◀ 向后" : play.mode === "fwd" ? "▶ 向前" : "⇄ 来回"} ${play.lo}–${play.hi}（空格或再点一次停止）`;
+    $("status").textContent = `${state.block} · Z ${z} · 动态播放 ${play.mode === "back" ? "◀ 向后" : play.mode === "fwd" ? "▶ 向前" : "⇄ 来回"} ${play.lo}–${play.hi}（再按空格停止）`;
     const now = performance.now();
     if (ngCorner && now - play.ngAt > 250) {                     // 查看器栏低频跟随
       play.ngAt = now;
@@ -681,19 +681,17 @@
   const RV = {state: null, busy: false, serial: 0, mode: null, target: null, draft: null, nav: 0};
   const ACT = (k) => $(`rv-${k}`);
   function playing() { return !!(play.timer || play.controller); }
+  // 只在有需要提醒的事时才占一行（2026-10-15 用户要求省空间）：被退回时的意见、通过后又被改、没署名的改动、不能通过的原因。
+  // 谁标记完成、参与人、未解决标记数这些常规信息不再显示；「通过」按钮灰掉时鼠标停上去仍能看到原因。
   function reviewLine(st) {
     if (st.history_error) return `<span class="cmp-rv-warn">${esc(st.why_not_decide)}</span>`;
     const parts = [];
-    if (st.completed_by) parts.push(`<b>${esc(st.completed_by)}</b> ${fmtTime(st.completed_at)} 标记完成`);
-    if (st.decided_by && st.decision) {                          // 按最近一次结论本身描述，不按现在的状态猜
-      const what = {approve: "通过", request_changes: "退回修改", revoke: "撤销了通过"}[st.decision] || "审核";
-      parts.push(`<b>${esc(st.decided_by)}</b> ${fmtTime(st.decided_at)} ${what}${st.last_comment ? `：<q>${esc(st.last_comment)}</q>` : ""}`);
+    if (st.decided_by && st.decision === "request_changes" && (st.status === "returned" || st.status === "fixed")) {
+      parts.push(`<b>${esc(st.decided_by)}</b> ${fmtTime(st.decided_at)} 退回修改${st.last_comment ? `：<q>${esc(st.last_comment)}</q>` : ""}`);
     }
     if (st.since_decision?.n && (st.status === "changed" || st.status === "fixed"))
       parts.push(`<span class="cmp-rv-warn">之后又改了 ${st.since_decision.n} 次（${esc(st.since_decision.by.join("、"))}，${fmt(st.since_decision.n_px)} 像素）</span>`);
-    if (st.contributors?.length) parts.push(`参与人：${st.contributors.map(p => esc(p.by) + (p.me ? "（你）" : "")).join("、")}`);
     if (st.unattributed) parts.push(`<span class="cmp-rv-warn">${st.unattributed} 笔改动没有署名</span>`);
-    if (st.open_marks?.length) parts.push(`${st.open_marks.length} 个未解决标记`);
     const why = st.in_queue && st.why_not?.approve;
     if (why) parts.push(`<span class="cmp-rv-warn">${esc(why)}</span>`);
     return parts.join(" · ");
@@ -717,9 +715,9 @@
     ACT("approve").textContent = st?.status === "changed" ? "重新通过" : "通过";
     ACT("next").disabled = !!RV.nav || (!!st && !st.can_decide);
     ACT("next").title = st && !st.can_decide ? (st.why_not_decide || "你不能审核") : "跳到下一张我能审的切片（快捷键 J）";
-    const line = $("rv-line");
-    line.hidden = !st;
-    line.innerHTML = st ? reviewLine(st) : "";
+    const line = $("rv-line"), html = st ? reviewLine(st) : "";
+    line.hidden = !html;
+    line.innerHTML = html;
   }
   async function loadReview() {
     if (!REVIEW_ON || !state.block) return;
