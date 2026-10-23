@@ -291,6 +291,9 @@ def generate_patch_set(s: Session, ds: Dataset, spec: PatchSpec) -> PatchSet:
     t0 = time.perf_counter()
     rng = np.random.default_rng(spec.seed)
     blocks = list(s.scalars(select(Block).where(Block.dataset_id == ds.dataset_id).order_by(Block.z_start, Block.y_start, Block.x_start)))
+    all_parts: dict[str, int] = {}
+    for b in blocks:
+        all_parts[b.partition or "none"] = all_parts.get(b.partition or "none", 0) + 1
     if spec.block_ids:
         blocks = [b for b in blocks if b.block_id in spec.block_ids]
     parts = spec.partitions if spec.partitions is not None else (None if spec.patch_type == "failure" else list(HOLDOUT))
@@ -306,7 +309,13 @@ def generate_patch_set(s: Session, ds: Dataset, spec: PatchSpec) -> PatchSet:
                     label_version=(label.version or label.path) if label else None, source_volume=blocks[0].source_volume if blocks else None,
                     preprocessing_json=spec.preprocessing or json.loads(settings.patch_preprocessing), augmentation_json=spec.augmentation or json.loads(settings.patch_augmentation))
     if not blocks:
-        status, reason, recs = "empty", f"no block matches partitions={parts} block_ids={spec.block_ids}", []
+        hint = []
+        if all_parts.get("excluded"):
+            hint.append(f"{all_parts['excluded']} 个是 excluded（D 级，不参与划分；要用就在「划分」里填 excluded）")
+        if all_parts.get("none"):
+            hint.append(f"{all_parts['none']} 个是 none（还没分配：点「补齐未分配」，推理用途的 block 不会被分配）")
+        have = "、".join(f"{k} {v}" for k, v in sorted(all_parts.items())) or "没有 block"
+        status, reason, recs = "empty", f"no block matches partitions={parts} block_ids={spec.block_ids}｜这个数据集的 block：{have}" + ("；" + "；".join(hint) if hint else ""), []
     elif not ready["ready"] and spec.patch_type != "failure":
         status, reason, recs = ("needs_prediction_asset" if spec.patch_type in ("hard_negative", "proofreading") and ready.get("label_asset_id") else "no_aligned_label"), ready["reason"], []
     elif spec.patch_type == "failure":

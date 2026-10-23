@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     preview_max_px: int = 256  # thumbnails only; full images are never re-saved
 
     pipeline_version: str = "qc-v0.1"
+    # 运行引擎：langgraph = 每次 QC 运行是一张 LangGraph 状态图（页面上能看到节点一步步走），
+    # loop = 原来的 for 循环（不装 langgraph 时自动退回这个）。两者写进数据库的结果完全一样。
+    workflow_engine: str = "langgraph"
     block_size_z: int = 64  # a block = a contiguous serial-section sequence of this many slices ...
     block_size_xy: int = 0  # ... over an XY tile of this many pixels (0 = the whole plane)
     # Datasets whose EM volume has >= this many voxels are "large" (full volume -> inference,
@@ -90,7 +93,8 @@ class Settings(BaseSettings):
     # file:// 和其他主机一律拒绝，免得有人借服务器去探内网或读本机文件
     crawl_allowed_sources: str = "gs://h01-release/"
 
-    api_host: str = "127.0.0.1"
+    api_host: str = "127.0.0.1"         # 0.0.0.0 = 对内网开放（scripts/serve.py --lan 同义），见 emqc/share.py
+    allow_lan_without_login: bool = False  # 对内网开放又关了登录时默认拒绝启动；确实要这样才置 1
     api_port: int = 8765
 
     @property

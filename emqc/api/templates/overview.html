@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}总览{% endblock %}
+{% block crumbs %}<b>总览</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Overview</div><h1>总览</h1>
+<p class="sub">各维度的数据指标：质量、问题、耗时、速度、交付。要启动或跟踪运行，去 <a href="/pipeline">流水线</a>。</p></div></div>
+
+<section id="dashboard" class="dash">
+  <div class="dash-filters">
+    <label>时间 <select id="dash-days" class="text"><option value="0">全部</option><option value="1">最近 24 小时</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option></select></label>
+    <label>数据集 <select id="dash-ds" class="text"><option value="">全部数据集</option></select></label>
+    <span class="muted dash-note">每 10 秒自动刷新 · 悬停看数值 · 每张卡片可展开数据表</span>
+  </div>
+  <div id="dash-body"><div class="muted dash-empty">加载中…</div></div>
+</section>
+
+<script src="/static/dashboard.js?v={{ static_v('dashboard.js') }}" defer></script>
+<script>document.addEventListener('DOMContentLoaded', () => dashboardInit());</script>
+{% endblock %}

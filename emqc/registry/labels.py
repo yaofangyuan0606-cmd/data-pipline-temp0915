@@ -80,7 +80,8 @@ def open_label_volume(fs: FS, base: str, asset_path: str, asset_format: str = ""
     if fmt.startswith("image_stack") or (fmt == "auto" and fs.is_dir(path) and not fs.is_file(fs.join(path, "info"))):
         enc = encoding_for(asset_format, extra)
         return ImageStackReader(path, z_offset=z_offset, fs=fs, decoder=lambda data, name: decode_label(data, name, enc))
-    return open_volume(path, fmt if fmt != "auto" else "auto", "zyx", z_offset, fs=fs)  # npy / precomputed keep their dtype
+    axes = (extra or {}).get("axes") or "zyx"  # declared axis order (e.g. annotation tiles store seg.npy as yxz)
+    return open_volume(path, fmt if fmt != "auto" else "auto", axes, z_offset, fs=fs)  # npy / precomputed keep their dtype
 
 
 class DownsampledLabelReader(VolumeReader):

@@ -91,6 +91,97 @@ def _worst_per_z(profile: list[dict]) -> list[dict]:
     return [best[z] for z in sorted(best)]
 
 
+# ----------------------------------------------------------------------------- visual summaries (run page, overview)
+
+FAILURE_ZH = {
+    "missing": "缺失切片", "corrupt": "损坏切片", "blank": "空白切片", "blur": "严重模糊", "saturation": "过曝 / 饱和",
+    "crack": "裂缝 / 褶皱", "no_coverage": "无数据区", "missing_region": "缺块", "brightness_jump": "亮度突变",
+    "contrast_drift": "对比度漂移", "charging": "荷电伪影", "contamination": "表面污染", "slice_jump": "切片跳变",
+    "local_misalign": "局部错位", "global_misalign": "整体错位", "z_order": "顺序错误", "local_deformation": "局部形变",
+    "section_deformation": "切片形变",
+}
+
+
+def _profile_chart(profile: list[dict], blocks: list[dict]) -> dict | None:
+    """Worst tile per z -> points for the quality-along-depth chart, failed z's, labelled worst spots, grade bands."""
+    worst = _worst_per_z(profile)
+    if not worst:
+        return None
+    z0, z1 = worst[0]["z"], worst[-1]["z"]
+    pts = [{"z": p["z"], "q": 0.0 if p["status"] != "ok" else (p["q"] if p["q"] is not None else 1.0), "sev": p["sev"] if p["status"] == "ok" else "critical",
+            "status": p["status"], "passed": p["passed"]} for p in worst]
+    # grade per z range: the worst tile grade in that range
+    order = {"A": 0, "B": 1, "C": 2, "D": 3}
+    bands: dict[tuple[int, int], str] = {}
+    for b in blocks:
+        g = b.get("grade")
+        if not g:
+            continue
+        c = b.get("coordinate") or {}
+        if c.get("z_start") is None:
+            continue
+        k = (c["z_start"], c["z_end"])
+        if k not in bands or order.get(g, 0) > order.get(bands[k], 0):
+            bands[k] = g
+    n_failed = sum(1 for p in pts if not p["passed"])
+    return {"z0": z0, "z1": z1, "points": pts, "n": len(pts), "n_failed": n_failed,
+            "bands": [{"z_start": a, "z_end": b, "grade": g} for (a, b), g in sorted(bands.items())]}
+
+
+def _viewer_items(rows, limit: int = 1500) -> list[dict]:
+    """(failure_type, z, block_id, severity, check, score, preview_path, dataset_id, run_id) rows -> items for the
+    one-by-one viewer (static/viewer.js). One item per stored crop and problem type, in z order."""
+    from ..serializers import preview_url
+
+    out, seen = [], set()
+    for ft, z, bid, sev, chk, score, pp, ds_id, run_id in rows:
+        url = preview_url(pp)
+        if not url or (url, ft) in seen:
+            continue
+        seen.add((url, ft))
+        tile = bid.split("_", 1)[1] if bid and "_" in bid else None
+        out.append({"type": ft, "zh": FAILURE_ZH.get(ft, ft), "z": z, "dataset_id": ds_id, "block_id": bid, "tile": tile, "severity": sev,
+                    "check": chk, "score": None if score is None else round(float(score), 3), "url": url, "run_id": run_id,
+                    "href": f"/datasets/{ds_id}/blocks/{bid}?run_id={run_id}#z{z}"})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _gallery(s: Session, run_id: int, dataset_id: str, profile: list[dict], per_type: int = 4, max_types: int = 12) -> dict:
+    """Flagged slices (high / critical, with a stored preview) grouped by failure type + one clean reference slice."""
+    rows = s.execute(select(QCFinding.failure_type, QCFinding.z, QCFinding.block_id, QCFinding.severity, QCFinding.check_name, QCFinding.preview_path)
+                     .where(QCFinding.run_id == run_id, QCFinding.severity.in_(["high", "critical"]), QCFinding.z.is_not(None))
+                     .order_by(QCFinding.z)).all()
+    from ..serializers import preview_url
+
+    groups: dict[str, dict] = {}
+    for ft, z, bid, sev, chk, pp in rows:
+        g = groups.setdefault(ft, {"type": ft, "zh": FAILURE_ZH.get(ft, ft), "zs": set(), "shots": []})
+        if z in g["zs"]:
+            continue  # same section flagged in several tiles: show it once
+        g["zs"].add(z)
+        url = preview_url(pp)
+        if url and len(g["shots"]) < per_type:
+            g["shots"].append({"z": z, "block_id": bid, "severity": sev, "check": chk, "url": url})
+    out = sorted(groups.values(), key=lambda g: -len(g["zs"]))[:max_types]
+    for g in out:
+        g["n"] = len(g.pop("zs"))
+    # reference: the cleanest passed section closest to the middle of the volume
+    worst = _worst_per_z(profile)
+    clean = [p for p in worst if p["passed"] and p["status"] == "ok"]
+    ref = None
+    if clean:
+        mid = (worst[0]["z"] + worst[-1]["z"]) / 2
+        best = max(clean, key=lambda p: ((p["q"] or 0) >= 0.95, -abs(p["z"] - mid)))
+        ref = {"z": best["z"], "url": f"/api/v1/data/{dataset_id}/preview/z/{best['z']}.png"}
+    allrows = s.execute(select(QCFinding.failure_type, QCFinding.z, QCFinding.block_id, QCFinding.severity, QCFinding.check_name, QCFinding.score,
+                               QCFinding.preview_path, QCFinding.dataset_id, QCFinding.run_id)
+                        .where(QCFinding.run_id == run_id, QCFinding.severity.in_(["high", "critical"]), QCFinding.z.is_not(None))
+                        .order_by(QCFinding.z, QCFinding.block_id)).all()
+    return {"groups": out, "ref": ref, "n_types": len(groups), "n_sections": sum(g["n"] for g in out), "all": _viewer_items(allrows)}
+
+
 # ----------------------------------------------------------------------------- pages
 
 
@@ -116,11 +207,43 @@ def index(request: Request, s: Session = Depends(get_session)):
             dd["n_findings"] = m.get("n_findings")
         rows.append(dd)
     kpi["retention"] = (kpi["passed"] / kpi["evaluated"]) if kpi["evaluated"] else None
-    latest_ids = select(Dataset.latest_run_id).where(Dataset.latest_run_id.is_not(None))
+    # 顶部数字和问题样例默认只看「本次」= 最近一次完成的运行；?scope=all 看所有数据集各自最近一次运行的汇总
+    scope = "all" if request.query_params.get("scope") == "all" else "latest"
+    last_run = s.scalars(select(QCRun).where(QCRun.status == "done").order_by(QCRun.id.desc()).limit(1)).first()
+    if last_run is None:
+        scope = "all"
+    this_run = run_summary(s, last_run) if last_run is not None else None
+    if this_run is not None:
+        ds_row = s.get(Dataset, last_run.dataset_id)
+        this_run["dataset_size"] = {"z": ds_row.size_z, "y": ds_row.size_y, "x": ds_row.size_x, "size_class": ds_row.size_class} if ds_row else None
+    latest_ids = select(Dataset.latest_run_id).where(Dataset.latest_run_id.is_not(None)) if scope == "all" else select(QCRun.id).where(QCRun.id == last_run.id)
     by_type = s.execute(select(QCFinding.failure_type, func.count()).where(QCFinding.run_id.in_(latest_ids), QCFinding.severity.in_(["high", "critical"])).group_by(QCFinding.failure_type).order_by(func.count().desc())).all()
-    runs = [run_to_dict(r) for r in s.scalars(select(QCRun).order_by(QCRun.id.desc()).limit(6))]
+    runs = []
+    for r in s.scalars(select(QCRun).order_by(QCRun.id.desc()).limit(100 if scope == "all" else 6)):
+        rd = run_to_dict(r)
+        rd["wall_s"] = (r.finished_at - r.started_at).total_seconds() if r.started_at and r.finished_at else None
+        runs.append(rd)
+    run_time = dict(s.execute(select(QCRun.id, QCRun.finished_at).where(QCRun.id.in_([d["latest_run_id"] for d in rows if d.get("latest_run_id")] or [-1]))).all())
+    for dd in rows:
+        t = run_time.get(dd.get("latest_run_id"))
+        dd["latest_run_at"] = t.isoformat(sep=" ", timespec="minutes") if t else None
     n_served = s.scalar(select(func.count()).select_from(ServeLog)) or 0
-    return _render("index.html", request, datasets=rows, kpi=kpi, failure_counts=by_type, runs=runs, n_served=n_served, active="datasets")
+    from ..serializers import preview_url
+
+    flagged = _viewer_items(s.execute(
+        select(QCFinding.failure_type, QCFinding.z, QCFinding.block_id, QCFinding.severity, QCFinding.check_name, QCFinding.score,
+               QCFinding.preview_path, QCFinding.dataset_id, QCFinding.run_id)
+        .where(QCFinding.run_id.in_(latest_ids), QCFinding.severity.in_(["high", "critical"]), QCFinding.preview_path.is_not(None), QCFinding.z.is_not(None))
+        .order_by(QCFinding.dataset_id, QCFinding.z, QCFinding.block_id)).all())
+    per_type = Counter(x["type"] for x in flagged)
+    examples, used = [], set()
+    for ft, _n in per_type.most_common():  # one card per type, preferring a section no other card shows
+        cands = [x for x in flagged if x["type"] == ft]
+        pick = next((x for x in cands if (x["dataset_id"], x["z"]) not in used), cands[0])
+        used.add((pick["dataset_id"], pick["z"]))
+        examples.append({**pick, "n": _n})
+    by_type_zh = [(FAILURE_ZH.get(ft, ft), n) for ft, n in by_type]
+    return _render("index.html", request, datasets=rows, kpi=kpi, failure_counts=by_type_zh, runs=runs, n_served=n_served, examples=examples, flagged=flagged, scope=scope, this_run=this_run, active="datasets")
 
 
 @router.get("/datasets/{dataset_id}", response_class=HTMLResponse)
@@ -194,7 +317,11 @@ def run_page(run_id: int, request: Request, s: Session = Depends(get_session)):
     summary = run_summary(s, run)
     qc_blocks = {b["block_id"]: b for b in summary["blocks"]}
     max_dur = max([b.get("duration_s") or 0 for b in summary["blocks"]] + [1])
-    return _render("run.html", request, run=summary, graph=run_graph(s, run), per_block=per_block, ds=dataset_to_dict(ds) if ds else None, blocks=blocks, qc_blocks=qc_blocks, max_dur=max_dur, active="runs")
+    prof = _profile(s, run_id)
+    chart = _profile_chart(prof, summary["blocks"])
+    gallery = _gallery(s, run_id, run.dataset_id, prof) if prof else None
+    return _render("run.html", request, run=summary, graph=run_graph(s, run), per_block=per_block, ds=dataset_to_dict(ds) if ds else None, blocks=blocks, qc_blocks=qc_blocks, max_dur=max_dur,
+                   chart=chart, gallery=gallery, failure_zh=FAILURE_ZH, active="runs")
 
 
 @router.get("/runs", response_class=HTMLResponse)
@@ -217,6 +344,11 @@ def traces_page(request: Request, s: Session = Depends(get_session)):
     return _render("traces.html", request, traces=traces, served=served, served_kinds=served_kinds, active="traces")
 
 
+@router.get("/overview", response_class=HTMLResponse)
+def overview_page(request: Request):
+    return _render("overview.html", request, active="overview")
+
+
 @router.get("/pipeline", response_class=HTMLResponse)
 def pipeline_page(request: Request, s: Session = Depends(get_session)):
     status = pipeline_status(s)
@@ -234,6 +366,12 @@ def delivery_page(request: Request, dataset: str | None = None, s: Session = Dep
     if not dataset:  # default to a dataset that already has QC results
         dataset = next((d["dataset_id"] for d in datasets if d["latest_run_id"]), datasets[0]["dataset_id"] if datasets else None)
     return _render("delivery.html", request, datasets=datasets, jobs=jobs, sessions=sessions, preselect=dataset, export_dir=str(settings.export_dir), api_base=base, active="delivery")
+
+
+@router.get("/training", response_class=HTMLResponse)
+def training_page(request: Request, dataset: str | None = None, s: Session = Depends(get_session)):
+    datasets = [dataset_to_dict(d) for d in s.scalars(select(Dataset).order_by(Dataset.dataset_id))]
+    return _render("training.html", request, datasets=datasets, selected=dataset, active="training")
 
 
 @router.get("/patches", response_class=HTMLResponse)

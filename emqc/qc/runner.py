@@ -284,6 +284,98 @@ class QCRunner:
         )
         s.commit()
 
+    # ------------------------------------------------------------------ engine selection
+    @staticmethod
+    def engine() -> str:
+        """"langgraph" (default) when the package is importable, else the plain loop."""
+        want = (settings.workflow_engine or "langgraph").lower()
+        if want == "langgraph":
+            from .workflow import HAVE_LANGGRAPH
+
+            if HAVE_LANGGRAPH:
+                return "langgraph"
+            log.warning("EMQC_WORKFLOW_ENGINE=langgraph but langgraph is not installed; falling back to the loop engine")
+        return "loop"
+
+    # ------------------------------------------------------------------ live events shared by both engines
+    def stage_notifier(self, s: Session, run: QCRun, z0: int, z1: int, n: int, cpu0: float, t_group: float):
+        """on_stage(stage, block_id | None): updates run.stage and writes one event per stage transition."""
+        zr = f"z{z0}-{z1 - 1}"
+        last = {"t": t_group, "stage": None, "bid": None}
+
+        def on_stage(stage: str, bid: str | None):
+            now = time.perf_counter()
+            cpu, rss = _rusage()
+            prev = dict(last)
+            last.update(t=now, stage=stage, bid=bid)
+            run.stage = (f"{stage} · {zr}" + (f" · {bid}" if bid else f" · {n} tile(s)"))[:120]
+            s.commit()
+            data = {"z_start": z0, "z_end": z1, "n_tiles": n, "rss_mb": round(rss, 1), "cpu_time_s": round(cpu - cpu0, 2)}
+            if prev["stage"]:
+                data["prev_stage"] = prev["stage"]
+                data["prev_duration_s"] = round(now - prev["t"], 3)
+            self.event(s, run, f"{stage} {zr}" + (f" {bid}" if bid else f" ({n} tiles, decode once)"), stage=stage, block_id=bid, data=data)
+
+        return on_stage
+
+    def block_done_event(self, s: Session, run: QCRun, b: Block, ctx: BlockContext, res: BlockResult, z0: int, z1: int) -> None:
+        msg = f"{b.block_id}: grade {res.grade}, quality {res.quality_score or 0:.3f}, retention {100 * (res.retention_rate or 0):.0f}%, worst {res.max_severity.label}, {sum(res.findings_by_type.values())} findings"
+        data = {"grade": res.grade, "quality": res.quality_score, "retention": res.retention_rate, "n_findings": sum(res.findings_by_type.values()), "findings_by_type": res.findings_by_type,
+                "durations": {k: round(v, 3) for k, v in ctx.stage_durations.items()}, "z_start": z0, "z_end": z1, **(getattr(ctx, "resource", None) or {})}
+        self.event(s, run, msg, level="warn" if res.grade in ("C", "D") else "info", stage="done", block_id=b.block_id, data=data)
+        log.info("%s %s", run.dataset_id, msg)
+
+    def group_done_event(self, s: Session, run: QCRun, z0: int, z1: int, n: int, cpu0: float, t_group: float) -> None:
+        zr = f"z{z0}-{z1 - 1}"
+        self.event(s, run, f"{zr}: {n} tile(s) finished in {time.perf_counter() - t_group:.1f} s, cpu {(_rusage()[0] - cpu0):.1f} s", stage="group_done",
+                   data={"z_start": z0, "z_end": z1, "wall_s": round(time.perf_counter() - t_group, 2), "cpu_time_s": round(_rusage()[0] - cpu0, 2)})
+
+    def finished_event(self, s: Session, run: QCRun, ds: Dataset, started: float) -> None:
+        self.event(s, run, f"run finished: grade {ds.latest_grade}, quality {run.quality_score or 0:.3f}, retention {100 * (run.retention_rate or 0):.0f}%",
+                   data={"grade": ds.latest_grade, "quality": run.quality_score, "retention": run.retention_rate, "grade_counts": run.grade_counts_json, "wall_s": round(time.perf_counter() - started, 2)})
+
+    def cancel_run(self, s: Session, run: QCRun, ds: Dataset, blocks: list[Block], prev_status: str | None) -> None:
+        run.status, run.finished_at, run.stage = "cancelled", _now(), "cancelled"
+        for b in blocks:
+            if b.status == "running":
+                b.status = "pending"
+        ds.status = prev_status if prev_status not in ("qc_running", "error") else "registered"
+        self.event(s, run, "run cancelled by user", level="warn")
+        s.commit()
+
+    # ------------------------------------------------------------------ loop engine (no langgraph)
+    def _run_loop(self, s: Session, run: QCRun, ds: Dataset, info: DatasetInfo, blocks: list[Block], started: float, prev_status: str | None) -> None:
+        reader = open_dataset_volume(ds)
+        groups: dict[tuple[int, int], list[Block]] = {}
+        for b in blocks:  # all XY tiles of one z range are processed together (sections decoded once)
+            groups.setdefault((b.z_start, b.z_end), []).append(b)
+        cancelled = False
+        for (z0, z1), grp in groups.items():
+            s.refresh(run)
+            if run.cancel_requested:
+                cancelled = True
+                break
+            for b in grp:
+                b.status = "running"
+            s.commit()
+            cpu0, _ = _rusage()
+            t_group = time.perf_counter()
+            on_stage = self.stage_notifier(s, run, z0, z1, len(grp), cpu0, t_group)
+            results = self.process_group(reader, info, [block_info(b) for b in grp], on_stage=on_stage)
+            for b, (ctx, res) in zip(grp, results):
+                on_stage("persist", b.block_id)
+                cpu, rss = _rusage()
+                ctx.resource = {"cpu_time_s": round((cpu - cpu0) / len(grp), 2), "peak_rss_mb": round(rss, 1)}
+                self.persist_block(s, run, ctx, res, b)
+                self.block_done_event(s, run, b, ctx, res, z0, z1)
+            self.group_done_event(s, run, z0, z1, len(grp), cpu0, t_group)
+        reader.close()
+        if cancelled:
+            self.cancel_run(s, run, ds, blocks, prev_status)
+        else:
+            self.finalize(s, run, ds, started)
+            self.finished_event(s, run, ds, started)
+
     # ------------------------------------------------------------------ entry point
     def run_dataset(self, dataset_id: str, block_ids: list[str] | None = None, run_id: int | None = None) -> int:
         started = time.perf_counter()
@@ -309,62 +401,15 @@ class QCRunner:
             self.event(s, run, f"run started: {len(blocks)} block(s), pipeline {run.pipeline_version}, checks {len(self.slice_checks)} slice + {len(self.serial_checks)} serial",
                        data={"n_blocks": len(blocks), "shape": list(info.shape), "checks": [c.name for c in [*self.slice_checks, *self.serial_checks]]})
             try:
-                reader = open_dataset_volume(ds)
-                groups: dict[tuple[int, int], list[Block]] = {}
-                for b in blocks:  # all XY tiles of one z range are processed together (sections decoded once)
-                    groups.setdefault((b.z_start, b.z_end), []).append(b)
-                cancelled = False
-                for gi, ((z0, z1), grp) in enumerate(groups.items()):
-                    s.refresh(run)
-                    if run.cancel_requested:
-                        cancelled = True
-                        break
-                    for b in grp:
-                        b.status = "running"
-                    s.commit()
-                    zr = f"z{z0}-{z1 - 1}"
-                    cpu0, _ = _rusage()
-                    t_group = time.perf_counter()
-                    last = {"t": t_group, "stage": None, "bid": None}
+                engine = self.engine()
+                run.config_json = {**(run.config_json or {}), "engine": engine}
+                s.commit()
+                if engine == "langgraph":
+                    from .workflow import QCWorkflow
 
-                    def on_stage(stage: str, bid: str | None, zr=zr, n=len(grp), z0=z0, z1=z1):
-                        now = time.perf_counter()
-                        cpu, rss = _rusage()
-                        prev = dict(last)
-                        last.update(t=now, stage=stage, bid=bid)
-                        run.stage = (f"{stage} · {zr}" + (f" · {bid}" if bid else f" · {n} tile(s)"))[:120]
-                        s.commit()
-                        data = {"z_start": z0, "z_end": z1, "n_tiles": n, "rss_mb": round(rss, 1), "cpu_time_s": round(cpu - cpu0, 2)}
-                        if prev["stage"]:
-                            data["prev_stage"] = prev["stage"]
-                            data["prev_duration_s"] = round(now - prev["t"], 3)
-                        self.event(s, run, f"{stage} {zr}" + (f" {bid}" if bid else f" ({n} tiles, decode once)"), stage=stage, block_id=bid, data=data)
-
-                    results = self.process_group(reader, info, [block_info(b) for b in grp], on_stage=on_stage)
-                    for b, (ctx, res) in zip(grp, results):
-                        on_stage("persist", b.block_id)
-                        cpu, rss = _rusage()
-                        ctx.resource = {"cpu_time_s": round((cpu - cpu0) / len(grp), 2), "peak_rss_mb": round(rss, 1)}
-                        self.persist_block(s, run, ctx, res, b)
-                        msg = f"{b.block_id}: grade {res.grade}, quality {res.quality_score or 0:.3f}, retention {100 * (res.retention_rate or 0):.0f}%, worst {res.max_severity.label}, {sum(res.findings_by_type.values())} findings"
-                        data = {"grade": res.grade, "quality": res.quality_score, "retention": res.retention_rate, "n_findings": sum(res.findings_by_type.values()), "findings_by_type": res.findings_by_type,
-                                "durations": {k: round(v, 3) for k, v in ctx.stage_durations.items()}, "z_start": z0, "z_end": z1, **ctx.resource}
-                        self.event(s, run, msg, level="warn" if res.grade in ("C", "D") else "info", stage="done", block_id=b.block_id, data=data)
-                        log.info("%s %s", dataset_id, msg)
-                    self.event(s, run, f"{zr}: {len(grp)} tile(s) finished in {time.perf_counter() - t_group:.1f} s, cpu {(_rusage()[0] - cpu0):.1f} s", stage="group_done", data={"z_start": z0, "z_end": z1, "wall_s": round(time.perf_counter() - t_group, 2), "cpu_time_s": round(_rusage()[0] - cpu0, 2)})
-                reader.close()
-                if cancelled:
-                    run.status, run.finished_at, run.stage = "cancelled", _now(), "cancelled"
-                    for b in blocks:
-                        if b.status == "running":
-                            b.status = "pending"
-                    ds.status = prev_status if prev_status not in ("qc_running", "error") else "registered"
-                    self.event(s, run, "run cancelled by user", level="warn")
-                    s.commit()
+                    QCWorkflow(self, s, run, ds, info, blocks, started, prev_status).execute()
                 else:
-                    self.finalize(s, run, ds, started)
-                    self.event(s, run, f"run finished: grade {ds.latest_grade}, quality {run.quality_score or 0:.3f}, retention {100 * (run.retention_rate or 0):.0f}%",
-                               data={"grade": ds.latest_grade, "quality": run.quality_score, "retention": run.retention_rate, "grade_counts": run.grade_counts_json, "wall_s": round(time.perf_counter() - started, 2)})
+                    self._run_loop(s, run, ds, info, blocks, started, prev_status)
             except Exception as e:
                 s.rollback()  # the failed flush may have left the session unusable
                 run = s.get(QCRun, run_id)
@@ -387,7 +432,7 @@ def start_run_async(dataset_id: str, block_ids: list[str] | None = None, config:
     with session_scope() as s:
         if s.get(Dataset, dataset_id) is None:
             raise KeyError(dataset_id)
-        run = QCRun(dataset_id=dataset_id, pipeline_version=settings.pipeline_version, status="queued", config_json={**((config or QCConfig()).as_dict()), "block_ids": block_ids})
+        run = QCRun(dataset_id=dataset_id, pipeline_version=settings.pipeline_version, status="queued", config_json={**((config or QCConfig()).as_dict()), "block_ids": block_ids, "engine": QCRunner.engine()})
         s.add(run)
         s.flush()
         run_id = run.id

@@ -66,6 +66,72 @@ def split_shards(runs: list[tuple[int, int]], shard_z: int) -> list[tuple[int, i
     return out
 
 
+# per-section verdict codes used by the preview / result strips
+KEEP, QC_FAIL, LOW_Q, SHORT, NO_RECORD = "K", "Q", "L", "S", "M"
+REASON_ZH = {KEEP: "交付", QC_FAIL: "未通过 QC", LOW_Q: "综合分低于下限", SHORT: "连续段太短", NO_RECORD: "没有 QC 记录"}
+
+
+def plan_block(rows: dict, z_start: int, z_end: int, p: dict) -> dict:
+    """What the export does with one block, without touching any file.
+
+    rows: z -> QC slice record (needs .passed, .status, .quality_score, .max_severity, .failure_types).
+    Returns ok (passed + quality), excluded (records not ok, as written to the manifest), shards [(z0, z1)],
+    and codes: one letter per section z_start..z_end-1 (K delivered, Q failed QC, L below min_quality,
+    S passed but in a run shorter than min_run, M no QC record)."""
+    mq = p.get("min_quality")
+    ok = [z for z, x in rows.items() if x.passed and (mq is None or (x.quality_score or 0) >= mq)]
+    excluded = [{"z": z, "status": x.status, "severity": x.max_severity, "failure_types": x.failure_types} for z, x in sorted(rows.items()) if z not in ok]
+    shards = split_shards(contiguous_runs(ok, int(p.get("min_run") or 1)), int(p.get("shard_z") or 0))
+    inside = {z for z0, z1 in shards for z in range(z0, z1)}
+    okset = set(ok)
+    codes = []
+    for z in range(z_start, z_end):
+        x = rows.get(z)
+        if x is None:
+            codes.append(NO_RECORD)
+        elif z in inside:
+            codes.append(KEEP)
+        elif z in okset:
+            codes.append(SHORT)
+        elif x.passed:
+            codes.append(LOW_Q)
+        else:
+            codes.append(QC_FAIL)
+    return {"ok": ok, "excluded": excluded, "shards": shards, "codes": "".join(codes)}
+
+
+def plan_export(s: Session, ds: Dataset, params: dict, run_id: int | None = None) -> dict:
+    """Dry run of an export: per block the verdict of every section, the shards, and the totals. Writes nothing."""
+    p = default_params(**params)
+    rid = run_id or ds.latest_run_id
+    if not rid:
+        return {"dataset_id": ds.dataset_id, "run_id": None, "error": f"{ds.dataset_id} 还没有 QC 结果，先跑一次 QC"}
+    blocks = list(s.scalars(select(Block).where(Block.dataset_id == ds.dataset_id).order_by(Block.z_start, Block.y_start, Block.x_start)))
+    if p.get("block_ids"):
+        blocks = [b for b in blocks if b.block_id in p["block_ids"]]
+    qcb = {q.block_id: q for q in s.scalars(select(QCBlock).where(QCBlock.run_id == rid))}
+    by_block: dict[str, dict] = {}
+    for x in s.scalars(select(QCSlice).where(QCSlice.run_id == rid)):
+        by_block.setdefault(x.block_id, {})[x.z] = x
+    itemsize = np.dtype(ds.dtype).itemsize
+    totals = {KEEP: 0, QC_FAIL: 0, LOW_Q: 0, SHORT: 0, NO_RECORD: 0}
+    out_blocks, n_shards, n_bytes = [], 0, 0
+    for b in blocks:
+        pl = plan_block(by_block.get(b.block_id, {}), b.z_start, b.z_end, p)
+        for c in pl["codes"]:
+            totals[c] += 1
+        hw = (b.y_end - b.y_start) * (b.x_end - b.x_start)
+        n_shards += len(pl["shards"])
+        n_bytes += sum(z1 - z0 for z0, z1 in pl["shards"]) * hw * itemsize
+        q = qcb.get(b.block_id)
+        out_blocks.append({"block_id": b.block_id, "z_start": b.z_start, "z_end": b.z_end, "grade": q.grade if q else None,
+                           "codes": pl["codes"], "shards": [[z0, z1] for z0, z1 in pl["shards"]], "n_keep": pl["codes"].count(KEEP)})
+    total = sum(totals.values())
+    return {"dataset_id": ds.dataset_id, "run_id": rid, "params": {k: p[k] for k in ("min_run", "shard_z", "min_quality", "block_ids")},
+            "n_sections": total, "n_keep": totals[KEEP], "retention": (totals[KEEP] / total) if total else None, "n_shards": n_shards, "est_bytes": n_bytes,
+            "reasons": [{"code": c, "zh": REASON_ZH[c], "n": n} for c, n in totals.items()], "blocks": out_blocks}
+
+
 def default_params(**kw) -> dict:
     p = {"fmt": "npy", "min_run": 1, "shard_z": 16, "min_quality": None, "with_assets": [], "block_ids": None, "resume": True}
     p.update({k: v for k, v in kw.items() if v is not None})
@@ -81,6 +147,11 @@ class ExportRunner:
         s.commit()
 
     def run(self) -> dict:
+        with session_scope() as s:
+            if (s.get(ExportJob, self.job_id).params_json or {}).get("kind") == "pack":   # 训练数据包借用导出任务表，由它自己的 runner 跑
+                from emqc.patches.pack import PackRunner
+
+                return PackRunner(self.job_id).run()
         t_start = time.perf_counter()
         with session_scope() as s:
             job = s.get(ExportJob, self.job_id)
@@ -122,9 +193,8 @@ class ExportRunner:
                         cancelled = True
                         break
                     rows = by_block.get(b.block_id, {})
-                    ok = [z for z, x in rows.items() if x.passed and (p.get("min_quality") is None or (x.quality_score or 0) >= p["min_quality"])]
-                    excluded = [{"z": z, "status": x.status, "severity": x.max_severity, "failure_types": x.failure_types} for z, x in sorted(rows.items()) if z not in ok]
-                    shards = split_shards(contiguous_runs(ok, int(p["min_run"])), int(p["shard_z"]))
+                    pl = plan_block(rows, b.z_start, b.z_end, p)  # same decision as the preview on the delivery page
+                    ok, excluded, shards = pl["ok"], pl["excluded"], pl["shards"]
                     q = qcb.get(b.block_id)
                     bdir = out_root / b.block_id
                     H, W = b.y_end - b.y_start, b.x_end - b.x_start

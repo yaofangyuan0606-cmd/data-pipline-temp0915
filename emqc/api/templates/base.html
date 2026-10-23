@@ -7,6 +7,8 @@
 <title>{% block title %}{% endblock %} · {{ '切片标注' if ws == 'annotate' else 'EM Image QC' }}</title>
 <link rel="stylesheet" href="/static/style.css?v={{ static_v('style.css') }}">
 <script src="/static/app.js?v={{ static_v('app.js') }}" defer></script>
+<script src="/static/workflow.js?v={{ static_v('workflow.js') }}" defer></script>
+<script src="/static/viewer.js?v={{ static_v('viewer.js') }}" defer></script>
 </head>
 <body class="ws-{{ ws }}">
 <div class="shell">

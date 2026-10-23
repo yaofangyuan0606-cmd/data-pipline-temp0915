@@ -256,8 +256,16 @@ def cmd_checks(_):
 def cmd_serve(args):
     import uvicorn
 
+    from emqc import share
+
+    host = "0.0.0.0" if args.lan else (args.host or settings.api_host)
+    settings.api_host = host
+    for w in share.check_before_listen(host):
+        print("注意：" + w, flush=True)
+    if share.is_lan():
+        print("内网访问地址：" + "  ".join(share.info(args.port)["urls"]), flush=True)
     # 与 scripts/serve.py 相同的加固：不信客户端填的 X-Forwarded-For（前面没有反代），停机最多等 20 秒
-    uvicorn.run("emqc.api.app:app", host=args.host or settings.api_host, port=args.port or settings.api_port, reload=args.reload,
+    uvicorn.run("emqc.api.app:app", host=host, port=args.port or settings.api_port, reload=args.reload,
                 log_level="info", proxy_headers=False, timeout_graceful_shutdown=20)
 
 
@@ -362,6 +370,7 @@ def main(argv=None) -> int:
     ep.set_defaults(fn=cmd_export)
     sv = sub.add_parser("serve", help="start the API + dashboard")
     sv.add_argument("--host")
+    sv.add_argument("--lan", action="store_true", help="对内网开放（监听 0.0.0.0），需要开着登录")
     sv.add_argument("--port", type=int)
     sv.add_argument("--reload", action="store_true")
     sv.set_defaults(fn=cmd_serve)

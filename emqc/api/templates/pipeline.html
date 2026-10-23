@@ -3,7 +3,7 @@
 {% block crumbs %}<b>流水线控制台</b>{% endblock %}
 {% block content %}
 <div class="page-head"><div class="grow"><div class="eyebrow">Pipeline console</div><h1>流水线控制台</h1>
-<p class="sub">扫描数据 → 选数据集与检查项 → 启动 → 按节点跟踪进度与日志。</p></div>
+<p class="sub">扫描数据 → 选数据集与检查项 → 启动 → 按节点跟踪进度与日志。各维度指标见 <a href="/overview">总览</a>。</p></div>
 <div class="actions"><button class="primary" onclick="scanDatasets(this)">扫描</button></div></div>
 
 <div class="grid side">
@@ -14,6 +14,7 @@
     <dt>数据来源</dt><dd>本地{% if status.source.n_remote %} + {{ status.source.n_remote }} 个远程服务器{% endif %}</dd>
     <dt>block</dt><dd>{{ status.pipeline.block_size_z }} 张切片 × {% if status.pipeline.block_size_xy %}{{ status.pipeline.block_size_xy }}² tile{% else %}整张平面{% endif %}</dd>
     <dt>检查项</dt><dd>{{ status.pipeline.checks.implemented }} / {{ status.pipeline.checks.total }} 已实现 · <a href="/checks">查看</a></dd>
+    <dt>访问</dt><dd>{% if status.share.lan %}内网共享中：{% for u in status.share.urls %}<code>{{ u }}</code> {% else %}<code>http://&lt;服务器 IP&gt;:{{ status.share.port }}</code>{% endfor %}<br><span class="muted">{{ status.share.auth_zh }}</span>{% else %}只在服务器本机（经 SSH 隧道访问） · <span class="muted">启动时加 <code>--lan</code> 对内网开放</span>{% endif %}</dd>
     <dt>上次扫描</dt><dd id="last-scan" class="muted">{% if status.last_scan %}{{ status.last_scan.at|replace('T',' ') }}：新增 {{ status.last_scan.registered|length }}，更新 {{ status.last_scan.updated|length }}，错误 {{ status.last_scan.errors|length }}{% else %}尚未扫描{% endif %}</dd>
   </dl>
   <h2>资源 <span class="cnt" id="sys-meta"></span></h2>
@@ -52,5 +53,5 @@
 <div class="scroll"><table class="dense"><thead><tr><th>run</th><th>dataset</th><th>状态</th><th>等级</th><th class="num">quality</th><th>留存率</th><th>开始</th><th>结束</th><th></th></tr></thead><tbody>
 {% for r in recent %}<tr><td><a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a></td><td><a href="/datasets/{{ r.dataset_id }}">{{ r.dataset_id }}</a></td><td><span class="pill {{ 'ok' if r.status == 'done' }}">{{ r.status }}</span></td><td>{% for g, n in r.grade_counts|dictsort %}{{ m.grade(g) }}<span class="muted mono">×{{ n }}</span> {% endfor %}</td><td class="num mono">{{ r.quality_score|fmt(3) }}</td><td style="min-width:120px"><div style="display:flex;gap:8px;align-items:center">{{ m.meter(r.retention_rate) }}<span class="mono">{{ r.retention_rate|pct }}</span></div></td><td class="muted mono" style="font-size:11px">{{ (r.started_at or '')|replace('T',' ') }}</td><td class="muted mono" style="font-size:11px">{{ (r.finished_at or '')|replace('T',' ') }}</td><td><button data-ds="{{ r.dataset_id }}" onclick="rerun(this.dataset.ds, this)">再跑一次</button></td></tr>{% else %}<tr><td colspan="9" class="muted">还没有完成的运行</td></tr>{% endfor %}
 </tbody></table></div>
-<script>document.addEventListener('DOMContentLoaded', () => pipelineInit({{ status.active|map(attribute='run_id')|list|tojson }}));</script>
+<script>document.addEventListener('DOMContentLoaded', () => { pipelineInit({{ status.active|map(attribute='run_id')|list|tojson }}); });</script>
 {% endblock %}

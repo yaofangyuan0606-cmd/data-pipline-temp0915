@@ -15,6 +15,7 @@
       <div class="field"><label>每片最多张数 <span class="muted">shard_z</span></label><input name="shard_z" type="number" min="0" value="16" class="text"></div>
       <div class="field"><label>最低综合分 <span class="muted">可空</span></label><input name="min_quality" type="number" step="0.05" min="0" max="1" class="text" placeholder="0.8"></div>
     </div>
+    <p class="field-help">最短连续段：好切片要连着至少这么多张才交付，太短的段训练时用不上。每片最多张数：一个分片文件最多装几张。最低综合分：通过 QC 之外，再要求分数不低于它。</p>
     <div class="field"><label>一并拷贝的资产 <span class="muted">同一批 z，原样复制</span></label><input name="with_assets" class="text mono" placeholder="gt_segmentation"></div>
     <div class="field"><label>block <span class="muted">留空 = 全部</span></label><input name="block_ids" class="text mono" placeholder="z00000-00099_y00000_x00000, …"></div>
     <div class="actions"><button class="primary" type="submit">开始导出</button><label class="choice"><input type="checkbox" name="resume" checked> 续传（已存在的分片跳过）</label><span id="export-msg" class="muted"></span></div>
@@ -38,6 +39,8 @@ patch, meta = store.random_patch(rng, (8, 256, 256))</pre></details>
     <div class="actions"><button class="primary" type="submit">创建会话</button><label class="choice"><input type="checkbox" name="skip_failed"> 跳过含未通过切片的子块</label><span id="stream-msg" class="muted"></span></div>
   </form>
   <details style="margin-top:12px"><summary>推理侧怎么接</summary><pre class="json" style="max-width:none">from emqc.loader import StreamClient
+# 新建会话：StreamClient(api, "&lt;dataset&gt;", z_chunk=16, client="unet-infer")
+# 接上页面上建好的会话 #N：StreamClient(api, stream_id=N)
 for item, arr in StreamClient("{{ api_base }}", "&lt;dataset&gt;", z_chunk=16, client="unet-infer").items():
     pred = model(arr)                            # arr: (z1-z0, H, W)，一个 tile 的一段
     ...                                          # 每个子块用完自动 ack，结束自动关闭会话</pre>
@@ -45,12 +48,17 @@ for item, arr in StreamClient("{{ api_base }}", "&lt;dataset&gt;", z_chunk=16, c
 </section>
 </div>
 
+<h2>导出预览 <span class="cnt">按左上角的设置，每个 block 的每张切片会不会交付、为什么 · 改参数立即刷新 · 不写任何文件</span></h2>
+<div class="card" id="export-preview"><span class="muted">选择数据集后显示</span></div>
+
 <h2>导出任务 <span class="cnt" id="export-count">{{ jobs|length }}</span></h2>
 <div id="exports" class="active-list">{% if not jobs %}<div class="empty">还没有导出任务</div>{% endif %}</div>
 
-<h2>推理流会话 <span class="cnt" id="stream-count">{{ sessions|length }}</span></h2>
+<h2>推理流会话 <span class="cnt" id="stream-count">{{ sessions|length }}</span> <span class="cnt">每个格子是一个子块：灰 = 待取 · 蓝 = 推理程序正在处理 · 绿 = 已完成 · 红 = 失败 · 斜纹 = 因含未通过 QC 的切片被跳过；红点 = 子块里有未通过 QC 的切片</span></h2>
+<div id="stream-maps" class="active-list"></div>
+<details class="pl-logs" style="margin-top:10px"><summary class="muted">全部会话列表</summary>
 <div class="scroll"><table class="dense" id="streams"><thead><tr><th>会话</th><th>dataset</th><th>客户端</th><th>状态</th><th style="min-width:180px">进度</th><th class="num">子块</th><th class="num">已确认</th><th class="num">已取数据</th><th class="num">速率</th><th>创建</th><th></th></tr></thead><tbody id="streams-body">
 <tr><td colspan="11" class="muted">加载中…</td></tr>
-</tbody></table></div>
+</tbody></table></div></details>
 <script>document.addEventListener('DOMContentLoaded', () => deliveryInit());</script>
 {% endblock %}

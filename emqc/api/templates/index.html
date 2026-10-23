@@ -6,6 +6,19 @@
 <p class="sub">已注册的数据集及其最近一次 QC 结果。</p></div>
 <div class="actions"><a class="btn" href="/pipeline">去流水线启动</a><button class="primary" onclick="scanDatasets(this)">扫描</button></div></div>
 
+{% if scope == 'latest' and this_run %}{% set r = this_run %}{% set mt = r.metrics %}
+<div class="scope-bar"><span>本次运行 <a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a> · <a href="/datasets/{{ r.dataset_id }}"><b>{{ r.dataset_id }}</b></a> · <span class="muted mono">{{ (r.finished_at or '')|replace('T',' ') }}</span></span>
+  <a class="btn" href="/?scope=all">历史记录 · 全部数据集 ▸</a></div>
+<div class="tiles">
+  <div class="tile"><div class="k">数据集</div><div class="v ds-name" title="{{ r.dataset_id }}">{{ r.dataset_id }}</div><div class="sub">{% if r.dataset_size %}{{ r.dataset_size.z }}×{{ r.dataset_size.y }}×{{ r.dataset_size.x }} · {{ r.dataset_size.size_class }}{% endif %}</div></div>
+  <div class="tile"><div class="k">切片</div><div class="v">{{ r.dataset_size.z if r.dataset_size else '–' }}</div><div class="sub">{{ r.n_blocks }} 个 block{% if mt.get('n_slices_input') and r.dataset_size and mt.get('n_slices_input') != r.dataset_size.z %} · {{ mt.get('n_slices_input')|int }} tile-sections{% endif %}</div></div>
+  <div class="tile accent"><div class="k">留存率</div><div class="v">{{ r.retention_rate|pct }}</div><div class="sub">{{ mt.get('n_slices_passed')|fmt(0) }} / {{ mt.get('n_slices_input')|fmt(0) }} 通过</div></div>
+  <div class="tile"><div class="k">block 等级</div><div class="v" style="font-size:14px;margin-top:8px">{% set tot = r.grade_counts.values()|sum %}{% if tot %}<div class="stack" style="height:12px">{% for g in ['A','B','C','D'] %}{% if r.grade_counts.get(g) %}<i style="width:{{ (100*r.grade_counts[g]/tot)|round(1) }}%;background:var(--g{{ g }})" title="{{ g }} × {{ r.grade_counts[g] }}"></i>{% endif %}{% endfor %}</div>{% endif %}</div><div class="sub">{% for g in ['A','B','C','D'] %}{% if r.grade_counts.get(g) %}{{ g }}×{{ r.grade_counts[g] }} {% endif %}{% endfor %}</div></div>
+  <div class="tile"><div class="k">发现问题</div><div class="v">{{ r.findings_by_severity.values()|sum }}</div>{{ m.sevstack(r.findings_by_severity) }}</div>
+  <div class="tile"><div class="k">耗时</div><div class="v">{{ mt.get('duration_s')|fmt(1) }}<small>s</small></div><div class="sub">读入 {{ mt.get('bytes_read')|bytes }}</div></div>
+</div>
+{% else %}
+<div class="scope-bar"><span>全部数据集汇总 <span class="muted">（每个数据集各自最近一次运行）</span></span>{% if this_run %}<a class="btn" href="/">只看本次运行</a>{% endif %}</div>
 <div class="tiles">
   <div class="tile"><div class="k">数据集</div><div class="v">{{ kpi.n_datasets }}<small>{{ kpi.size.small or 0 }} small · {{ kpi.size.large or 0 }} large</small></div></div>
   <div class="tile"><div class="k">切片</div><div class="v">{{ kpi.n_sections }}</div><div class="sub">{{ kpi.n_blocks }} 个 block</div></div>
@@ -13,13 +26,23 @@
   <div class="tile"><div class="k">block 等级</div><div class="v" style="font-size:14px;margin-top:8px">{% set tot = kpi.grades.values()|sum %}{% if tot %}<div class="stack" style="height:12px">{% for g in ['A','B','C','D'] %}{% if kpi.grades[g] %}<i style="width:{{ (100*kpi.grades[g]/tot)|round(1) }}%;background:var(--g{{ g }})" title="{{ g }} × {{ kpi.grades[g] }}"></i>{% endif %}{% endfor %}</div>{% else %}<span class="muted">尚未运行</span>{% endif %}</div><div class="sub">{% for g in ['A','B','C','D'] %}{% if kpi.grades[g] %}{{ g }}×{{ kpi.grades[g] }} {% endif %}{% endfor %}</div></div>
   <div class="tile"><div class="k">取数请求</div><div class="v">{{ n_served }}</div><div class="sub">算法侧已取切片 / 子块次数</div></div>
 </div>
+{% endif %}
 
-<h2>数据集 <span class="cnt">{{ datasets|length }}</span></h2>
-{% if datasets %}
+{% if examples %}
+<h2>平台自动抓到的问题 <span class="cnt">{{ '本次运行' if scope == 'latest' else '各数据集最近一次运行' }} · {{ examples|length }} 类 · 共 {{ flagged|length }} 张 · 点图一张一张往下翻</span>
+  <button class="ex-all" data-view-type="">查看全部 {{ flagged|length }} 张 ▶</button></h2>
+<div class="ex-row">{% for e in examples %}<a class="ex-card gs-{{ e.severity }}" href="{{ e.href }}" data-view-type="{{ e.type }}" data-view-url="{{ e.url }}"><img loading="lazy" src="{{ e.url }}" alt="{{ e.zh }}"><span class="ex-t"><b>{{ e.zh }} <span class="ex-n">{{ e.n }} 张</span></b><span class="mono">{{ e.dataset_id }} · z{{ e.z }}</span></span></a>{% endfor %}</div>
+<script type="application/json" id="viewer-data">{{ flagged|tojson }}</script>
+{% endif %}
+
+{% set shown = datasets if (scope == 'all' or not this_run) else (datasets|selectattr('dataset_id', 'equalto', this_run.dataset_id)|list) %}
+<h2>{% if scope == 'all' or not this_run %}数据集 <span class="cnt">{{ datasets|length }}</span>{% else %}本次运行的数据集 <span class="cnt">{{ shown|length }} / {{ datasets|length }}</span>
+  <a class="ex-all" href="/?scope=all#history">历史记录：全部 {{ datasets|length }} 个数据集 ▸</a>{% endif %}</h2>
+{% if shown %}
 <div class="scroll"><table>
 <thead><tr><th>dataset</th><th>规模</th><th>形状 z·y·x</th><th>体素 nm</th><th>物种 / 脑区</th><th>blocks</th><th>等级</th><th>留存率</th><th style="min-width:220px">逐切片（各 tile 取最差）</th><th>最近运行</th><th></th></tr></thead>
 <tbody>
-{% for d in datasets %}<tr>
+{% for d in shown %}<tr>
   <td class="top"><a href="/datasets/{{ d.dataset_id }}"><b>{{ d.dataset_id }}</b></a><div class="muted" style="font-size:12px">{{ d.name }}</div></td>
   <td><span class="pill {{ 'on' if d.size_class == 'large' }}">{{ d.size_class }}</span><div class="muted" style="font-size:11px">{{ '远程' if d.source == 'sftp' else '本地' }}</div></td>
   <td class="mono">{{ d.shape.z }} · {{ d.shape.y }} · {{ d.shape.x }}<div class="muted" style="font-size:11px">{{ d.em.format }} {{ d.em.dtype }}</div></td>
@@ -29,18 +52,18 @@
   <td>{{ m.grade(d.latest_grade) }}</td>
   <td style="min-width:120px"><div class="row" style="display:flex;gap:8px;align-items:center">{{ m.meter(d.latest_retention_rate) }}<span class="mono">{{ d.latest_retention_rate|pct }}</span></div></td>
   <td>{% if d.strip %}{{ m.strip(d.strip, d.dataset_id, d.strip[0].block_id, axis=false) }}{% else %}<span class="muted">未运行</span>{% endif %}</td>
-  <td>{% if d.latest_run_id %}<a href="/runs/{{ d.latest_run_id }}" class="mono">#{{ d.latest_run_id }}</a>{% if d.n_findings is defined and d.n_findings is not none %}<div class="muted" style="font-size:11px">{{ d.n_findings|int }} findings</div>{% endif %}{% else %}<span class="pill">{{ d.status }}</span>{% endif %}</td>
+  <td>{% if d.latest_run_id %}<a href="/runs/{{ d.latest_run_id }}" class="mono">#{{ d.latest_run_id }}</a>{% if d.latest_run_at %}<div class="muted mono" style="font-size:11px">{{ d.latest_run_at }}</div>{% endif %}{% if d.n_findings is defined and d.n_findings is not none %}<div class="muted" style="font-size:11px">{{ d.n_findings|int }} findings</div>{% endif %}{% else %}<span class="pill">{{ d.status }}</span>{% endif %}</td>
   <td><button data-ds="{{ d.dataset_id }}" onclick="runQC(this.dataset.ds, this)">运行 QC</button></td>
 </tr>{% endfor %}
 </tbody></table></div>
 {% else %}<div class="empty">还没有注册的数据集。点右上角"扫描"发现新数据。</div>{% endif %}
 
-<div class="grid side" style="margin-top:28px">
-<div><h2 style="margin-top:0">最近运行</h2>
-<div class="scroll"><table><thead><tr><th>run</th><th>dataset</th><th>状态</th><th>等级</th><th class="num">quality</th><th class="num">留存率</th><th>开始</th></tr></thead><tbody>
-{% for r in runs %}<tr><td><a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a></td><td><a href="/datasets/{{ r.dataset_id }}">{{ r.dataset_id }}</a></td><td><span class="pill {{ 'ok' if r.status == 'done' }}">{{ r.status }}</span></td><td>{% for g, n in r.grade_counts|dictsort %}{{ m.grade(g) }}<span class="muted mono">×{{ n }}</span> {% endfor %}</td><td class="num mono">{{ r.quality_score|fmt(3) }}</td><td class="num mono">{{ r.retention_rate|pct }}</td><td class="muted mono" style="font-size:11px">{{ (r.started_at or '')|replace('T',' ') }}</td></tr>{% else %}<tr><td colspan="7" class="muted">无</td></tr>{% endfor %}
-</tbody></table></div></div>
-<div><h2 style="margin-top:0">high 以上的问题 <span class="cnt">最近一次运行</span></h2>
-<div class="card">{% if failure_counts %}{{ m.hbars(failure_counts) }}{% else %}<span class="muted">没有 high 以上的问题</span>{% endif %}</div></div>
-</div>
+{% if scope == 'all' %}
+<h2 id="history">运行历史 <span class="cnt">{{ runs|length }} 次 · 最新的在上面</span>{% if this_run %}<a class="ex-all" href="/">只看本次运行 ▸</a>{% endif %}</h2>
+<div class="scroll"><table class="dense"><thead><tr><th>run</th><th>dataset</th><th>状态</th><th>等级</th><th class="num">留存率</th><th class="num">quality</th><th>开始</th><th>结束</th><th class="num">耗时</th></tr></thead><tbody>
+{% for r in runs %}<tr><td><a href="/runs/{{ r.run_id }}" class="mono">#{{ r.run_id }}</a></td><td><a href="/datasets/{{ r.dataset_id }}">{{ r.dataset_id }}</a></td><td><span class="pill {{ 'ok' if r.status == 'done' }}">{{ r.status }}</span></td><td>{% for g, n in r.grade_counts|dictsort %}{{ m.grade(g) }}<span class="muted mono">×{{ n }}</span> {% endfor %}</td><td class="num mono">{{ r.retention_rate|pct }}</td><td class="num mono">{{ r.quality_score|fmt(3) }}</td><td class="mono" style="font-size:12px">{{ (r.started_at or '')|replace('T',' ') }}</td><td class="muted mono" style="font-size:12px">{{ (r.finished_at or '–')|replace('T',' ') }}</td><td class="num mono">{% if r.wall_s is not none %}{{ r.wall_s|fmt(1) }} s{% else %}–{% endif %}</td></tr>{% else %}<tr><td colspan="9" class="muted">还没有运行</td></tr>{% endfor %}
+</tbody></table></div>
+{% endif %}
+<h2>high 以上的问题 <span class="cnt">{{ '本次运行' if scope == 'latest' else '各数据集最近一次运行' }}</span></h2>
+<div class="card">{% if failure_counts %}{{ m.hbars(failure_counts) }}{% else %}<span class="muted">没有 high 以上的问题</span>{% endif %}</div>
 {% endblock %}

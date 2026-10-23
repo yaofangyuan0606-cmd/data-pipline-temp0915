@@ -109,13 +109,21 @@ class ShardStore:
 
 
 class StreamClient:
-    def __init__(self, api: str, dataset_id: str, z_chunk: int = 16, client: str | None = None, order: str = "z", skip_failed: bool = False, block_ids: list[str] | None = None, batch: int = 2,
-                 token: str | None = None):
+    def __init__(self, api: str, dataset_id: str | None = None, z_chunk: int = 16, client: str | None = None, order: str = "z", skip_failed: bool = False, block_ids: list[str] | None = None, batch: int = 2,
+                 token: str | None = None, stream_id: int | None = None):
+        """New session from the parameters, or stream_id=N to work through a session already created (e.g. on the delivery page)."""
         self.api = api.rstrip("/")
         self.batch = batch
         self.token = token
-        body = {"dataset_id": dataset_id, "z_chunk": z_chunk, "client": client, "order": order, "skip_failed": skip_failed, "block_ids": block_ids}
-        self.session = self._post("/api/v1/streams", body)
+        if stream_id is not None:
+            self.session = json.loads(_get(f"{self.api}/api/v1/streams/{stream_id}", token).decode())
+            if self.session.get("status") != "open":
+                raise RuntimeError(f"stream {stream_id} is {self.session.get('status')}; only open sessions can be continued")
+        else:
+            if not dataset_id:
+                raise ValueError("dataset_id or stream_id is required")
+            body = {"dataset_id": dataset_id, "z_chunk": z_chunk, "client": client, "order": order, "skip_failed": skip_failed, "block_ids": block_ids}
+            self.session = self._post("/api/v1/streams", body)
         self.stream_id = self.session["stream_id"]
 
     def _post(self, path: str, body: dict | None = None) -> dict:

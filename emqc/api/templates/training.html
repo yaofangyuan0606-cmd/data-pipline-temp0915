@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}训练数据包{% endblock %}
+{% block crumbs %}<b>训练数据包</b>{% endblock %}
+{% block content %}
+<div class="page-head"><div class="grow"><div class="eyebrow">Training packs</div><h1>训练数据包</h1>
+<p class="sub">QC 之后，按<b>粒度</b>（2D 切片 / 3D 连续段 / 3D patch）×<b>功能</b>（原图、质检分类、分割、膜……）一次产出训练能直接用的数据。每格一个目录 + <span class="mono">index.csv</span>（文件、标签、train/val/test、坐标、来自哪次 QC）。</p></div>
+<div class="actions"><select id="tp-ds" class="text" onchange="tpSelect(this.value)">{% for d in datasets %}<option value="{{ d.dataset_id }}" {{ 'selected' if d.dataset_id == selected }}>{{ d.dataset_id }} · {{ d.n_blocks }} blocks · {{ d.latest_grade or '未运行' }}</option>{% else %}<option value="">没有数据集</option>{% endfor %}</select></div></div>
+
+<div id="tp-facts" class="tp-facts"></div>
+
+<section class="card tp-matrix-card">
+  <div class="tp-h"><h2>选择要产出的格子</h2>
+    <span class="tp-quick"><button type="button" onclick="tpPick('ready')">全选可用</button><button type="button" onclick="tpPick('nolabel')">只要不需要标签的</button><button type="button" onclick="tpPick('none')">清空</button></span></div>
+  <div id="tp-matrix" class="tp-matrix"><div class="muted">加载中…</div></div>
+  <div class="tp-legend"><span><i class="pt-train"></i>train</span><span><i class="pt-val"></i>val</span><span><i class="pt-test"></i>test</span><span><i class="pt-unsplit"></i>未划分（只在质检分类里，D 级等）</span><span class="muted">· 数字是样本数；patch 是上限估计，验收规则可能少收</span></div>
+</section>
+
+<details class="card tp-params" id="tp-params-box">
+  <summary><b>参数</b> <span class="muted" id="tp-params-sum"></span></summary>
+  <form id="tp-params" class="tp-pgrid" oninput="tpParamsChanged()">
+    <fieldset><legend>2D 切片</legend>
+      <label>每格最多 <input name="max_slices" type="number" min="1" value="400" class="text"> 张</label>
+      <label>质检分类 好:坏 = <input name="qc_clean_ratio" type="number" min="0" step="0.5" value="1" class="text"> : 1</label></fieldset>
+    <fieldset><legend>3D 连续段</legend>
+      <label>最短 <input name="min_run" type="number" min="1" value="8" class="text"> 张连续通过</label>
+      <label>每段最多 <input name="shard_z" type="number" min="0" value="32" class="text"> 张（0 = 不切）</label></fieldset>
+    <fieldset><legend>3D patch</legend>
+      <label>尺寸 dz,dy,dx <input name="patch_size" value="16,256,256" class="text mono"></label>
+      <label>每格 <input name="n_patches" type="number" min="1" value="64" class="text"> 个 · 种子 <input name="seed" type="number" value="0" class="text"></label></fieldset>
+    <fieldset><legend>质量</legend>
+      <label>综合分下限 <input name="min_quality" type="number" step="0.05" min="0" max="1" placeholder="不限" class="text"></label>
+      <span class="muted" style="font-size:11.5px">只用通过 QC 的切片；质检分类会同时取坏切片</span></fieldset>
+  </form>
+</details>
+
+<div class="tp-go card" id="tp-go">
+  <div><b id="tp-sel-n">还没选</b> <span class="muted" id="tp-sel-detail"></span></div>
+  <button class="primary" id="tp-build" onclick="tpBuild(this)" disabled>生成训练数据包</button>
+</div>
+
+<h2>数据包 <span class="cnt" id="tp-count"></span></h2>
+<div id="tp-packs" class="active-list"><div class="empty">还没有数据包</div></div>
+
+<details class="card" style="margin-top:14px"><summary><b>训练侧怎么读</b></summary>
+<pre class="code">import csv, numpy as np
+rows = list(csv.DictReader(open("&lt;数据包目录&gt;/segmentation/patch/index.csv")))
+train = [r for r in rows if r["partition"] == "train"]
+x = np.load(train[0]["file"])          # (dz, dy, dx) uint8；2D 是 PNG
+y = np.load(train[0]["label_file"])    # 同形状：实例 id / 边界 0-1 / 掩码 0-1
+# 质检分类的 2D：qc/slice/&lt;划分&gt;/{clean,fail}/*.png，可以直接用 torchvision.datasets.ImageFolder</pre>
+<p class="muted" style="font-size:12px">每个数据包目录里都有 README.md（含 PyTorch Dataset 示例）和 pack_manifest.json（参数、每个 block 用的 QC run、标签版本）。</p>
+</details>
+<script src="/static/training.js?v={{ static_v('training.js') }}" defer></script>
+<script>document.addEventListener('DOMContentLoaded', () => tpInit());</script>
+{% endblock %}

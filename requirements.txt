@@ -16,3 +16,4 @@ psutil
 paramiko
 bcrypt
 scikit-image>=0.25,<0.27
+langgraph>=1.0

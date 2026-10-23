@@ -71,6 +71,8 @@ cd em-qc-platform
 - **运行页**：节点图、日志、各阶段耗时时间线、各 block 结果与资源。
 - **检查项页**：每项一张卡，阈值刻度尺直接画出 critical / high / medium / low / none 的区间。
 
+**LangGraph 工作流**：每次 QC 运行是一张 LangGraph 状态图（prepare → next_group → ingest → slice_qc → serial_qc → aggregate → persist ↺ …→ finalize），控制台的运行卡片和运行页上能看到节点实时点亮、跑完可回放；`EMQC_WORKFLOW_ENGINE=loop` 退回原来的循环。见 `docs/WORKFLOW.md`。
+
 页面上的每个动作都对应一个接口（`/api/v1/qc/runs/batch`、`/runs/{id}/cancel`、`/runs/{id}/events`、`/runs/{id}/graph`、`/pipeline/status`、`/system/metrics`），脚本和调度器可以照做，见 `docs/API.md`。规模化（PB 级数据、多台 Mac mini 用 Ray 跑同一数据集）的方案见 `docs/SCALE_PLAN.md`。
 
 ## 数据交付：训练分片与推理流

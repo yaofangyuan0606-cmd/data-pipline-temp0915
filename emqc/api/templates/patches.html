@@ -3,7 +3,7 @@
 {% block crumbs %}<b>Patch Factory</b>{% endblock %}
 {% block content %}
 <div class="page-head"><div class="grow"><div class="eyebrow">Training Data API</div><h1>Patch Factory</h1>
-<p class="sub">QC 之后才稳定出训练数据。这里做三件事：验证标签卷与 EM 是否对得上，给 block 分 train / val / test，按七种用途生成 patch 集合。patch 只存坐标与血缘，像素按需切。</p></div>
+<p class="sub">QC 之后才稳定出训练数据。这里做三件事：验证标签卷与 EM 是否对得上，给 block 分 train / val / test，按七种用途生成 patch 集合。patch 只存坐标与血缘，像素按需切。要直接拿到能训练的文件（2D / 3D 段 / patch × 各种用途），去 <a href="/training">训练数据包</a>。</p></div>
 <div class="actions"><select id="pf-ds" class="text" onchange="pfSelect(this.value)">{% for d in datasets %}<option value="{{ d.dataset_id }}" {{ 'selected' if d.dataset_id == preselect }}>{{ d.dataset_id }} · {{ d.n_blocks }} blocks · {{ d.latest_grade or '未运行' }}</option>{% endfor %}</select></div></div>
 
 <section class="card">
