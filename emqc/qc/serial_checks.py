@@ -181,20 +181,22 @@ def tile_shift_field(ctx: BlockContext, prepped: dict, p: dict, params: dict) ->
     th, tw = H // g, W // g
     f = float(ctx.serial_factor)
     tol = params.get("tolerance_thumb_px", 1.0)
-    tiles = []
+    tiles, unmatched, n_textured = [], [], 0
     for gy in range(g):
         for gx in range(g):
             ta = a[gy * th : (gy + 1) * th, gx * tw : (gx + 1) * tw]
             tb = b[gy * th : (gy + 1) * th, gx * tw : (gx + 1) * tw]
             if ta.std() < params.get("min_tile_std", 1e-4) or tb.std() < params.get("min_tile_std", 1e-4):
                 continue
+            n_textured += 1
             dy, dx, peak = _phase_corr(ta - ta.mean(), tb - tb.mean())
             if peak < params.get("min_peak", 0.10):
+                unmatched.append([gy, gx])  # 这一格和参考片对不上（褶皱、撕裂、涂抹等局部损坏的信号）
                 continue
             res = max(0.0, float(np.hypot(dy - p["dy"], dx - p["dx"])) - tol) * f
             tiles.append({"tile": [gy, gx], "cy": (gy + 0.5) * th, "cx": (gx + 0.5) * tw,
                           "dy_thumb": float(dy), "dx_thumb": float(dx), "dy": dy * f, "dx": dx * f, "residual_px": res, "peak": peak})
-    out = {"tiles": tiles, "n": len(tiles), "g": g, "th": th, "tw": tw, "factor": f}
+    out = {"tiles": tiles, "n": len(tiles), "g": g, "th": th, "tw": tw, "factor": f, "unmatched": unmatched, "n_textured": n_textured}
     ctx.cache[key] = out
     return out
 
@@ -320,11 +322,19 @@ class SliceJumpCheck(QCCheck):
 class LocalMisalignmentCheck(QCCheck):
     name = "local_misalignment"
     failure_type = "local_misalign"
+    failure_types = ("local_misalign", "local_mismatch")
     level = "serial"
     stage = "serial_qc"
-    description = "局部错位（启发式）：把序列缩略图分成网格，逐块相位相关，块位移相对全局位移的残差中位数（nm）。"
+    description = "局部错位：序列缩略图分成网格逐格相位相关。取对得上的格子里相对整体位移的最大残差（nm），另看对不上的格子比例（局部褶皱、撕裂、涂抹）。"
     default_params = {"grid": 4, "min_tile_px": 32, "max_residual_nm": 150.0, "max_residual_frac": 0.03, "min_tile_std": 1e-4,
-                      "min_peak": 0.10, "gate_frac": 0.25, "tolerance_thumb_px": 1.0, "max_gap": 1}
+                      "min_peak": 0.10, "gate_frac": 0.25, "tolerance_thumb_px": 1.0, "max_gap": 1,
+                      "unmatched_start": 0.15, "unmatched_span": 0.25}
+    # rules-v0.2：
+    # * 取「对得上的格子里最大的残差」，不再取中位数。局部错位通常只落在 1–2 格里，中位数会把它抹掉
+    #   （注入 32 px 的局部平移，旧版一次也没报出）。H01 干净相邻对的最大残差（扣容差后）最多 0.59 个缩略图像素，
+    #   离不通过线 2.81 很远。
+    # * 对不上的格子比例：干净相邻对 p95 为 1/16、最大 4/16；z85 这类局部褶皱 / 涂抹是 6/16。
+    #   ≥5/16 判不通过，记为 local_mismatch（局部区域和上一片对不上）。
 
     def run(self, ctx: BlockContext) -> None:
         pw = pairwise(ctx)
@@ -351,17 +361,33 @@ class LocalMisalignmentCheck(QCCheck):
             if field is None:
                 self.skip(r, "thumbnail_too_small")
                 continue
-            if field["n"] < 3:
+            if field["n_textured"] < 4:
                 self.skip(r, "too_few_textured_tiles")
                 continue
-            tiles = field["tiles"]
-            residuals = [t["residual_px"] for t in tiles]
             th, tw = field["th"], field["tw"]
-            med = float(np.median(residuals))
-            score = 1.0 - clip01(med / limit_px)
-            worst = max(tiles, key=lambda t: t["residual_px"])
-            bbox = [int(worst["tile"][1] * tw * f), int(worst["tile"][0] * th * f), int((worst["tile"][1] + 1) * tw * f), int((worst["tile"][0] + 1) * th * f)]
-            sev = self.emit(ctx, r, score, z_to=p["ref_z"], coordinate={"bbox": bbox}, details={"median_residual_px": med, "median_residual_nm": med * nm if nm else None, "n_tiles": len(residuals), "grid": field["g"], "worst_tile": worst, "ref_z": p["ref_z"]})
+            tiles = field["tiles"]
+            frac_un = len(field["unmatched"]) / field["n_textured"]
+            s_un = 1.0 - clip01((frac_un - self.params["unmatched_start"]) / self.params["unmatched_span"])
+            if tiles:
+                worst = max(tiles, key=lambda t: t["residual_px"])
+                mx = float(worst["residual_px"])
+                med = float(np.median([t["residual_px"] for t in tiles]))
+            else:
+                worst, mx, med = None, 0.0, 0.0
+            s_res = 1.0 - clip01(mx / limit_px)
+            score = min(s_res, s_un)
+            if s_un < s_res:  # 局部区域对不上：框住对不上的格子
+                ys = [u[0] for u in field["unmatched"]]
+                xs = [u[1] for u in field["unmatched"]]
+                bbox = [int(min(xs) * tw * f), int(min(ys) * th * f), int((max(xs) + 1) * tw * f), int((max(ys) + 1) * th * f)]
+                ftype = "local_mismatch"
+            else:
+                bbox = None if worst is None else [int(worst["tile"][1] * tw * f), int(worst["tile"][0] * th * f), int((worst["tile"][1] + 1) * tw * f), int((worst["tile"][0] + 1) * th * f)]
+                ftype = None
+            sev = self.emit(ctx, r, score, z_to=p["ref_z"], coordinate={"bbox": bbox}, failure_type=ftype,
+                            details={"max_residual_px": mx, "max_residual_nm": mx * nm if nm else None, "median_residual_px": med,
+                                     "unmatched_tiles": field["unmatched"], "unmatched_frac": round(frac_un, 3), "n_tiles": field["n"],
+                                     "n_textured": field["n_textured"], "grid": field["g"], "worst_tile": worst, "ref_z": p["ref_z"]})
             walk.mark(r, sev >= Severity.HIGH)
         walk.finish()
 

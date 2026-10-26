@@ -140,3 +140,16 @@ def test_local_deformation_tolerance_is_applied(clean):
     ctx = run(clean)
     det = [f.details for r in ctx.slices for f in r.findings if f.check == "local_deformation"]
     assert all(d.get("median_residual_after_affine_px", 0) < 2.0 for d in det), det
+
+
+def test_local_shift_and_local_damage_are_reported(clean):
+    vol = clean.copy()
+    a, b = 128, 320
+    vol[12][a:b, a:b] = np.roll(clean[12][a:b, a:b], 24, axis=1)  # 局部区域平移 24 px（192 nm）
+    rng = np.random.default_rng(3)
+    vol[28][: SIZE // 2, : SIZE // 2] = rng.integers(60, 200, (SIZE // 2, SIZE // 2), dtype=np.uint8)  # 左上 1/4 内容被毁
+    ctx = run(vol)
+    assert high(ctx.rec(12), "local_misalignment"), [(f.check, f.severity.label) for f in ctx.rec(12).findings]
+    dmg = high(ctx.rec(28), "local_misalignment")
+    assert dmg and dmg[0].failure_type in ("local_mismatch", "local_misalign"), [(f.check, f.failure_type, f.severity.label) for f in ctx.rec(28).findings]
+    assert not high(ctx.rec(29), "local_misalignment")  # 下一张不因为和损坏的那张比而再报一次
