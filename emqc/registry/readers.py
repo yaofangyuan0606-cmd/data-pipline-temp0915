@@ -42,6 +42,12 @@ class CorruptSliceError(SliceReadError):
     pass
 
 
+class SliceIOError(CorruptSliceError):
+    """读取失败（磁盘 / 网络 / 云端请求出错），不等于文件本身损坏。
+
+    继承 CorruptSliceError 只是为了兼容旧的 except 分支；ingest 会先对它重试，仍失败才记为 read_error。"""
+
+
 class SourceUnavailableError(Exception):
     """The data source itself failed (network, permissions): abort the run instead of marking slices corrupt."""
 
@@ -141,7 +147,7 @@ def _read(fs: FS, path: str) -> bytes:
         raise MissingSliceError(str(e)) from e
     except OSError as e:
         if isinstance(fs, LocalFS):
-            raise CorruptSliceError(f"{path}: {e}") from e
+            raise SliceIOError(f"{path}: {type(e).__name__}: {e}") from e
         raise SourceUnavailableError(f"{fs.url(path)}: {type(e).__name__}: {e}") from e
 
 

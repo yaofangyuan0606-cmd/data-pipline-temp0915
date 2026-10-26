@@ -1,8 +1,21 @@
 """Serial-section QC checks (6). Operate on serial thumbnails (~32 nm/px) of consecutive slices.
 
-Implemented (heuristic v0.1): slice_jump, local_misalign (tile-wise shift residual), global_misalign,
-                              z_order (duplicate / swap / misplaced).
-Stubs (framework only):      local_deformation, section_deformation.
+All six are implemented as rules (rules-v0.2): slice_jump, local_misalign (tile-wise shift residual), global_misalign,
+z_order (duplicate / swap / misplaced), local_deformation, section_deformation.
+
+rules-v0.2 changes (measured on H01 demo block h01_b0000, 32 nm serial thumbnails):
+  * slices already unusable at slice level (missing / corrupt / blank / blur / saturation / crack at HIGH+) are not
+    evaluated again here — they used to collect a second, redundant failure from every serial check;
+  * the tile-field checks (local_misalignment, local_deformation, section_deformation) compare adjacent sections only:
+    at a gap of 2 the per-tile phase-correlation peak (median 0.068) is already at the noise level of unrelated
+    sections (0.057), so the "residuals" were random. If the previous section was flagged, the slice is skipped
+    instead of being compared two back;
+  * per-tile min_peak 0.02 -> 0.10 (noise p95 0.066, normal adjacent tiles p5 0.12);
+  * global_misalignment: max_gap 3 -> 2 and a peak gate of 0.03 (noise ~0.017; gap 3 median 0.024);
+  * slice_jump / global_misalignment: when the previous section was flagged, the slice is scored against both the
+    flagged section and the one before, and the better score is kept — a permanent step is then reported once, at
+    the section where it happens, instead of at z and z+1;
+  * local_deformation now subtracts its tolerance from the affine residuals (the parameter was never applied).
 
 Reference selection (shared by all neighbour comparisons)
   * every ok slice is *evaluated*, but only slices that passed the slice-level checks form the
@@ -20,7 +33,7 @@ from __future__ import annotations
 import numpy as np
 from scipy import ndimage
 
-from .base import BlockContext, QCCheck, Severity, SliceRecord, StubCheck, chain_position, clip01, pick_reference, reference_chain, register
+from .base import REFERENCE_BLOCKERS, BlockContext, QCCheck, Severity, SliceRecord, StubCheck, chain_position, clip01, pick_reference, reference_chain, register
 
 # ----------------------------------------------------------------------------- image helpers
 
@@ -103,7 +116,11 @@ def pairwise(ctx: BlockContext, min_median_ncc: float = 0.15) -> dict:
     """
     if "pairwise" in ctx.cache:
         return ctx.cache["pairwise"]
-    evaluated = [r for r in ctx.slices if r.ok and r.sthumb is not None and not r.reference_only]
+    blocked = [r for r in ctx.slices if r.ok and not r.reference_only and r.severity_of(REFERENCE_BLOCKERS) >= ctx.config.pass_max_severity]
+    for r in blocked:  # 切片级已经判为不可用的切片：序列检查不再重复判它
+        r.note("serial", "not_evaluated: already unusable at slice level")
+    blocked_ids = {id(r) for r in blocked}  # 按对象身份比：SliceRecord 带数组，不能用 == 比较
+    evaluated = [r for r in ctx.slices if r.ok and r.sthumb is not None and not r.reference_only and id(r) not in blocked_ids]
     chain = [r for r in reference_chain(ctx) if r.sthumb is not None]
     nm = ctx.serial_nm_per_px
     sigma = max(1.0, 128.0 / nm) if nm else 2.0  # remove structure coarser than ~128 nm
@@ -148,7 +165,8 @@ def tile_shift_field(ctx: BlockContext, prepped: dict, p: dict, params: dict) ->
     section_deformation (the affine fitted to the field: scale + shear) and local_deformation
     (what is left after removing that affine — genuinely non-rigid movement).
     """
-    key = ("tile_field", p["ref_z"], p.get("z", id(p)), int(params.get("grid", 4)), int(params.get("min_tile_px", 32)), int(params.get("min_grid", 2)))
+    key = ("tile_field", p["ref_z"], p.get("z", id(p)), int(params.get("grid", 4)), int(params.get("min_tile_px", 32)), int(params.get("min_grid", 2)),
+           float(params.get("min_peak", 0.10)), float(params.get("tolerance_thumb_px", 1.0)), float(params.get("min_tile_std", 1e-4)))
     cached = ctx.cache.get(key)
     if cached is not None:
         return cached
@@ -171,7 +189,7 @@ def tile_shift_field(ctx: BlockContext, prepped: dict, p: dict, params: dict) ->
             if ta.std() < params.get("min_tile_std", 1e-4) or tb.std() < params.get("min_tile_std", 1e-4):
                 continue
             dy, dx, peak = _phase_corr(ta - ta.mean(), tb - tb.mean())
-            if peak < params.get("min_peak", 0.05):
+            if peak < params.get("min_peak", 0.10):
                 continue
             res = max(0.0, float(np.hypot(dy - p["dy"], dx - p["dx"])) - tol) * f
             tiles.append({"tile": [gy, gx], "cy": (gy + 0.5) * th, "cx": (gx + 0.5) * tw,
@@ -213,10 +231,15 @@ def fit_affine(tiles: list[dict], H: float, W: float) -> dict | None:
 
 
 class _SerialWalk:
-    """Iterate over evaluated slices with the shared two-back reference rule."""
+    """Iterate over evaluated slices with the shared two-back reference rule.
 
-    def __init__(self, check: QCCheck, ctx: BlockContext, pw: dict):
+    Yields (slice, pair, alt): `pair` is the comparison the rule picked; `alt` is the comparison with the previous
+    chain section when the rule fell back to two back (that section was flagged), else None.
+    adjacent_only=True (tile-field checks): never fall back — skip the slice when the previous section was flagged."""
+
+    def __init__(self, check: QCCheck, ctx: BlockContext, pw: dict, adjacent_only: bool = False):
         self.check, self.ctx, self.pw = check, ctx, pw
+        self.adjacent_only = adjacent_only
         shared = ctx.cache["serial_outliers"]
         self.outlier = [r.z in shared for r in pw["chain"]]
         self.flagged: set[int] = set()
@@ -232,8 +255,12 @@ class _SerialWalk:
             if j is None:
                 self.check.skip(r, "reference_reset")
                 continue
-            p = pw["p1"][r.z] if j == k - 1 else pw["p2"][r.z]
-            yield r, p
+            if j == k - 1:
+                yield r, pw["p1"][r.z], None
+            elif self.adjacent_only:
+                self.check.skip(r, "previous_section_flagged")  # 不隔片比较：间隔 2 时逐格匹配已是噪声
+            else:
+                yield r, pw["p2"][r.z], pw["p1"].get(r.z)
 
     def mark(self, r: SliceRecord, is_outlier: bool) -> None:
         if is_outlier:
@@ -273,10 +300,18 @@ class SliceJumpCheck(QCCheck):
             _skip_all(self, ctx, "block_uncorrelated")
             return
         walk = _SerialWalk(self, ctx, pw)
-        for r, p in walk:
-            exp = pw["expected"](p["gap"])
-            score = clip01(p["ncc"] / exp) if exp > 0 else 1.0
-            sev = self.emit(ctx, r, score, z_to=p["ref_z"], details={"ncc_aligned": p["ncc"], "ncc_raw": p["ncc0"], "expected_ncc": exp, "gap": p["gap"], "ref_z": p["ref_z"]})
+
+        def score_of(q: dict) -> float:
+            e = pw["expected"](q["gap"])
+            return clip01(q["ncc"] / e) if e > 0 else 1.0
+
+        for r, p, alt in walk:
+            score, used = score_of(p), p
+            if alt is not None and score_of(alt) > score:
+                # 和被标记的上一张接得上：断点在上一张那里（永久性跳变），这一张不再重复报
+                score, used = score_of(alt), alt
+            exp = pw["expected"](used["gap"])
+            sev = self.emit(ctx, r, score, z_to=used["ref_z"], details={"ncc_aligned": used["ncc"], "ncc_raw": used["ncc0"], "expected_ncc": exp, "gap": used["gap"], "ref_z": used["ref_z"], "compared_with_flagged_previous": used is alt})
             walk.mark(r, sev >= Severity.HIGH)
         walk.finish()
 
@@ -289,7 +324,7 @@ class LocalMisalignmentCheck(QCCheck):
     stage = "serial_qc"
     description = "局部错位（启发式）：把序列缩略图分成网格，逐块相位相关，块位移相对全局位移的残差中位数（nm）。"
     default_params = {"grid": 4, "min_tile_px": 32, "max_residual_nm": 150.0, "max_residual_frac": 0.03, "min_tile_std": 1e-4,
-                      "min_peak": 0.02, "gate_frac": 0.25, "tolerance_thumb_px": 1.0, "max_gap": 2}
+                      "min_peak": 0.10, "gate_frac": 0.25, "tolerance_thumb_px": 1.0, "max_gap": 1}
 
     def run(self, ctx: BlockContext) -> None:
         pw = pairwise(ctx)
@@ -304,14 +339,13 @@ class LocalMisalignmentCheck(QCCheck):
         nm = ctx.ds.nm_per_px_xy
         short = ctx.nominal_short
         limit_px = (self.params["max_residual_nm"] / nm) if nm else self.params["max_residual_frac"] * short
-        walk = _SerialWalk(self, ctx, pw)
-        for r, p in walk:
+        walk = _SerialWalk(self, ctx, pw, adjacent_only=True)
+        for r, p, _ in walk:
             if p["gap"] > self.params["max_gap"]:
                 self.skip(r, f"reference_too_far(gap={p['gap']})")  # tissue moves too much over several missing sections
                 continue
             if p["ncc"] < self.params["gate_frac"] * pw["expected"](p["gap"]):
-                self.skip(r, "pair_uncorrelated")  # a jump, not a local misalignment
-                walk.mark(r, True)
+                self.skip(r, "pair_uncorrelated")  # a jump, not a local misalignment — slice_jump reports it
                 continue
             field = tile_shift_field(ctx, prepped, p, self.params)
             if field is None:
@@ -339,7 +373,7 @@ class GlobalMisalignmentCheck(QCCheck):
     level = "serial"
     stage = "serial_qc"
     description = "全局错位：相位相关得到的相对参考切片的整体平移量（nm；无体素尺寸时用图像短边比例）。"
-    default_params = {"max_shift_nm": 200.0, "max_shift_frac": 0.05, "gate_frac": 0.5, "max_gap": 3}
+    default_params = {"max_shift_nm": 200.0, "max_shift_frac": 0.05, "gate_frac": 0.5, "max_gap": 2, "min_peak": 0.03}
 
     def run(self, ctx: BlockContext) -> None:
         pw = pairwise(ctx)
@@ -354,14 +388,20 @@ class GlobalMisalignmentCheck(QCCheck):
         limit_px = (self.params["max_shift_nm"] / nm) if nm else self.params["max_shift_frac"] * short
         f = float(ctx.serial_factor)
         walk = _SerialWalk(self, ctx, pw)
-        for r, p in walk:
-            if p["gap"] > self.params["max_gap"]:
-                self.skip(r, f"reference_too_far(gap={p['gap']})")
+
+        def usable(q: dict | None) -> bool:
+            return (q is not None and q["gap"] <= self.params["max_gap"] and q["peak"] >= self.params["min_peak"]
+                    and q["ncc"] >= self.params["gate_frac"] * pw["expected"](q["gap"]))
+
+        for r, p, alt in walk:
+            cands = [q for q in (p, alt) if usable(q)]
+            if not cands:
+                why = (f"reference_too_far(gap={p['gap']})" if p["gap"] > self.params["max_gap"]
+                       else "peak_too_low" if p["peak"] < self.params["min_peak"] else "pair_uncorrelated")
+                self.skip(r, why)  # 不再把它标成离群：跳变由 slice_jump 报
                 continue
-            if p["ncc"] < self.params["gate_frac"] * pw["expected"](p["gap"]):
-                self.skip(r, "pair_uncorrelated")
-                walk.mark(r, True)
-                continue
+            # 上一张被标记时，和它比、和再前一张比，取位移小的：整体平移发生在上一张时只报一次
+            p = min(cands, key=lambda q: q["shift_px"])
             score = 1.0 - clip01(p["shift_px"] / limit_px)
             sev = self.emit(ctx, r, score, z_to=p["ref_z"], coordinate={"shift": {"dx": p["dx"] * f, "dy": p["dy"] * f}}, details={"shift_px": p["shift_px"], "shift_nm": p["shift_px"] * nm if nm else None, "peak": p["peak"], "ref_z": p["ref_z"], "gap": p["gap"]})
             walk.mark(r, sev >= Severity.HIGH)
@@ -399,7 +439,7 @@ class ZOrderCheck(QCCheck):
                 continue
             # (a) duplicate of the previous chain slice
             if p["gap"] == 1 and p["ncc"] >= self.params["duplicate_ncc"] and abs(p["dy"]) + abs(p["dx"]) <= 1:
-                self.emit(ctx, r, 0.0, z_to=p["ref_z"], details={"reason": "duplicate", "ncc": p["ncc"]})
+                self.emit(ctx, r, 0.0, z_to=p["ref_z"], failure_type="duplicate_section", details={"reason": "duplicate", "ncc": p["ncc"]})
                 ctx.cache["serial_outliers"].add(r.z)
                 continue
             nxt = chain[i + 1] if i + 1 < n else None
@@ -440,8 +480,8 @@ class LocalDeformationCheck(QCCheck):
     )
     # gate_frac 比跳变检查低：形变会拉低整体相关性，用同样的门槛等于把自己要找的东西挡在外面。
     # 逐格的 min_peak 才是真正保证"这一格对得上"的判据。
-    default_params = {"grid": 4, "min_tile_px": 16, "min_tile_std": 1e-4, "min_peak": 0.02, "tolerance_thumb_px": 0.5,
-                      "max_residual_nm": 120.0, "max_residual_frac": 0.02, "gate_frac": 0.2, "max_gap": 2, "min_tiles": 6, "min_grid": 3}
+    default_params = {"grid": 4, "min_tile_px": 16, "min_tile_std": 1e-4, "min_peak": 0.10, "tolerance_thumb_px": 0.5,
+                      "max_residual_nm": 120.0, "max_residual_frac": 0.02, "gate_frac": 0.2, "max_gap": 1, "min_tiles": 6, "min_grid": 3}
     # 合成缺陷标定：注入的非刚性扭曲得 0.813，最差干净切片 0.971，间隔仅 0.158 —— 这是四项里区分度最差的，
     # 档位必须整体上移才抓得住，代价是对干净数据的容忍度变小。真实数据上要重新标定。
     default_thresholds = {"low": 0.93, "medium": 0.88, "high": 0.78, "critical": 0.60}
@@ -458,8 +498,9 @@ class LocalDeformationCheck(QCCheck):
         f = float(ctx.serial_factor)
         nm = ctx.ds.nm_per_px_xy
         limit_px = (self.params["max_residual_nm"] / nm) if nm else self.params["max_residual_frac"] * ctx.nominal_short
-        walk = _SerialWalk(self, ctx, pw)
-        for r, p in walk:
+        walk = _SerialWalk(self, ctx, pw, adjacent_only=True)
+        tol = float(self.params["tolerance_thumb_px"])
+        for r, p, _ in walk:
             if p["gap"] > self.params["max_gap"]:
                 self.skip(r, f"reference_too_far(gap={p['gap']})")
                 continue
@@ -475,7 +516,8 @@ class LocalDeformationCheck(QCCheck):
             if fit is None:
                 self.skip(r, "affine_fit_failed")
                 continue
-            med_px = fit["median_residual_thumb"] * f
+            # 每格残差先扣容差（缩略图像素）再取中位数：以前这个参数没有生效，正常相邻层也贴着提示线
+            med_px = float(np.median([max(0.0, v - tol) for v in fit["residual_thumb_px"]])) * f
             score = 1.0 - clip01(med_px / limit_px)
             worst = max(zip(field["tiles"], fit["residual_thumb_px"]), key=lambda t: t[1])
             th, tw = field["th"], field["tw"]
@@ -501,8 +543,8 @@ class SectionDeformationCheck(QCCheck):
         "Section deformation：整张切片相对参考切片的拉伸 / 压缩 / 剪切（切片制备时的机械形变）。"
         "对逐格位移场拟合仿射变换，取其中的尺度与剪切分量偏离刚体的程度；纯平移和纯旋转不算形变。"
     )
-    default_params = {"grid": 4, "min_tile_px": 16, "min_tile_std": 1e-4, "min_peak": 0.02, "tolerance_thumb_px": 0.5,
-                      "strain_ref": 0.03, "k_mad": 3.0, "min_spread": 0.004, "gate_frac": 0.2, "max_gap": 2, "min_tiles": 6, "min_grid": 3}
+    default_params = {"grid": 4, "min_tile_px": 16, "min_tile_std": 1e-4, "min_peak": 0.10, "tolerance_thumb_px": 0.5,
+                      "strain_ref": 0.03, "k_mad": 3.0, "min_spread": 0.004, "gate_frac": 0.2, "max_gap": 1, "min_tiles": 6, "min_grid": 3}
     # 合成缺陷标定：注入的仿射形变得 0.0，最差干净切片 0.726（5 分位 0.792）
     default_thresholds = {"low": 0.70, "medium": 0.55, "high": 0.40, "critical": 0.20}
 
@@ -518,9 +560,9 @@ class SectionDeformationCheck(QCCheck):
         # 两遍：先量出本 block 每一对的应变，再相对本 block 的典型值判断。
         # 原因：相邻切片的组织结构本来就在变，仿射拟合分不清"切片被拉伸"和"组织换了一层"。
         # 绝对阈值会把这份内在变化整体判成形变（实测干净切片也能量到 0.02–0.05 的应变）。
-        walk = _SerialWalk(self, ctx, pw)
+        walk = _SerialWalk(self, ctx, pw, adjacent_only=True)
         measured = []
-        for r, p in walk:
+        for r, p, _ in walk:
             if p["gap"] > self.params["max_gap"]:
                 self.skip(r, f"reference_too_far(gap={p['gap']})")
                 continue

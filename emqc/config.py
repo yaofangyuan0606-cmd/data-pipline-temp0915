@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     preview_dir: Path = PROJECT_ROOT / "var" / "previews"
     preview_max_px: int = 256  # thumbnails only; full images are never re-saved
 
-    pipeline_version: str = "qc-v0.1"
+    pipeline_version: str = "qc-v0.2"  # rules-v0.2：规则实现修复，见 docs/CHECKS_AND_THRESHOLDS.md 的变更记录
     block_size_z: int = 64  # a block = a contiguous serial-section sequence of this many slices ...
     block_size_xy: int = 0  # ... over an XY tile of this many pixels (0 = the whole plane)
     # Datasets whose EM volume has >= this many voxels are "large" (full volume -> inference,

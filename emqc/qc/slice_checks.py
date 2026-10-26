@@ -1,7 +1,7 @@
 """Slice-level QC checks (10). Operate on per-slice statistics + thumbnails computed at ingest.
 
-Implemented (heuristic v0.1): missing, corrupt, blank, blur, saturation, crack (fill regions), brightness_jump, contrast_drift.
-Stubs (framework only):      charging, contamination.
+All ten are implemented as rules (rules-v0.2): missing, corrupt (decode error vs read error), blank, blur, saturation,
+crack (fill regions), brightness_jump, contrast_drift, charging, contamination.
 
 Order matters: the neighbour-based checks (brightness_jump, contrast_drift) only use slices that
 passed the structural checks before them as references (see base.reference_chain).
@@ -12,6 +12,19 @@ import numpy as np
 from scipy import ndimage
 
 from .base import BlockContext, QCCheck, Severity, StubCheck, bbox_from_mask, chain_position, clip01, pick_reference, reference_chain, register
+
+
+def fill_mask(ctx: BlockContext, r, t: np.ndarray, dilate: int = 2) -> np.ndarray | None:
+    """预览缩略图上的填充区（无数据区）掩码，向外扩 `dilate` 个像素把边缘的混合像素也盖住。
+
+    只在 ingest 确实找到成片填充区时才返回，零星的纯黑像素不算。没有填充区返回 None。"""
+    fv = ctx.ds.fill_value
+    if fv is None or not float(r.stats.get("frac_fill", 0.0) or 0.0) > 0:
+        return None
+    m = t <= (float(fv) / ctx.ds.dtype_max) + 1e-6
+    if not m.any():
+        return None
+    return ndimage.binary_dilation(m, iterations=dilate) if dilate > 0 else m
 
 
 @register
@@ -33,13 +46,15 @@ class MissingSliceCheck(QCCheck):
 class CorruptSliceCheck(QCCheck):
     name = "corrupt_slice"
     failure_type = "corrupt"
-    description = "损坏切片：文件无法解码，或尺寸与数据集不一致。"
+    failure_types = ("corrupt", "read_error")
+    description = "损坏切片：文件无法解码，或尺寸与数据集不一致。重试后仍读不出来（磁盘 / 网络 / 云端请求失败）单独记为 read_error，不算文件损坏。"
     maturity = "stable"
 
     def run(self, ctx: BlockContext) -> None:
         for r in ctx.slices:
             if r.status == "corrupt":
-                self.emit(ctx, r, 0.0, details={"error": r.error})
+                is_io = str(r.error or "").startswith("read_error")
+                self.emit(ctx, r, 0.0, failure_type="read_error" if is_io else "corrupt", details={"error": r.error, "kind": "read_error" if is_io else "decode_error"})
             elif r.ok:
                 r.scores[self.name] = 1.0
             else:
@@ -126,7 +141,10 @@ class CrackCheck(QCCheck):
     )
     # area_ref 是"开始扣分"的面积，area_full 是"扣到 0 分"的面积；两者之间按 log 递减，
     # 这样 6% 和 90% 的无数据区不会同样是 critical（旧版线性刻度在 5% 就饱和到 0）
-    default_params = {"area_ref": 0.02, "area_full": 0.60, "min_frac": 0.002, "elongation_crack": 3.0, "no_coverage_min_frac": 0.15, "no_coverage_max_elong": 6.0}
+    default_params = {"area_ref": 0.02, "area_full": 0.60, "min_frac": 0.002, "elongation_crack": 3.0, "no_coverage_min_frac": 0.15, "no_coverage_max_elong": 6.0,
+                      "crack_span_start": 0.10, "crack_span_full": 0.50, "edge_sliver_frac": 0.10}
+    # crack_span_*：细长裂缝按长度（外接框对角线 / 图像对角线）打分。只看面积时，一条横穿 1024 图块、20 像素宽的
+    # 裂缝面积约 2%，永远到不了提示线；按长度，穿过图块 30% 以上就判不通过。
     failure_types = ("crack", "no_coverage", "missing_region")
     default_thresholds = {"low": 0.9, "medium": 0.7, "high": 0.5, "critical": 0.2}
 
@@ -146,7 +164,13 @@ class CrackCheck(QCCheck):
             largest = float(r.stats.get("fill_largest_frac", frac) or frac)
             # a bulk region on the border is uncovered canvas even if mildly elongated (a 45 %-area triangle has
             # elongation ~3); only a genuinely thin band (elongation >= 6) at that size is still a fold / crack
-            if sides >= 1 and largest >= p["no_coverage_min_frac"] and elong < p["no_coverage_max_elong"]:
+            bb = r.stats.get("fill_bbox") or [0, 0, 0, 0]
+            H, W = ctx.extent
+            thin_w, thin_h = (bb[2] - bb[0]) / max(W, 1), (bb[3] - bb[1]) / max(H, 1)
+            # 沿着图像边缘的细条：对齐后画布边上没填满，属于未成像，不是裂缝
+            edge_sliver = sides >= 1 and (
+                (thin_w <= p["edge_sliver_frac"] and (bb[0] <= 0 or bb[2] >= W)) or (thin_h <= p["edge_sliver_frac"] and (bb[1] <= 0 or bb[3] >= H)))
+            if (sides >= 1 and largest >= p["no_coverage_min_frac"] and elong < p["no_coverage_max_elong"]) or edge_sliver:
                 ftype = "no_coverage"
             elif elong >= p["elongation_crack"]:
                 ftype = "crack"
@@ -154,6 +178,9 @@ class CrackCheck(QCCheck):
                 ftype = "missing_region"
             lo, hi = float(p["area_ref"]), float(p["area_full"])
             score = 1.0 - clip01(np.log(max(frac, lo) / lo) / np.log(hi / lo))
+            if ftype == "crack":
+                s0, s1 = float(p["crack_span_start"]), float(p["crack_span_full"])
+                score = min(score, 1.0 - clip01((span - s0) / (s1 - s0)))
             self.emit(
                 ctx, r, score,
                 failure_type=ftype,
@@ -176,6 +203,11 @@ class BrightnessJumpCheck(QCCheck):
         for r in ctx.slices:
             if not r.ok:
                 self.skip(r)
+                continue
+            if r.severity_of(["blank_slice", "crack"]) >= ctx.config.pass_max_severity:
+                # 空白 / 大片无数据：平均灰度没有意义，不再叠加一条亮度突变。
+                # 模糊、饱和不在此列——整体变亮造成的饱和，亮度突变才是更有信息量的原因
+                self.skip(r, "not_evaluated: blank or no data")
                 continue
             k = pos.get(id(r), chain_position(chain, r))
             if k == 0:
@@ -249,16 +281,27 @@ class ChargingArtifactCheck(QCCheck):
         "整幅亮度平面的倾斜。真实 charging 主要表现为条带，所以条带信号权重最大。"
     )
     default_params = {"band_ref": 0.10, "anisotropy_ref": 0.20, "ramp_ref": 0.15, "min_px": 64, "n_bins": 12, "baseline_frac": 0.12,
-                      "k_mad": 3.0, "min_spread_band": 0.01, "min_spread_aniso": 0.02, "min_spread_ramp": 0.02}
+                      "k_mad": 3.0, "min_spread_band": 0.01, "min_spread_aniso": 0.02, "min_spread_ramp": 0.02, "min_valid_frac": 0.5}
     # 改成相对本 block 判断之后，干净切片的三个信号都接近基线，分数集中在 1.0 附近，
     # 所以档位回到接近默认（早期用绝对阈值时不得不整体下移到 0.50）
     default_thresholds = {"low": 0.75, "medium": 0.6, "high": 0.4, "critical": 0.2}
 
-    def _band(self, t: np.ndarray) -> tuple[float, str, int]:
-        """行 / 列亮度剖面相对其自身基线的最大偏离。charging 的典型表现是整行（或整列）偏亮。"""
+    def _band(self, t: np.ndarray, valid: np.ndarray | None = None) -> tuple[float, str, int]:
+        """行 / 列亮度剖面相对其自身基线的最大偏离。charging 的典型表现是整行（或整列）偏亮。
+
+        有填充区时只用有效像素算剖面；有效像素太少的行 / 列用相邻行列插值，不让无数据区的边缘冒充条带。"""
         best = (0.0, "row", 0)
         for axis, name in ((1, "row"), (0, "col")):
-            prof = t.mean(axis=axis).astype(np.float64)
+            if valid is None:
+                prof = t.mean(axis=axis).astype(np.float64)
+            else:
+                cnt = valid.sum(axis=axis).astype(np.float64)
+                prof = np.where(cnt > 0, (t * valid).sum(axis=axis) / np.maximum(cnt, 1), np.nan)
+                ok = cnt >= 0.25 * valid.shape[axis]
+                if ok.sum() < 8:
+                    continue
+                idx = np.arange(prof.size)
+                prof = np.interp(idx, idx[ok], prof[ok])
             n = prof.size
             w = max(3, int(n * self.params["baseline_frac"]) | 1)  # 奇数窗口
             base = ndimage.median_filter(prof, size=w, mode="nearest")
@@ -291,13 +334,17 @@ class ChargingArtifactCheck(QCCheck):
         peak = int(np.argmax(share))
         return float(np.clip((share[peak] - 1.0 / n) / (1.0 - 1.0 / n), 0.0, 1.0)), float((peak + 0.5) * 180.0 / n)
 
-    def _ramp(self, t: np.ndarray) -> float:
+    def _ramp(self, t: np.ndarray, valid: np.ndarray | None = None) -> float:
         H, W = t.shape
         y = (np.arange(H) / max(H - 1, 1) * 2 - 1)[:, None] * np.ones((1, W))
         x = (np.arange(W) / max(W - 1, 1) * 2 - 1)[None, :] * np.ones((H, 1))
         M = np.stack([y.ravel(), x.ravel(), np.ones(H * W)], axis=1)
+        v = t.ravel().astype(np.float64)
+        if valid is not None:  # 只拟合有效像素，无数据区的 0 会把平面拉斜
+            keep = valid.ravel()
+            M, v = M[keep], v[keep]
         try:
-            c, *_ = np.linalg.lstsq(M, t.ravel().astype(np.float64), rcond=None)
+            c, *_ = np.linalg.lstsq(M, v, rcond=None)
         except np.linalg.LinAlgError:
             return 0.0
         return float(2.0 * np.hypot(c[0], c[1]))
@@ -316,9 +363,15 @@ class ChargingArtifactCheck(QCCheck):
             if min(t.shape) < p["min_px"]:
                 self.skip(r, "thumbnail_too_small")
                 continue
-            band, band_axis, band_idx = self._band(t)
-            aniso, angle = self._anisotropy(t)
-            ramp = self._ramp(t)
+            fm = fill_mask(ctx, r, t)
+            valid = None if fm is None else ~fm
+            if valid is not None and valid.mean() < p["min_valid_frac"]:
+                self.skip(r, "too_little_tissue")  # 一半以上是无数据区：交给 crack / no_coverage，不在这里猜条带
+                continue
+            tf = t if valid is None else np.where(valid, t, float(np.median(t[valid])))
+            band, band_axis, band_idx = self._band(t, valid)
+            aniso, angle = self._anisotropy(tf)
+            ramp = self._ramp(t, valid)
             measured.append((r, t, band, band_axis, band_idx, aniso, angle, ramp))
         if not measured:
             return
@@ -381,17 +434,24 @@ class ContaminationCheck(QCCheck):
             if min(t.shape) < p["min_px"]:
                 self.skip(r, "thumbnail_too_small")
                 continue
-            med = float(np.median(t))
-            mad = float(np.median(np.abs(t - med))) * 1.4826
+            fm = fill_mask(ctx, r, t, dilate=3)
+            valid = np.ones(t.shape, dtype=bool) if fm is None else ~fm
+            if valid.mean() < 0.2:
+                self.skip(r, "too_little_tissue")
+                continue
+            tv = t[valid]
+            med = float(np.median(tv))
+            mad = float(np.median(np.abs(tv - med))) * 1.4826
             if mad < 1e-6:
                 r.scores[self.name] = 1.0
                 continue
             k = float(p["sigma_k"])
-            extreme = (t > med + k * mad) | (t < med - k * mad)
+            # 无数据区（填充值 0）本身又黑又平，不扣掉会被当成污染
+            extreme = ((t > med + k * mad) | (t < med - k * mad)) & valid
             # 局部平坦度：3x3 邻域标准差。污染斑块内部接近常数，组织即使很深也有纹理
             local_var = ndimage.uniform_filter(t.astype(np.float64) ** 2, 3) - ndimage.uniform_filter(t.astype(np.float64), 3) ** 2
             local_std = np.sqrt(np.clip(local_var, 0, None))
-            flat_cut = float(np.quantile(local_std, p["flat_quantile"]))
+            flat_cut = float(np.quantile(local_std[valid], p["flat_quantile"]))
             flat = local_std <= flat_cut
             blobs = ndimage.binary_opening(extreme & flat, structure=np.ones((3, 3)), iterations=int(p["open_iter"]))
             # 只保留成块的（太小的是噪点）
@@ -400,19 +460,24 @@ class ContaminationCheck(QCCheck):
                 sz = ndimage.sum(blobs, lab0, index=np.arange(1, n0 + 1))
                 keep = {i + 1 for i, v in enumerate(sz) if v >= p["min_blob_px"]}
                 blobs = np.isin(lab0, list(keep)) if keep else np.zeros_like(blobs)
-            frac = float(blobs.mean())
-            if frac < p["min_frac"] or frac > p["max_blob_frac"]:
-                # 超过 max_blob_frac 说明整幅都被判成异常，那是对比度问题不是污染
+            frac = float(blobs.sum() / max(valid.sum(), 1))
+            if frac < p["min_frac"]:
                 r.scores[self.name] = 1.0
-                r.note(self.name, "no_blob" if frac < p["min_frac"] else "too_widespread_for_contamination")
+                r.note(self.name, "no_blob")
                 continue
+            widespread = frac > p["max_blob_frac"]
             lab, n = ndimage.label(blobs)
             sizes = ndimage.sum(blobs, lab, index=np.arange(1, n + 1)) if n else np.array([])
             bbox = None
             if n:
                 big = int(np.argmax(sizes)) + 1
                 bbox = bbox_from_mask(lab == big, ctx.scale_yx)
-            self.emit(ctx, r, 1.0 - clip01(frac / p["area_ref"]), coordinate={"bbox": bbox},
-                      details={"blob_frac": round(frac, 5), "n_blobs": int(n),
+            score = 1.0 - clip01(frac / p["area_ref"])
+            if widespread:
+                # 有效区域 25% 以上都像污染：更可能是大片结构或对比度问题，判不准。以前直接放行（1.0 分），
+                # 现在报「中等」交人工确认，不判不通过
+                score = 0.5 * (self.thresholds["medium"] + self.thresholds["high"])
+            self.emit(ctx, r, score, coordinate={"bbox": bbox},
+                      details={"blob_frac": round(frac, 5), "n_blobs": int(n), "widespread": widespread,
                                "largest_blob_frac": round(float(sizes.max() / blobs.size), 5) if n else 0.0,
                                "median": round(med, 4), "mad": round(mad, 5)})

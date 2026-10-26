@@ -81,7 +81,7 @@ ACCEPTS = {
     "brightness_jump": {"brightness_jump"}, "contrast_drift": {"contrast_drift"},
     "saturation": {"saturation", "brightness_jump"}, "crack": {"crack", "missing_region", "no_coverage"},
     "charging": {"charging", "saturation", "brightness_jump"}, "contamination": {"contamination", "saturation"},
-    "slice_jump": {"slice_jump"}, "z_order": {"z_order", "slice_jump"},
+    "slice_jump": {"slice_jump"}, "z_order": {"z_order", "duplicate_section", "slice_jump"},  # rules-v0.2: 重复切片单独成类
     "global_misalign": {"global_misalign", "slice_jump"}, "local_misalign": {"local_misalign", "local_deformation", "section_deformation"},
     "section_deformation": {"section_deformation", "local_deformation", "global_misalign"},
     "local_deformation": {"local_deformation", "section_deformation", "local_misalign"},

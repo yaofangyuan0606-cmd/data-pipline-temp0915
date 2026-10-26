@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .readers import CorruptSliceError, MissingSliceError, VolumeInfo, VolumeReader
+from .readers import MissingSliceError, SliceIOError, VolumeInfo, VolumeReader
 
 log = logging.getLogger(__name__)
 
@@ -180,8 +180,8 @@ class CloudVolumeReader(VolumeReader):
         t0 = time.perf_counter()
         try:
             arr = np.asarray(self._cv[x0:x1, y0:y1, za:zb])
-        except Exception as e:  # cloud-volume raises many types
-            raise CorruptSliceError(f"{self.url} z[{za},{zb}): {type(e).__name__}: {e}") from e
+        except Exception as e:  # cloud-volume raises many types; almost all of them are request / network failures
+            raise SliceIOError(f"{self.url} z[{za},{zb}): {type(e).__name__}: {e}") from e
         if arr.ndim == 4:
             arr = arr[..., 0]
         block = np.ascontiguousarray(np.transpose(arr, (2, 1, 0)))  # (x,y,z) -> (z,y,x)

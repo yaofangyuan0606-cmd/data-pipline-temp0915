@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from scipy import ndimage
 
-from emqc.registry.readers import CorruptSliceError, MissingSliceError, SourceUnavailableError, VolumeReader
+from emqc.registry.readers import CorruptSliceError, MissingSliceError, SliceIOError, SourceUnavailableError, VolumeReader
 
 from .base import BlockContext, Finding, QCCheck, QCConfig, DatasetInfo, Severity, SliceRecord
 from .preview import block_mean, downsample, save_montage, save_thumb
@@ -109,7 +109,14 @@ def fill_region_stats(sub: np.ndarray, fill_value: float, min_frac: float, max_p
         return {}
     H, W = zero.shape
     k = max(1, int(np.ceil(max(H, W) / max_px)))
-    small = zero[::k, ::k]
+    if k > 1:
+        # 按格取「有没有填充像素」（max pooling），不用隔 k 取 1：后者会让 1–2 像素宽的裂缝直接消失
+        hp, wp = -(-H // k) * k, -(-W // k) * k
+        pad = np.zeros((hp, wp), dtype=bool)
+        pad[:H, :W] = zero
+        small = pad.reshape(hp // k, k, wp // k, k).any(axis=(1, 3))
+    else:
+        small = zero
     lab, n = ndimage.label(small, structure=np.ones((3, 3), dtype=int))
     if n == 0:
         return {}
@@ -139,6 +146,35 @@ def fill_region_stats(sub: np.ndarray, fill_value: float, min_frac: float, max_p
     }
 
 
+# 整张切片几乎全是填充值：数据源把缺失的数据块补成了填充值（云端读取 fill_missing、爬取落盘都会这样），
+# 应记为「缺失」，而不是同时报空白 + 未成像 + 亮度突变 + 切片跳变。
+ALL_FILL_FRAC = 0.999
+READ_RETRIES = 2  # 读取失败（磁盘 / 网络）时重试的次数
+
+
+def _all_fill(stats: dict, fill_value) -> bool:
+    return fill_value is not None and float(stats.get("frac_zero_raw", 0.0) or 0.0) >= ALL_FILL_FRAC
+
+
+def _read_with_retry(reader: VolumeReader, z: int):
+    """读一张切片；磁盘 / 网络类失败先重试，避免把一次传输故障记成数据问题。"""
+    last = None
+    for attempt in range(READ_RETRIES + 1):
+        try:
+            return reader.read_slice(z)
+        except (MissingSliceError, SourceUnavailableError):
+            raise
+        except SliceIOError as e:
+            last = e
+        except CorruptSliceError:
+            raise  # 解码失败：文件本身有问题，重试没有意义
+        except Exception as e:  # 读取器的意外异常：多半也是读取过程出错
+            last = e
+        if attempt < READ_RETRIES:
+            time.sleep(0.5 * (attempt + 1))
+    raise SliceIOError(f"read_error: {type(last).__name__}: {last}") from last
+
+
 def stage_ingest(ctx: BlockContext, reader: VolumeReader) -> None:
     stage_ingest_group([ctx], reader)
 
@@ -163,6 +199,8 @@ def _ingest_reference_slice(ctxs: list[BlockContext], reader: VolumeReader) -> N
         rec = SliceRecord(z=z, reference_only=True)
         rec.stats, rec.thumb, rec.sthumb = compute_stats(tile, c.ds.dtype_max, c.config.max_stat_pixels, c.config.thumb_px, c.serial_factor, fill_value=c.ds.fill_value)
         rec.thumb = None  # 只需要序列缩略图，预览图不留
+        if _all_fill(rec.stats, c.ds.fill_value):
+            continue  # 上一段末尾是空的数据块：没有可用的参考
         c.pre = [rec]
 
 
@@ -181,10 +219,15 @@ def stage_ingest_group(ctxs: list[BlockContext], reader: VolumeReader) -> None:
     _ingest_reference_slice(ctxs, reader)
     for i, z in enumerate(range(first.block.z_start, first.block.z_end)):
         try:
-            img = reader.read_slice(z)
+            img = _read_with_retry(reader, z)
         except MissingSliceError as e:
             for c in ctxs:
                 c.slices[i].status, c.slices[i].error = "missing", str(e)
+            continue
+        except SliceIOError as e:  # 重试后仍读不出来：记为读取失败，不当成文件损坏
+            msg = str(e) if str(e).startswith("read_error") else f"read_error: {e}"
+            for c in ctxs:
+                c.slices[i].status, c.slices[i].error = "corrupt", msg
             continue
         except CorruptSliceError as e:
             for c in ctxs:
@@ -192,16 +235,17 @@ def stage_ingest_group(ctxs: list[BlockContext], reader: VolumeReader) -> None:
             continue
         except SourceUnavailableError:
             raise
-        except Exception as e:  # unexpected reader failure -> corrupt, but keep going
-            for c in ctxs:
-                c.slices[i].status, c.slices[i].error = "corrupt", f"{type(e).__name__}: {e}"
-            continue
         for c in ctxs:
             rec = c.slices[i]
             b = c.block
             tile = img[b.y_start : b.y_end, b.x_start : b.x_end] if c.is_tile else img
             rec.bytes_read = int(tile.nbytes)
             rec.stats, rec.thumb, rec.sthumb = compute_stats(tile, c.ds.dtype_max, c.config.max_stat_pixels, c.config.thumb_px, c.serial_factor, fill_value=c.ds.fill_value)
+            if _all_fill(rec.stats, c.ds.fill_value):
+                rec.status = "missing"
+                rec.error = f"整张都是填充值 {c.ds.fill_value}（占 {rec.stats.get('frac_zero_raw', 0):.4f}）：按缺失处理，数据源可能把缺失的数据块补成了填充值"
+                rec.thumb = rec.sthumb = None
+                continue
             if "fill_bbox_sub" in rec.stats:  # scale bbox from the subsampled grid to block-local full-res pixels
                 st = rec.stats["stat_subsample"]
                 rec.stats["fill_bbox"] = [v * st for v in rec.stats.pop("fill_bbox_sub")]

@@ -90,6 +90,14 @@ class QCRunner:
         self.slice_checks = build_checks(self.config, SLICE_CHECKS)
         self.serial_checks = build_checks(self.config, SERIAL_CHECKS)
 
+    def effective_rules(self) -> dict:
+        """每项检查实际生效的参数和阈值（默认值 + 覆盖值展开后），以及它们的哈希，写进 run 记录以便追溯。"""
+        import hashlib
+
+        checks = {c.name: {"params": c.params, "thresholds": c.thresholds} for c in [*self.slice_checks, *self.serial_checks]}
+        blob = json.dumps(checks, sort_keys=True, ensure_ascii=False, default=str)
+        return {"effective_checks": checks, "rules_hash": hashlib.sha256(blob.encode()).hexdigest()[:16]}
+
     # ------------------------------------------------------------------ in-memory part (stages 1-4)
     def process_block(self, reader: VolumeReader, ds: DatasetInfo, blk: BlockInfo) -> tuple[BlockContext, BlockResult]:
         return self.process_group(reader, ds, [blk])[0]
@@ -301,7 +309,7 @@ class QCRunner:
                 s.add(run)
             prev_status = ds.status
             run.status, run.started_at, run.n_blocks, run.n_blocks_done, run.stage = "running", _now(), len(blocks), 0, "ingest"
-            run.config_json = {**self.config.as_dict(), "block_ids": block_ids}
+            run.config_json = {**self.config.as_dict(), "block_ids": block_ids, **self.effective_rules()}
             ds.status = "qc_running"
             s.commit()
             run_id = run.id
