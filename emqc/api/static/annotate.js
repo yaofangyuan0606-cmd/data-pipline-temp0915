@@ -416,7 +416,7 @@
   async function goZ(z, keepHover, force = false) {
     if (S.mergeBusy && !force) return;
     const nz = S.info.shape_zyx[0]; z = Math.max(0, Math.min(nz - 1, z | 0));
-    if (z !== S.z) { if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); clearBF(); seed.clear(); clearSelection(); clearNeighbourList("an-neighbour-list"); clearTimeout(S.hbTimer); S.hbTimer = setTimeout(heartbeat, 1500); }
+    if (z !== S.z) { ctxClose(); if (S.ngMode) setTool("pick"); mergeArm(null); clearSAM(); clearBF(); seed.clear(); clearSelection(); clearNeighbourList("an-neighbour-list"); clearTimeout(S.hbTimer); S.hbTimer = setTimeout(heartbeat, 1500); }
     const block = S.block;
     S.z = z; $("an-z").value = z; $("an-zr").value = z;
     $("an-compare").href = `/annotate/compare?block=${encodeURIComponent(S.block)}&z=${z}`;
@@ -435,6 +435,12 @@
     zoomAt(Math.exp(-Math.max(-500, Math.min(500, delta)) * 0.002), ev.clientX - r.left, ev.clientY - r.top);
   }
 
+  // ------------------------------------------------------------------ 左栏折叠区：种子分割、大块填充、3D 默认收起
+  const FOLDS = ["an-seed-panel", "an-bf-panel", "an-ng-panel"], FOLD_KEY = "emqc.annotate.folds";
+  let foldState = {};
+  try { foldState = JSON.parse(localStorage.getItem(FOLD_KEY) || "{}") || {}; } catch { foldState = {}; }
+  function unfold(id) { const el = $(id); if (!el.open) { el.dataset.auto = "1"; el.open = true; } }   // 程序展开，不记进状态
+
   // ------------------------------------------------------------------ tools
   function setTool(t) {
     if (S.mergeBusy) return;
@@ -445,7 +451,9 @@
     if (t !== "bigfill") clearBF();
     seed.changeTool(t); S.tool = t; mergeArm(null);
     if (t.startsWith("sam")) $("an-sam-panel").open = true;
-    else if (t.startsWith("seed-")) $("an-sam-panel").open = false;
+    else if (t.startsWith("seed-")) { $("an-sam-panel").open = false; unfold("an-seed-panel"); }
+    else if (t === "bigfill") unfold("an-bf-panel");
+    else if (t === "ng") unfold("an-ng-panel");
     $("an-refine-options").hidden = t !== "refine";
     $("an-brush-options").hidden = t !== "brush" && t !== "erase";
     seed.buttons();
@@ -496,17 +504,18 @@
   }
   function ensureIdx(e, id) { let k = e.ids.indexOf(id); if (k < 0) { e.ids.push(id); e.counts.push(0); k = e.ids.length - 1; } return k; }
 
-  async function fill(x, y, whole) {
+  async function fill(x, y, whole, clearing = false) {
     const e = S.cache.get(S.z); if (!e || !e.idx) return;
-    if (S.cur === "0" && S.tool !== "clear") { flash("请先选择或新建标签"); return; }
+    const id = clearing ? "0" : S.cur;                         // 清除 = 填成背景 0；不去改当前标签
+    if (id === "0" && !clearing) { flash("请先选择或新建标签"); return; }
     if (!ensureWho()) return;
-    const old = idAt(x, y); if (old === S.cur) return;
-    const k = ensureIdx(e, S.cur), z = S.z;
+    const old = idAt(x, y); if (old === id) return;
+    const k = ensureIdx(e, id), z = S.z;
     if (whole) { const t = e.idx[y * S.W + x]; for (let i = 0; i < e.idx.length; i++) if (e.idx[i] === t) e.idx[i] = k; }
     else floodLocal(e, x, y, k);
     e.segImgs.clear(); clearRegions(); render();               // optimistic: show it now, reconcile after the server answers
     try {
-      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/fill`, editBody(z, { z, x, y, new_id: S.cur, whole_slice: !!whole }));
+      const r = await postJSON(`${API}/blocks/${encodeURIComponent(S.block)}/fill`, editBody(z, { z, x, y, new_id: id, whole_slice: !!whole }));
       afterEdit(r, z);
     } catch (err) { if (await stale(err, z)) return; flash("填充失败: " + err.message, true); invalidate(z); goZ(z, true); }
   }
@@ -544,7 +553,7 @@
     } finally { mergeBusy(false); mergeArm(null); }
   }
 
-  // 画笔：左键涂当前颜色（只补空白），右键擦；橡皮工具同理。擦除只擦**当前颜色**——压到邻居身上不会把邻居擦掉，
+  // 画笔：左键涂当前颜色（只补空白），右键拖动擦；橡皮工具同理。擦除只擦**当前颜色**——压到邻居身上不会把邻居擦掉，
   // 所以擦之前得先有当前颜色（Ctrl/⌘+点击拾取）。
   function strokeStart(x, y, erase = false) {
     if (!ensureWho()) return;
@@ -687,10 +696,8 @@
     } finally { if (sequence === S.ngSequence) S.ngRequest = null; }
   }
 
-  async function clearAt(x, y, whole) {                     // 清除: set to background, then re-colour with any tool
-    const keep = S.cur;
-    S.cur = "0";
-    try { await fill(x, y, whole); } finally { setCur(keep); }
+  function clearAt(x, y, whole) {                           // 清除: set to background, then re-colour with any tool
+    return fill(x, y, whole, true);
   }
   $("an-ng").addEventListener("click", () => toggle3D("point"));
   $("an-ng-block").addEventListener("click", () => toggle3D("block"));
@@ -913,6 +920,20 @@
   $("an-bf-down").addEventListener("click", () => bfPropagate(1));
 
   $("an-refine-sens").addEventListener("input", ev => { $("an-refine-sens-v").textContent = ev.target.value + "%"; });
+  for (const id of FOLDS) {
+    const el = $(id);
+    if (foldState[id]) unfold(id);
+    el.addEventListener("toggle", () => {
+      if (el.dataset.auto) { delete el.dataset.auto; return; }
+      // 和 SAM 一样：收起的面板里的工具不能继续在图上接受点击
+      if (!el.open && ((id === "an-seed-panel" && S.tool.startsWith("seed-")) || (id === "an-bf-panel" && S.tool === "bigfill") || (id === "an-ng-panel" && S.ngMode))) {
+        if (S.mergeBusy) { unfold(id); return; }
+        setTool("pick");
+      }
+      foldState[id] = el.open;
+      try { localStorage.setItem(FOLD_KEY, JSON.stringify(foldState)); } catch { /* 隐私模式等：只是记不住 */ }
+    });
+  }
   $("an-sam-panel").addEventListener("toggle", () => {
     if (!$("an-sam-panel").open && S.tool.startsWith("sam")) {
       // A hidden tool must not keep accepting clicks on the image.
@@ -941,9 +962,12 @@
       const painting = S.tool === "brush" || S.tool === "erase";
       // 按住 Tab 拖动：改画笔半径（向右变大、向左变小），不落笔
       if (S.radiusDrag) { if (S.radiusDrag.sticky) { endRadius(); flash(`已结束调半径（${S.brush} px），这一下没有落笔`); } return; }   // 调半径时按下鼠标不落笔；单击结束「点一下 Tab」进入的调半径模式
-      // 画笔 / 橡皮下右键 = 擦当前颜色；平移用中键、空格或 H
-      if (ev.button === 2 && painting && !S.spacePan) { if (inside(x, y)) { if (S.mergeBusy) flash("上一步还在保存，请稍候再擦"); else strokeStart(x, y, true); } return; }
-      if (ev.button === 2 || ev.button === 1 || S.tool === "pan" || S.spacePan) { S.drag = { x: ev.clientX, y: ev.clientY, tx: S.tx, ty: S.ty }; for (const q of P) q.stage.classList.add("panning"); return; }
+      // 右键点一下（不拖）= 菜单，松开时弹出；右键拖动照旧：画笔 / 橡皮下擦当前颜色，其他工具下平移。平移也可用中键、空格或 H
+      if (ev.button === 2 && painting && !S.spacePan) { S.rpress = inside(x, y) ? { x, y, cx: ev.clientX, cy: ev.clientY, erase: true, moved: false } : null; return; }
+      if (ev.button === 2 || ev.button === 1 || S.tool === "pan" || S.spacePan) {
+        S.rpress = ev.button === 2 && !S.spacePan ? { x, y, cx: ev.clientX, cy: ev.clientY, erase: false, moved: false, tx: S.tx, ty: S.ty } : null;
+        S.drag = { x: ev.clientX, y: ev.clientY, tx: S.tx, ty: S.ty }; for (const q of P) q.stage.classList.add("panning"); return;
+      }
       if (ev.button !== 0 || !inside(x, y)) return;
       if (S.mergeBusy) { if (painting) flash("上一步还在保存，请稍候再画"); return; }
       if (S.ngMode) { if (S.ngMode === "point") open3D([x, y]); return; }
@@ -975,6 +999,16 @@
         if (!S.radiusDrag.moved) { S.radiusDrag.moved = true; S.radiusDrag.x = ev.clientX; S.radiusDrag.r = S.brush; }
         setBrush(S.radiusDrag.r + Math.round((ev.clientX - S.radiusDrag.x) / 4)); return;
       }
+      if (S.rpress && !(ev.buttons & 2)) S.rpress = null;          // 右键在窗口外松开、没收到 mouseup：作废，免得之后误擦
+      const rp = S.rpress;
+      if (rp && !rp.moved && Math.hypot(ev.clientX - rp.cx, ev.clientY - rp.cy) > CTX_SLOP) {
+        rp.moved = true;
+        if (rp.erase) {
+          if (S.stroke || (ev.buttons & 1)) S.rpress = null;    // 左右键一起按：不改正在画的这一笔
+          else if (S.mergeBusy) flash("上一步还在保存，请稍候再擦");
+          else strokeStart(rp.x, rp.y, true);
+        }
+      }
       if (S.drag) { S.tx = S.drag.tx + ev.clientX - S.drag.x; S.ty = S.drag.ty + ev.clientY - S.drag.y; applyView(); return; }
       const previous = S.hoverXY, [x, y] = toImg(ev, p); S.hoverXY = inside(x, y) ? [x, y] : null; S.hoverPane = i;
       if (seed.move(x, y)) return;
@@ -1000,13 +1034,92 @@
     if (S.samBox[2] <= S.samBox[0] || S.samBox[3] <= S.samBox[1]) { S.samBox = null; renderHi(); return; }
     predictSAM();
   });
-  window.addEventListener("mouseup", () => { S.curtainDrag = false; if (S.drag) { S.drag = null; for (const q of P) q.stage.classList.remove("panning"); } if (S.stroke) strokeEnd(); });
+  window.addEventListener("mouseup", ev => {
+    const rp = S.rpress; S.rpress = null;
+    S.curtainDrag = false; if (S.drag) { S.drag = null; for (const q of P) q.stage.classList.remove("panning"); } if (S.stroke) strokeEnd();
+    if (rp && !rp.moved && ev.button === 2 && Math.hypot(ev.clientX - rp.cx, ev.clientY - rp.cy) <= CTX_SLOP) {
+      if (!rp.erase && (S.tx !== rp.tx || S.ty !== rp.ty)) { S.tx = rp.tx; S.ty = rp.ty; applyView(); }
+      ctxOpen(rp.x, rp.y, ev.clientX, ev.clientY);
+    }
+  });
+
+  // ------------------------------------------------------------------ 右键菜单：对光标下这一块的四个操作，效果与对应工具点一下相同
+  const CTX_SLOP = 4;                                         // 右键按下后移动超过 4 屏幕像素算拖动，不弹菜单
+  const ctx = { el: $("an-ctx"), at: null };
+  function ctxItems() { return [...ctx.el.querySelectorAll("button[data-act]")]; }
+  function ctxOpen(x, y, clientX, clientY) {
+    const id = idAt(x, y);
+    if (id == null) return;                                   // 图像外、这一片还没加载：不弹
+    if (S.mergeBusy) { flash("上一步还在保存，请稍候"); return; }
+    ctx.at = { x, y, z: S.z, block: S.block, id };
+    const bg = id === "0", cur = S.cur;
+    $("an-ctx-sw").style.background = bg ? "transparent" : css(colorOf(id));
+    $("an-ctx-id").textContent = bg ? `背景 · z ${S.z}` : `标签 ${id} · z ${S.z}`;
+    $("an-ctx-fill").textContent = cur === "0" ? "用当前标签填充" : `用当前标签 ${cur} 填充`;
+    const why = {
+      pick: bg ? "这里是背景" : id === cur ? "已经是当前标签" : "",
+      fill: cur === "0" ? "还没有当前标签：先拾取或新建" : id === cur ? "已经是当前标签" : "",
+      clear: bg ? "这里是背景" : "",
+      refine: bg ? "这里是背景" : "",
+    };
+    for (const b of ctxItems()) { b.disabled = !!why[b.dataset.act]; b.title = why[b.dataset.act]; }
+    const el = ctx.el; el.hidden = false;
+    el.style.left = Math.max(4, Math.min(clientX, innerWidth - el.offsetWidth - 4)) + "px";
+    el.style.top = Math.max(4, Math.min(clientY, innerHeight - el.offsetHeight - 4)) + "px";
+    (ctxItems().find(b => !b.disabled) || el).focus({ preventScroll: true });
+  }
+  function ctxClose(refocus = false) {
+    if (ctx.el.hidden) return;
+    ctx.el.hidden = true; ctx.at = null;
+    if (refocus) P[0].stage.focus({ preventScroll: true });
+  }
+  function ctxStep(d) {
+    const items = ctxItems().filter(b => !b.disabled); if (!items.length) return;
+    const i = items.indexOf(document.activeElement);
+    items[(i + d + items.length) % items.length].focus({ preventScroll: true });
+  }
+  function ctxRun(act) {
+    const at = ctx.at; ctxClose(true); if (!at) return;
+    if (at.z !== S.z || at.block !== S.block) { flash("已经换了切片，这次菜单作废"); return; }
+    if (S.mergeBusy) { flash("上一步还在保存，请稍候"); return; }
+    if (idAt(at.x, at.y) !== at.id) { flash("这块刚被改过，请重新右键"); return; }
+    if (act !== "pick" && S.tool.startsWith("seed-")) setTool("pick");
+    if (act === "pick") setCur(at.id);
+    else if (act === "fill") fill(at.x, at.y, false);
+    else if (act === "clear") clearAt(at.x, at.y, false);
+    else if (act === "refine") refineAt(at.x, at.y);
+  }
+  ctx.el.tabIndex = -1;
+  ctx.el.addEventListener("contextmenu", ev => ev.preventDefault());
+  ctx.el.addEventListener("click", ev => { const b = ev.target.closest("button[data-act]"); if (b && !b.disabled) ctxRun(b.dataset.act); });
+  // 点菜单外面、滚轮、切走窗口、改窗口大小：收起菜单（这一下照常生效）
+  document.addEventListener("mousedown", ev => {
+    if (ctx.el.hidden || ctx.el.contains(ev.target)) return;
+    ctxClose();
+    // 左键点在图上：这一下只用来关菜单，不执行当前工具（免得关菜单时顺手改了标签）
+    if (ev.button === 0 && ev.target instanceof Element && ev.target.closest(".vast-stage")) { ev.stopPropagation(); ev.preventDefault(); }
+  }, true);
+  document.addEventListener("wheel", ev => {
+    if (S.rpress) { if (S.rpress.erase) S.rpress = null; else S.rpress.moved = true; }   // 按住右键时缩放：不弹菜单、不还原平移
+    if (!ctx.el.contains(ev.target)) ctxClose();
+  }, { capture: true, passive: true });
+  window.addEventListener("blur", () => { S.rpress = null; ctxClose(); });
+  window.addEventListener("resize", () => ctxClose());
 
   // ------------------------------------------------------------------ keyboard
   // 只有文字输入框里的按键归输入框；滑条、复选框、下拉框被点过之后，快捷键照样能用（以前点一下半径滑条，
   // 之后的 Tab、A/Z、D 全都失灵，Tab 还会被浏览器拿去切焦点）
   const typing = el => el instanceof Element && (el.isContentEditable || el.matches("textarea, input:not([type]), input[type=text], input[type=number], input[type=search], input[type=password], input[type=email], input[type=url]"));
   document.addEventListener("keydown", ev => {
+    if (!ctx.el.hidden) {
+      const k = ev.key;
+      if (k === "Shift" || k === "Control" || k === "Alt" || k === "Meta") return;
+      if (ev.repeat) { ev.preventDefault(); return; }
+      if (k === "Escape") { ev.preventDefault(); ctxClose(true); return; }
+      if (k === "ArrowDown" || k === "ArrowUp" || k === "Tab") { ev.preventDefault(); ctxStep(k === "ArrowUp" || (k === "Tab" && ev.shiftKey) ? -1 : 1); return; }
+      if (k === "Enter") { ev.preventDefault(); const b = document.activeElement; if (ctx.el.contains(b) && b.matches("button[data-act]") && !b.disabled) ctxRun(b.dataset.act); return; }
+      ctxClose(true);                                          // 其他键（包括空格）：收起菜单，按键照常生效
+    }
     if (typing(ev.target)) return;
     if (S.mergeBusy) { if (!ev.repeat && !ev.ctrlKey && !ev.metaKey && !ev.altKey && "qpfdbehrmw".includes(ev.key)) flash("上一步还在保存，工具没有切换"); return; }
     if (!S.info || ev.defaultPrevented) return;
@@ -1257,7 +1370,9 @@
     $("an-nz").textContent = `/ ${nz - 1}　共 ${nz} 片`;
     const g = S.info.voxel_size_nm ? ` · ${S.info.voxel_size_nm.join("×")} nm` : "";
     // 下拉框里只写 yYYYY_xXXXX，完整名字写在这里
-    $("an-meta").textContent = `${id} · ${W}×${H}×${nz}${g}${S.info.has_seg ? "" : " · 无分割"}`;
+    // 完整名字、尺寸、体素大小不再占左栏一行，放在「数据块」下拉框的悬停提示里
+    const meta = `${id} · ${W}×${H}×${nz}${g}${S.info.has_seg ? "" : " · 无分割"}`;
+    $("an-meta").textContent = meta; $("an-block").title = meta;
     history.replaceState(null, "", `/annotate?block=${encodeURIComponent(id)}`);
     setCur("0"); fit(); await goZ(Math.min(S.z, nz - 1));
   }

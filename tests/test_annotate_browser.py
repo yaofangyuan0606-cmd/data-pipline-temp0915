@@ -100,6 +100,19 @@ class Browser:
             self.call("Input.dispatchMouseEvent", type="mousePressed", x=x, y=y, button="left", clickCount=1)
             self.call("Input.dispatchMouseEvent", type="mouseReleased", x=x, y=y, button="left", clickCount=1)
 
+    def rclick(self, point, drag_to=None):
+        """Right button press and release at an image point; with drag_to, move there while held."""
+        x, y = self.position(point)
+        self.call("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
+        self.call("Input.dispatchMouseEvent", type="mousePressed", x=x, y=y, button="right", buttons=2, clickCount=1)
+        if drag_to is not None:
+            x, y = self.position(drag_to)
+            self.call("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y, button="right", buttons=2)
+        self.call("Input.dispatchMouseEvent", type="mouseReleased", x=x, y=y, button="right", buttons=0, clickCount=1)
+
+    def key(self, key, kind="keydown"):
+        self.evaluate(f"document.getElementById('an-stage').dispatchEvent(new KeyboardEvent('{kind}', {{key: {json.dumps(key)}, bubbles: true}}))")
+
     def alpha(self, point):
         return f"document.querySelectorAll('#an-stage canvas')[2].getContext('2d').getImageData({point[0]},{point[1]},1,1).data[3]"
 
@@ -292,3 +305,152 @@ def test_brush_preview_and_saved_stroke_preserve_existing_labels(browser, view, 
     page.evaluate("document.getElementById('an-undo').click()")
     page.edits(1)
     assert np.array_equal(np.load(work / "seg_edit.npy"), before)
+
+
+MENU_OPEN = "!document.getElementById('an-ctx').hidden"
+FOLDS = "['an-seed-panel', 'an-bf-panel', 'an-ng-panel'].map(id => document.getElementById(id).open)"
+
+
+def test_left_panel_folds_and_block_info_in_tooltip(browser):
+    page, data, original = browser
+    assert page.evaluate(FOLDS) == [False, False, False]
+    assert page.evaluate("document.getElementById('an-meta').hidden") is True
+    assert "64×32×2" in page.evaluate("document.getElementById('an-block').title")
+    # Choosing a tool that lives in a folded section opens it, by button or by shortcut.
+    page.evaluate("document.querySelector('[data-tool=seed-box]').click()")
+    page.wait("document.getElementById('an-seed-panel').open")
+    page.key("w")
+    page.wait("document.getElementById('an-bf-panel').open && document.querySelector('[data-tool=bigfill]').getAttribute('aria-pressed') === 'true'")
+    # Folding the section of the active tool leaves that tool, like the SAM panel does.
+    page.evaluate("document.querySelector('#an-bf-panel > summary').click()")
+    page.wait("!document.getElementById('an-bf-panel').open && document.querySelector('[data-tool=pick]').getAttribute('aria-pressed') === 'true'")
+    page.evaluate("document.querySelector('#an-ng-panel > summary').click()")
+    page.wait("document.getElementById('an-ng-panel').open")
+    # Only the annotator's own clicks are remembered; the automatic opening of the seed section is not.
+    assert page.evaluate("JSON.parse(localStorage.getItem('emqc.annotate.folds'))") == {"an-bf-panel": False, "an-ng-panel": True}
+    page.evaluate("window.beforeReload = true")
+    page.call("Page.reload")
+    page.wait("!window.beforeReload && document.querySelector('#an-meta')?.textContent.includes('64×32×2') && document.querySelectorAll('#an-segs .row').length >= 4")
+    assert page.evaluate(FOLDS) == [False, False, True]
+
+
+def test_right_click_menu_acts_on_the_block_under_the_cursor(browser):
+    page, data, original = browser
+    work = data.parent.parent / "work" / "pairs"
+    page.rclick(POINTS[0])
+    page.wait(MENU_OPEN)
+    assert str(IDS[0]) in page.evaluate("document.getElementById('an-ctx-id').textContent")
+    state = "Object.fromEntries([...document.querySelectorAll('#an-ctx [data-act]')].map(b => [b.dataset.act, !b.disabled]))"
+    assert page.evaluate(state) == {"pick": True, "fill": False, "clear": True, "refine": True}  # no current label yet
+    page.evaluate("document.querySelector('#an-ctx [data-act=pick]').click()")
+    page.wait(f"document.getElementById('an-ctx').hidden && document.getElementById('an-cur-id').textContent === '{IDS[0]}'")
+    # Fill another block with the current label.
+    page.rclick(POINTS[2])
+    page.wait(MENU_OPEN)
+    assert str(IDS[0]) in page.evaluate("document.getElementById('an-ctx-fill').textContent")
+    page.evaluate("document.querySelector('#an-ctx [data-act=fill]').click()")
+    page.edits(1)
+    expected = original.copy()
+    expected[34:42, 2:10, 0] = IDS[0]
+    assert np.array_equal(np.load(work / "seg_edit.npy"), expected)
+    # Clear a block; the current label stays.
+    page.rclick(POINTS[1])
+    page.wait(MENU_OPEN)
+    page.evaluate("document.querySelector('#an-ctx [data-act=clear]').click()")
+    page.edits(2)
+    expected[18:26, 2:10, 0] = 0
+    assert np.array_equal(np.load(work / "seg_edit.npy"), expected)
+    assert page.evaluate("document.getElementById('an-cur-id').textContent") == str(IDS[0])
+    # On background only filling makes sense; Escape closes the menu without changing anything.
+    page.rclick((12, 14))
+    page.wait(MENU_OPEN)
+    assert page.evaluate(state) == {"pick": False, "fill": True, "clear": False, "refine": False}
+    page.key("Escape")
+    page.wait("document.getElementById('an-ctx').hidden")
+    # Keyboard: arrows move between enabled items, Enter runs one. Refine posts the clicked point.
+    page.rclick(POINTS[3])
+    page.wait(MENU_OPEN)
+    assert page.evaluate("document.activeElement.dataset.act") == "pick"
+    for _ in range(3):
+        page.key("ArrowDown")
+    assert page.evaluate("document.activeElement.dataset.act") == "refine"
+    page.key("Enter")
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        posted = [json.loads(e["params"]["request"]["postData"]) for e in page.events
+                  if e.get("method") == "Fetch.requestPaused" and e["params"]["request"]["url"].endswith("/refine-edge")]
+        if posted:
+            break
+        page.evaluate("1")
+    assert posted and (posted[0]["x"], posted[0]["y"], posted[0]["z"]) == (*POINTS[3], 0)
+    page.wait("!document.getElementById('an-undo').disabled")
+    assert np.array_equal(np.load(data / "seg.npy"), original)
+
+
+def test_right_drag_still_erases_and_pans(browser):
+    page, data, original = browser
+    work = data.parent.parent / "work" / "pairs"
+    page.move(POINTS[0], click=True)
+    page.wait(f"document.getElementById('an-cur-id').textContent === '{IDS[0]}'")
+    page.evaluate("""{ document.querySelector('[data-tool=brush]').click();
+        const radius = document.getElementById('an-brush');
+        radius.value = 0; radius.dispatchEvent(new Event('input')); }""")
+    # A right click without moving opens the menu and paints nothing.
+    page.rclick(POINTS[0])
+    page.wait(MENU_OPEN)
+    page.key("Escape")
+    page.wait("document.getElementById('an-ctx').hidden")
+    assert page.evaluate("document.getElementById('an-nedit').textContent") == "0 次改动"
+    # A right drag in the brush erases the current colour from the press point on, and opens no menu.
+    page.rclick((4, 4), drag_to=(7, 4))
+    page.edits(1)
+    expected = original.copy()
+    expected[4:8, 4, 0] = 0
+    assert np.array_equal(np.load(work / "seg_edit.npy"), expected)
+    assert page.evaluate("document.getElementById('an-ctx').hidden")
+    # Other tools: a right drag pans; a right click opens the menu and leaves the view where it was.
+    page.evaluate("document.querySelector('[data-tool=pick]').click()")
+    transform = "document.querySelector('#an-stage .vast-canvas').style.transform"
+    before = page.evaluate(transform)
+    page.rclick(POINTS[2], drag_to=POINTS[3])
+    moved = page.evaluate(transform)
+    assert moved != before and page.evaluate("document.getElementById('an-ctx').hidden")
+    page.rclick(POINTS[2])
+    page.wait(MENU_OPEN)
+    assert page.evaluate(transform) == moved
+    page.key("Escape")
+    page.wait("document.getElementById('an-ctx').hidden")
+    assert np.array_equal(np.load(data / "seg.npy"), original)
+
+
+def test_closing_the_menu_never_edits(browser):
+    page, data, original = browser
+    work = data.parent.parent / "work" / "pairs"
+    page.move(POINTS[0], click=True)
+    page.wait(f"document.getElementById('an-cur-id').textContent === '{IDS[0]}'")
+    page.evaluate("document.querySelector('[data-tool=fill]').click()")
+    settle = "new Promise(r => setTimeout(() => r(true), 400))"
+    # Space is the pan key: it closes the menu and runs nothing, even with a write action focused.
+    page.rclick(POINTS[2])
+    page.wait(MENU_OPEN)
+    page.key("Shift")                                        # a modifier on its own keeps the menu open
+    assert page.evaluate(MENU_OPEN)
+    page.evaluate("document.querySelector('#an-ctx [data-act=fill]').focus()")
+    page.key(" ")
+    page.key(" ", "keyup")
+    page.wait("document.getElementById('an-ctx').hidden")
+    # A left click on the image only closes the menu; the fill tool does not run. The menu opens to the right of
+    # the cursor, so click a block to its left.
+    page.rclick(POINTS[3])
+    page.wait(MENU_OPEN)
+    page.move(POINTS[2], click=True)
+    page.wait("document.getElementById('an-ctx').hidden")
+    page.evaluate(settle)
+    assert page.evaluate("document.getElementById('an-nedit').textContent") == "0 次改动"
+    assert not (work / "seg_edit.npy").exists() or np.array_equal(np.load(work / "seg_edit.npy"), original)
+    # The next left click works as usual.
+    page.move(POINTS[2], click=True)
+    page.edits(1)
+    expected = original.copy()
+    expected[34:42, 2:10, 0] = IDS[0]
+    assert np.array_equal(np.load(work / "seg_edit.npy"), expected)

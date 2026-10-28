@@ -64,6 +64,9 @@ def browser_for(tmp_path, data):
                 try:
                     page = browser.new_page(viewport={"width": 1600, "height": 1200})
                     page.add_init_script("localStorage.setItem('emqc.annotator', 'browser-test')")
+                    # 这些用例点的是种子分割、大块填充、3D 里的按钮：先把默认收起的折叠区记成展开
+                    page.add_init_script("""localStorage.setItem('emqc.annotate.folds',
+                        JSON.stringify({'an-seed-panel': true, 'an-bf-panel': true, 'an-ng-panel': true}))""")
                     page_errors = []
                     page.on("pageerror", lambda error: page_errors.append(error))
                     page.goto(base_url + "/annotate?block=" + data.name, wait_until="domcontentloaded")
@@ -324,7 +327,7 @@ def test_3d_modes_toggle_and_close_viewer(tmp_path):
             route.fulfill(json={'url': 'about:blank#view3d'})
         page.route('**/neuroglancer**', link)
         point, block = page.locator('#an-ng'), page.locator('#an-ng-block')
-        assert page.locator('.vast-sec', has_text='3D').inner_text() == '3D'
+        assert page.locator('#an-ng-panel > summary').inner_text().startswith('3D')
         assert '黑团就是' not in page.content()
         inactive = point.evaluate('(e) => getComputedStyle(e).backgroundColor')
         point.click()

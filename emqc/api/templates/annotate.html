@@ -14,13 +14,13 @@
   <aside class="vast-panel vast-tools">
     <div class="field" style="margin-top:0"><label for="an-batch">批次</label><select id="an-batch" class="text mono" title="数据块所在的导入目录，和审核进度页的批次一致"></select></div>
     <div class="field"><label for="an-block">数据块</label><select id="an-block" class="text mono"></select></div>
-    <div class="vast-meta mono muted" id="an-meta">—</div>
+    <div class="vast-meta mono muted" id="an-meta" hidden>—</div>
 
     <div class="vast-sec">工具</div>
     <div class="vast-toolgrid">
       <button class="tool active" data-tool="pick" aria-pressed="true" title="拾取颜色 (Q，旧键 P · 任何工具下 Alt+点击 · 画笔和橡皮下 Ctrl/⌘+点击)"><svg viewBox="0 0 24 24"><path d="M15 4l5 5-9 9H6v-5z"/><path d="M13 6l5 5"/></svg>拾取 <kbd>Q</kbd></button>
       <button class="tool" data-tool="fill" aria-pressed="false" title="填充连通区域 (F)；Shift+点击填充本片同标签"><svg viewBox="0 0 24 24"><path d="M7 3l10 10-6 6L3 11z"/><path d="M17 13c1.5 2 2 3.2 2 4a2 2 0 11-4 0c0-.8.5-2 2-4z"/></svg>填充 <kbd>F</kbd></button>
-      <button class="tool" data-tool="brush" aria-pressed="false" title="画笔 (D，旧键 B)：左键涂当前颜色（只补空白）· 右键擦当前颜色 · Ctrl/⌘+点击拾取颜色 · 按住 Tab 左右移动鼠标改半径（触控板：点一下 Tab 再移动）"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔 <kbd>D</kbd></button>
+      <button class="tool" data-tool="brush" aria-pressed="false" title="画笔 (D，旧键 B)：左键涂当前颜色（只补空白）· 右键拖动擦当前颜色 · Ctrl/⌘+点击拾取颜色 · 按住 Tab 左右移动鼠标改半径（触控板：点一下 Tab 再移动）"><svg viewBox="0 0 24 24"><path d="M4 20c2-.5 3-1.5 3.5-3.5L18 6l2 2L9.5 18.5C8 20 6 21 4 20z"/></svg>画笔 <kbd>D</kbd></button>
       <button class="tool" data-tool="erase" aria-pressed="false" title="橡皮 (E)：只擦当前颜色的像素，压到邻居身上不会把邻居擦掉 · 按住 Tab 左右移动鼠标改半径（触控板：点一下 Tab 再移动）"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M6 21h14"/></svg>橡皮 <kbd>E</kbd></button>
       <button class="tool" data-tool="merge" aria-pressed="false" title="合并 (M)：先点第一块，再点第二块，第二块变成第一块的颜色"><svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="4.5"/><circle cx="16" cy="12" r="4.5"/></svg>合并 <kbd>M</kbd></button>
       <button class="tool" data-tool="clear" aria-pressed="false" title="清除连通区域；Shift+点击清除本片同标签"><svg viewBox="0 0 24 24"><path d="M4 16l9-9 5 5-9 9H6z"/><path d="M13 7l5 5"/><path d="M14 20h6"/></svg>清除</button>
@@ -39,8 +39,8 @@
     <div class="actions an-label-actions" style="margin-top:6px"><button id="an-newid" class="primary" title="新建标签 (N)">新建标签 <kbd>N</kbd></button><button id="an-neighbour-pick" title="L：本片这块是空的时候，取最近一张有标签的邻片在光标处的颜色">邻片取色 <kbd>L</kbd></button></div>
     <div class="vast-list" id="an-neighbour-list" style="margin-top:6px;max-height:150px" hidden></div>
 
-    <section id="an-seed-panel" class="an-seed-panel" aria-labelledby="an-seed-heading">
-      <div class="vast-sec" id="an-seed-heading">种子分割 <span class="muted">只补空白 · 单片</span></div>
+    <details id="an-seed-panel" class="an-seed-panel an-fold">
+      <summary class="vast-sec" id="an-seed-heading">种子分割 <span class="muted">只补空白 · 单片</span></summary>
       <div class="an-seed-step" id="an-seed-step-1" aria-current="step">
         <div class="an-seed-step-title"><b><span>1</span> 选范围</b><span id="an-seed-range" class="muted">未选择</span></div>
         <div class="vast-toolgrid">
@@ -78,7 +78,7 @@
         <p class="muted an-seed-hint">小值保留细膜，大值平滑噪声。松开滑条后自动更新预览。</p>
         <button id="an-seed-predict" disabled>重新预览</button>
       </details>
-    </section>
+    </details>
 
     <details id="an-sam-panel" class="an-sam-panel">
     <summary class="vast-sec">SAM <span class="muted">备用分割 · 展开使用</span></summary>
@@ -102,7 +102,8 @@
     </div>
     </details>
 
-    <div class="vast-sec">大块填充</div>
+    <details id="an-bf-panel" class="an-fold">
+    <summary class="vast-sec">大块填充 <span class="muted">W</span></summary>
     <div class="vast-toolgrid">
       <button class="tool" data-tool="bigfill" aria-pressed="false" title="大块填充 (W)：在没标注的大细胞里点一下，按膜自动找出整个细胞，先预览，确认后才写入；⌘/Ctrl+点击再补一个点">大块填充 <kbd>W</kbd></button>
     </div>
@@ -110,10 +111,13 @@
     <div class="actions"><button id="an-bf-new" class="primary" disabled>填为新标签</button><button id="an-bf-apply" disabled>填为当前标签</button></div>
     <div class="actions" style="margin-top:6px"><button id="an-bf-up" disabled title="把刚填好的这个细胞接到上一片：先预览，确认后才写">↑ 接着填上一片</button><button id="an-bf-down" disabled title="把刚填好的这个细胞接到下一片：先预览，确认后才写">↓ 接着填下一片</button></div>
     <div class="muted" id="an-bf-result" role="status" style="font-size:12px;margin-top:6px"></div>
+    </details>
 
-    <div class="vast-sec">3D</div>
+    <details id="an-ng-panel" class="an-fold">
+    <summary class="vast-sec">3D <span class="muted">U</span></summary>
     <div class="actions"><button id="an-ng" aria-pressed="false" title="启用后点击图像查看；再次点击取消 (U)">看这一点 <kbd>U</kbd></button><button id="an-ng-block" aria-pressed="false" title="打开整块 3D；再次点击关闭">看整块</button></div>
     <div class="muted" id="an-ng-info" style="font-size:12px;margin-top:6px"></div>
+    </details>
 
     <div class="vast-sec">翻页</div>
     <div class="vast-z">
@@ -136,7 +140,7 @@
       <div class="vast-canvas"><canvas></canvas><canvas></canvas><canvas></canvas></div>
       <div class="vast-label mono side-only">EM</div>
       <div class="vast-status mono" id="an-status">加载中…</div>
-      <div class="vast-hint mono">滚轮缩放 · ↑↓ / A Z 翻片 · 中键 / 空格拖动平移</div>
+      <div class="vast-hint mono">滚轮缩放 · ↑↓ / A Z 翻片 · 右键点一下出菜单 · 中键 / 空格拖动平移</div>
     </div>
     <div class="vast-stage off" id="an-stage2" tabindex="0">
       <div class="vast-canvas"><canvas></canvas><canvas></canvas><canvas></canvas></div>
@@ -194,13 +198,20 @@
   <p id="an-undo-msg"></p>
   <div class="actions"><button id="an-undo-no" autofocus>取消</button><button id="an-undo-yes" class="danger">确认撤销</button></div>
 </dialog>
+<div id="an-ctx" class="an-ctx" role="menu" aria-label="对光标下这一块的操作" hidden>
+  <div class="an-ctx-head"><span class="sw" id="an-ctx-sw" aria-hidden="true"></span><span class="mono" id="an-ctx-id"></span></div>
+  <button role="menuitem" data-act="pick">拾取这个颜色</button>
+  <button role="menuitem" data-act="fill"><span id="an-ctx-fill">用当前标签填充</span></button>
+  <button role="menuitem" data-act="clear">清除这块</button>
+  <button role="menuitem" data-act="refine">修缮边缘</button>
+</div>
 <dialog id="an-help" class="an-help">
   <div class="an-help-head"><b>快捷键与操作</b><span class="spacer"></span><a href="/annotate/guide">完整说明 ›</a><button id="an-help-close" title="关闭 (Esc)" autofocus>✕</button></div>
   <div class="an-help-grid">
     <section><h3>看图</h3>
       <div class="kbd-row"><kbd>A</kbd><kbd>Z</kbd> / <kbd>↑</kbd><kbd>↓</kbd> 翻 z</div>
       <div class="kbd-row"><kbd>滚轮</kbd> 缩放 · <kbd>0</kbd> 适合窗口 · <kbd>1</kbd> 1:1</div>
-      <div class="kbd-row"><kbd>右键拖动</kbd> / <kbd>H</kbd> 平移</div>
+      <div class="kbd-row"><kbd>右键拖动</kbd> / <kbd>H</kbd> 平移（画笔、橡皮下右键拖动是擦）</div>
       <div class="kbd-row"><kbd>V</kbd> 叠加 ⇄ 并排 · <kbd>C</kbd> 对比滑块</div>
       <div class="kbd-row"><kbd>Tab</kbd> 按住隐藏分割（画笔、橡皮下按住 Tab 左右移动鼠标是调半径） · <kbd>G</kbd> 透明度渐变 · <kbd>,</kbd> <kbd>.</kbd> 步进</div>
       <div class="kbd-row"><kbd>O</kbd> 只画边界</div>
@@ -213,7 +224,8 @@
       <div class="kbd-row"><kbd>F</kbd> 填充连通区域 · <kbd>Shift</kbd>+点击改整片同 id</div>
       <div class="kbd-row">清除：擦除连通区域 · Shift+点击清除本片同标签</div>
       <div class="kbd-row"><kbd>M</kbd> 合并：先点 A，再点 B，B 改为 A 的标签</div>
-      <div class="kbd-row"><kbd>D</kbd> 画笔（旧键 B 仍可用）：左键涂、<b>右键擦当前颜色</b>、<kbd>Ctrl</kbd>+点击拾取 · <kbd>E</kbd> 橡皮只擦当前颜色 · <kbd>[</kbd> <kbd>]</kbd> 或 <b>按住 <kbd>Tab</kbd> 左右移动鼠标</b>改半径（触控板：点一下 <kbd>Tab</kbd> 再移动、单击结束）</div>
+      <div class="kbd-row"><kbd>D</kbd> 画笔（旧键 B 仍可用）：左键涂、<b>右键拖动擦当前颜色</b>、<kbd>Ctrl</kbd>+点击拾取 · <kbd>E</kbd> 橡皮只擦当前颜色 · <kbd>[</kbd> <kbd>]</kbd> 或 <b>按住 <kbd>Tab</kbd> 左右移动鼠标</b>改半径（触控板：点一下 <kbd>Tab</kbd> 再移动、单击结束）</div>
+      <div class="kbd-row"><kbd>右键点一下</kbd>（不拖动）出菜单：拾取这个颜色 · 用当前标签填充 · 清除这块 · 修缮边缘</div>
       <div class="kbd-row"><kbd>R</kbd> 修缮边缘：点一下标签块，跨过黑膜溢到膜外的部分收回，停在膜的外侧；膜和细胞内部的黑色细胞器都不动</div>
       <div class="kbd-row">种子分割：拖框选范围（填色后直接拖框框下一处，没画种子时点框外取消）· 点绿色目标 · Shift 排除 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 先逐笔撤种子、再取消范围</div>
       <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>
