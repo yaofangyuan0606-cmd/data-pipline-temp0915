@@ -200,7 +200,7 @@
 </dialog>
 <div id="an-ctx" class="an-ctx" role="menu" aria-label="对光标下这一块的操作" hidden>
   <div class="an-ctx-head"><span class="sw" id="an-ctx-sw" aria-hidden="true"></span><span class="mono" id="an-ctx-id"></span></div>
-  <button role="menuitem" data-act="pick">拾取这个颜色</button>
+  <button role="menuitem" data-act="pick">拾取并高亮这个颜色</button>
   <button role="menuitem" data-act="fill"><span id="an-ctx-fill">用当前标签填充</span></button>
   <button role="menuitem" data-act="clear">清除这块</button>
   <button role="menuitem" data-act="refine">修缮边缘</button>
@@ -225,7 +225,7 @@
       <div class="kbd-row">清除：擦除连通区域 · Shift+点击清除本片同标签</div>
       <div class="kbd-row"><kbd>M</kbd> 合并：先点 A，再点 B，B 改为 A 的标签</div>
       <div class="kbd-row"><kbd>D</kbd> 画笔（旧键 B 仍可用）：左键涂、<b>右键拖动擦当前颜色</b>、<kbd>Ctrl</kbd>+点击拾取 · <kbd>E</kbd> 橡皮只擦当前颜色 · <kbd>[</kbd> <kbd>]</kbd> 或 <b>按住 <kbd>Tab</kbd> 左右移动鼠标</b>改半径（触控板：点一下 <kbd>Tab</kbd> 再移动、单击结束）</div>
-      <div class="kbd-row"><kbd>右键点一下</kbd>（不拖动）出菜单：拾取这个颜色 · 用当前标签填充 · 清除这块 · 修缮边缘</div>
+      <div class="kbd-row"><kbd>右键点一下</kbd>（不拖动）出菜单：拾取并高亮这个颜色 · 用当前标签填充 · 清除这块 · 修缮边缘</div>
       <div class="kbd-row"><kbd>R</kbd> 修缮边缘：点一下标签块，跨过黑膜溢到膜外的部分收回，停在膜的外侧；膜和细胞内部的黑色细胞器都不动</div>
       <div class="kbd-row">种子分割：拖框选范围（填色后直接拖框框下一处，没画种子时点框外取消）· 点绿色目标 · Shift 排除 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 先逐笔撤种子、再取消范围</div>
       <div class="kbd-row">SAM：点击/拖框选目标 · Ctrl/⌘ 补点 · Shift 排除 · 再次点击工具或 Esc 取消</div>

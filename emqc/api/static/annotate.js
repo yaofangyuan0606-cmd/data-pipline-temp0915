@@ -1057,7 +1057,7 @@
     $("an-ctx-id").textContent = bg ? `背景 · z ${S.z}` : `标签 ${id} · z ${S.z}`;
     $("an-ctx-fill").textContent = cur === "0" ? "用当前标签填充" : `用当前标签 ${cur} 填充`;
     const why = {
-      pick: bg ? "这里是背景" : id === cur ? "已经是当前标签" : "",
+      pick: bg ? "这里是背景" : "",
       fill: cur === "0" ? "还没有当前标签：先拾取或新建" : id === cur ? "已经是当前标签" : "",
       clear: bg ? "这里是背景" : "",
       refine: bg ? "这里是背景" : "",
@@ -1084,7 +1084,7 @@
     if (S.mergeBusy) { flash("上一步还在保存，请稍候"); return; }
     if (idAt(at.x, at.y) !== at.id) { flash("这块刚被改过，请重新右键"); return; }
     if (act !== "pick" && S.tool.startsWith("seed-")) setTool("pick");
-    if (act === "pick") setCur(at.id);
+    if (act === "pick") setCur(at.id, true);                 // 和点右栏标签行一样：换当前标签并描出本片所有同色碎片
     else if (act === "fill") fill(at.x, at.y, false);
     else if (act === "clear") clearAt(at.x, at.y, false);
     else if (act === "refine") refineAt(at.x, at.y);

@@ -344,6 +344,9 @@ def test_right_click_menu_acts_on_the_block_under_the_cursor(browser):
     assert page.evaluate(state) == {"pick": True, "fill": False, "clear": True, "refine": True}  # no current label yet
     page.evaluate("document.querySelector('#an-ctx [data-act=pick]').click()")
     page.wait(f"document.getElementById('an-ctx').hidden && document.getElementById('an-cur-id').textContent === '{IDS[0]}'")
+    # Picking from the menu also highlights the label, like clicking its row.
+    picked = f"document.querySelector('#an-segs .row[data-id=\"{IDS[0]}\"]').classList.contains('selected')"
+    assert page.evaluate(picked)
     # Fill another block with the current label.
     page.rclick(POINTS[2])
     page.wait(MENU_OPEN)
@@ -353,6 +356,12 @@ def test_right_click_menu_acts_on_the_block_under_the_cursor(browser):
     expected = original.copy()
     expected[34:42, 2:10, 0] = IDS[0]
     assert np.array_equal(np.load(work / "seg_edit.npy"), expected)
+    # On a block that already has the current label, pick stays available (it re-highlights); fill does not.
+    page.rclick(POINTS[2])
+    page.wait(MENU_OPEN)
+    assert page.evaluate(state) == {"pick": True, "fill": False, "clear": True, "refine": True}
+    page.key("Escape")
+    page.wait("document.getElementById('an-ctx').hidden")
     # Clear a block; the current label stays.
     page.rclick(POINTS[1])
     page.wait(MENU_OPEN)
